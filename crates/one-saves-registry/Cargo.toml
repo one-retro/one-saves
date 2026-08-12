@@ -1,0 +1,18 @@
+[package]
+name = "one-saves-registry"
+description = "System, emulator core, save role and vendor registries for the Universal Saves Format (.1saves)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "README.md"
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,52 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/one-saves",
+    "crates/one-saves-registry",
+    "crates/one-saves-convert",
+    "crates/one-saves-cli",
+    "crates/ps2-memcard",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# 1.88 is the floor `dcbor` imposes: it uses let-chains and declares no rust-version
+# of its own, so ours has to state the real one.
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/one-retro/one-saves"
+homepage = "https://docs.1retro.com/specifications/universal-saves-format/"
+authors = ["Hans Larsen <hans@larsen.online>"]
+categories = ["encoding", "filesystem", "parser-implementations"]
+keywords = ["1saves", "emulation", "retro", "savegame", "cbor"]
+
+[workspace.dependencies]
+one-saves = { version = "0.1.0", path = "crates/one-saves" }
+one-saves-registry = { version = "0.1.0", path = "crates/one-saves-registry" }
+one-saves-convert = { version = "0.1.0", path = "crates/one-saves-convert" }
+ps2-memcard = { version = "0.1.0", path = "crates/ps2-memcard" }
+
+dcbor = "0.25"
+sha1 = "0.10"
+sha2 = "0.10"
+md-5 = "0.10"
+crc32fast = "1.4"
+unicode-normalization = "0.1"
+zstd = "0.13"
+clap = { version = "4.5", features = ["derive"] }
+quick-xml = "0.37"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

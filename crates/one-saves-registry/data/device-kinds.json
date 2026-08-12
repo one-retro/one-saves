@@ -1,0 +1,22 @@
+[
+  {
+    "value": "console",
+    "meaning": "Real console hardware writing its own save: a PS2 to its memory card, an N64 to a Transfer Pak cartridge."
+  },
+  {
+    "value": "emulator",
+    "meaning": "A software emulator or emulator front-end."
+  },
+  {
+    "value": "cartridge-reader",
+    "meaning": "Hardware that reads a physical cartridge or memory card (Epilogue GB Operator, GBxCart RW, Sanni reader)."
+  },
+  {
+    "value": "flashcart",
+    "meaning": "A flash cartridge that carries saves on real hardware (EverDrive, EZ-Flash)."
+  },
+  {
+    "value": "service",
+    "meaning": "A server-side producer, such as a sync or conversion service."
+  }
+]

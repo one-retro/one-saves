@@ -1,0 +1,571 @@
+{
+  "corpus": "Universal Saves Format conformance cases",
+  "spec_version": "0.2",
+  "generated_from": "test/bundles.js",
+  "counts": {
+    "valid": 24,
+    "invalid": 49
+  },
+  "cases": [
+    {
+      "name": "minimal",
+      "expect": "valid",
+      "file": "valid/minimal.cbor",
+      "sha256": "7ad9b120bbdfcec6e43b8eb83bb27425461ef3e2d8a905b5979eb50fbe790835",
+      "note": "An empty header and one bare save. The floor of what a bundle is."
+    },
+    {
+      "name": "ps1-card",
+      "expect": "valid",
+      "file": "valid/ps1-card.cbor",
+      "sha256": "7edf18d2b34f59f466806deb310a9a4d3b713fd148a7428b8eab4ea86dc4dd91",
+      "note": "A PS1 card holding three saves, two of them for one game, and a PS2 card holding one save that is itself a directory of files. Between them they cover both nesting shapes a card takes."
+    },
+    {
+      "name": "ps2-card",
+      "expect": "valid",
+      "file": "valid/ps2-card.cbor",
+      "sha256": "4ab325b9445c004738b584159fc6641019975f1795fda577130c702af28900df",
+      "note": "A PS1 card holding three saves, two of them for one game, and a PS2 card holding one save that is itself a directory of files. Between them they cover both nesting shapes a card takes."
+    },
+    {
+      "name": "card-image-beside-splits",
+      "expect": "valid",
+      "file": "valid/card-image-beside-splits.cbor",
+      "sha256": "ab78ef212eb4276953a35fa9a71ea77001cb50ee38760d625f7cf19fb293f28d",
+      "note": "A card-image kept alongside the split saves, which the spec allows so a producer can hold on to the deleted-save residue and free-block contents that splitting drops."
+    },
+    {
+      "name": "card-system-area",
+      "expect": "valid",
+      "file": "valid/card-system-area.cbor",
+      "sha256": "b23812338ba55c359250992dd06b1b7efbb1a8bc9c9157b245ec97ecaef87751",
+      "note": "`system_area` carries the card-level bytes belonging to no save, so a writer can rebuild the card's own identity without a whole card-image. On an N64 pak those bytes are its 32-byte label."
+    },
+    {
+      "name": "card-of-one-game",
+      "expect": "valid",
+      "file": "valid/card-of-one-game.cbor",
+      "sha256": "f12321ca57284c8cb1448af81ebd668995a4ae5e1116b596eea341f8fb6c6efa",
+      "note": "A card holding nothing but saves for one game, which is what Final Fantasy VII does to a PS1 card: one block per save, fifteen slots, no room for anything else. The header names the game, because here a single game really does describe the whole card. The `-Sxx` in the name is the game's own slot and the card's directory slot is a different number, so the two entries below are deliberately not aligned."
+    },
+    {
+      "name": "thin-card",
+      "expect": "valid",
+      "file": "valid/thin-card.cbor",
+      "sha256": "1ee104896da9d894e5514b389c73608981cf5429cbd578952a43aad69ace0125",
+      "note": "A thin card: the entry points at its save's content hash instead of embedding it, so the file is a list of slots, dirents and hashes."
+    },
+    {
+      "name": "collection",
+      "expect": "valid",
+      "file": "valid/collection.cbor",
+      "sha256": "b3d71a617dfe9e0bac18c73221ef841f09bdaf24a79854b28c6067ca4461323a",
+      "note": "A collection: no system, no game, no card of its own, and entries that do not agree on a system. This is how one file spans systems, and it is the deepest shape the spec allows, since the PS1 entry is itself a card."
+    },
+    {
+      "name": "third-party-kind",
+      "expect": "valid",
+      "file": "valid/third-party-kind.cbor",
+      "sha256": "d776d7f5829d1b1307868b52a4b6ae0e1fed18d3c8a87202fc35f784560018cf",
+      "note": "A kind nobody has to recognize. A consumer treats it as `aux` and hands it back unchanged, which is what lets a producer name one out of a domain it owns instead of registering anything."
+    },
+    {
+      "name": "binding",
+      "expect": "valid",
+      "file": "valid/binding.cbor",
+      "sha256": "2184c1365d6bc5e8ab50be6f4a4794df23ecef10c3f542379d0d2cf9d5632e60",
+      "note": "A save the console bound to itself. The bytes are valid and worth keeping, and they will not restore to another console, which is the one thing a consumer cannot work out from the payload."
+    },
+    {
+      "name": "cartridge-and-card",
+      "expect": "valid",
+      "file": "valid/cartridge-and-card.cbor",
+      "sha256": "dd33091df2549b392377132220d858f55288107deef9d62648a7d81b7937150a",
+      "note": "One game whose state spans a cartridge and a memory card, which is neither a card (the bundle is not one) nor a collection (it has a system and a game). Mixing a plain save part with a `bundle` part is what covers it."
+    },
+    {
+      "name": "fully-identified",
+      "expect": "valid",
+      "file": "valid/fully-identified.cbor",
+      "sha256": "f6f7bed2a65cfb52c8a7abde571445b1a7ac3f77e0a5e98d359e8ffe58802ca0",
+      "note": "Every identification hint at once, plus a populated metadata slot. A real producer emits the hashes it has already computed rather than all four; this is the upper bound, and the only fixture carrying a clock reading."
+    },
+    {
+      "name": "compressed-and-aux",
+      "expect": "valid",
+      "file": "valid/compressed-and-aux.cbor",
+      "sha256": "c98a91267bb696ff9895af4aaf2b62669800a5b21eabff43e731edb70cfbb517",
+      "note": "A compressed part beside an `aux` one. `size` and `sha256` cover the uncompressed bytes whatever `encoding` says, so a zstd part's stored bytes match neither, and only the parts around it can be read without inflating."
+    },
+    {
+      "name": "n64-pak-duplicate-note-names",
+      "expect": "valid",
+      "file": "valid/n64-pak-duplicate-note-names.cbor",
+      "sha256": "2f5b32c7bce39425f40a8980afd4cdd6da2f9538055582ba341e030cde2e355e",
+      "note": "An N64 Controller Pak permits two notes with the same game code and note name, so `path` cannot tell them apart and the producer must carry `slot`. This is the case the uniqueness rule exists for, on real hardware."
+    },
+    {
+      "name": "saturn-backup",
+      "expect": "valid",
+      "file": "valid/saturn-backup.cbor",
+      "sha256": "af0d0fcfe61f0e3cf6fc0b6a50f658edd2e3626f48783c1a755f31e2670ab6d9",
+      "note": "Saturn keeps a save's directory entry inside the save's own first block, so `saturn-bup` is the one card format where a card entry carries no `dirent` at all. A writer rewrites the block chain in the payload instead."
+    },
+    {
+      "name": "ps1-multi-block-save",
+      "expect": "valid",
+      "file": "valid/ps1-multi-block-save.cbor",
+      "sha256": "6259a6221a5461de0fe6ba6805de91d3e76fa23f6d5b788b56cc016db863daff",
+      "note": "A PS1 save spanning two blocks is one part of 16384 bytes. The card allocated two blocks and they may not have been adjacent, which is not recorded: block placement is the destination allocator's business."
+    },
+    {
+      "name": "transfer-pak",
+      "expect": "valid",
+      "file": "valid/transfer-pak.cbor",
+      "sha256": "6dded8f4444cc15fe6fa6906a4c84bbe1dd49a7c30a3ad8c639a0338d1d42b8e",
+      "note": "A Transfer Pak puts a Game Boy cartridge in an N64 controller, and Pokemon Stadium writes that cartridge's SRAM. The save is `gb` because that is what will load it; the N64 is provenance, which is what `source` is for."
+    },
+    {
+      "name": "empty-formatted-card",
+      "expect": "valid",
+      "file": "valid/empty-formatted-card.cbor",
+      "sha256": "a02fbe7838667ae82d2051d53010d69e96185f11921c5e15d2ad923ed9b8fbaa",
+      "note": "A formatted card with nothing saved on it. The card is real and worth carrying, and a `card_image` is the only part it can have, since there is no save to nest."
+    },
+    {
+      "name": "zero-byte-payload",
+      "expect": "valid",
+      "file": "valid/zero-byte-payload.cbor",
+      "sha256": "4277727ad3728d98c18e478607bfb535e605d0174dd7b16e8a5485edafed75ab",
+      "note": "A zero-length payload. A save slot a console formatted and never wrote to is still a part: `size` is absent because the payload states its own length, and sha256 over no bytes is perfectly well defined."
+    },
+    {
+      "name": "token-bound-save",
+      "expect": "valid",
+      "file": "valid/token-bound-save.cbor",
+      "sha256": "0247b76d4d0114bfbd11b56763b5d3b5ab43c1e99f02a2a84233ca4927e73588",
+      "note": "An amiibo: a few hundred bytes on an NFC tag, signed against that tag's own serial. No `system`, because several consoles read one and none of them owns it, which is a case the optional header is there for. `binding` is `medium` rather than `device`: any console can write it and the result stays valid, but copying it to a second tag does not."
+    },
+    {
+      "name": "high-numbered-socket",
+      "expect": "valid",
+      "file": "valid/high-numbered-socket.cbor",
+      "sha256": "7add1498690b121d119313537134c00a0f6685cd1b1e4ba0ef7dfae7ea301c98",
+      "note": "A numbered socket past anything the registry enumerates. Eight VMU slots across four Dreamcast controllers, and the prefix is what a consumer matches on, so `memcard-8` is understood without being listed."
+    },
+    {
+      "name": "source-provenance",
+      "expect": "valid",
+      "file": "valid/source-provenance.cbor",
+      "sha256": "12f20bf849acd3eab8c190a5f5668e54573bf3495ebb1bd801bc400dd75265c2",
+      "note": "Provenance at both levels: a cartridge reader assembled the bundle, and one part came from an emulator instead, so it carries its own source. Note the split inside one map: `device_kind` is a spec slug nobody may mint into, while `app` beside it is the producer's own name, here reverse-DNS for the reader and a Cores registry slug for the emulator."
+    },
+    {
+      "name": "game-ids",
+      "expect": "valid",
+      "file": "valid/game-ids.cbor",
+      "sha256": "ff3b0c7c9de9f1c73d1bac4cc3b8ed71fa107da339426a069bf3c760a9670d3c",
+      "note": "Catalog ids, keyed by resolver name. A producer aligned with several catalogs records one entry each, and the id is whatever form that catalog publishes: an integer for one, a string for the next."
+    },
+    {
+      "name": "part-extension-keys",
+      "expect": "valid",
+      "file": "valid/part-extension-keys.cbor",
+      "sha256": "510334f440e3ce3319037baf8204a2ed63118a04f7b9bf2518bb4e9b3bfc057e",
+      "note": "Extension keys sit flat on the header and on a part alike, named by reversing a domain the producer holds or by taking a reserved name in the `x` tree when the value belongs to no one producer. Both kinds ride here."
+    },
+    {
+      "name": "part-unknown-integer-key",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/part-unknown-integer-key.cbor",
+      "sha256": "3d3e28d8c7baf55da1cc3b997ab9f152cdff6ced690593558fda92d71700f0e5",
+      "note": "This schema describes v0.1, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+    },
+    {
+      "name": "header-unknown-integer-key",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/header-unknown-integer-key.cbor",
+      "sha256": "cf63c0ebdc200486b7ec761d6375c42bf37caddf84100923bd771c4e6d563ce8",
+      "note": "This schema describes v0.1, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+    },
+    {
+      "name": "card-without-capacity",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/card-without-capacity.cbor",
+      "sha256": "a55d3ed59a1c0e04c8f0a4011f5badf02094185cccdc166b36c0b804ab20eaf7",
+      "note": "`card` needs both format and capacity; neither is optional."
+    },
+    {
+      "name": "dirent-as-text",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/dirent-as-text.cbor",
+      "sha256": "6361a9e9195c68def17dbfa763b0a74a0b71864ff87824c5b84c3f1c21414560",
+      "note": "`dirent` is a byte string. Text would make it look parseable, which is the one thing this spec promises it is not."
+    },
+    {
+      "name": "kind-as-integer",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/kind-as-integer.cbor",
+      "sha256": "d3f62748e1f84bce89026bf89e4e7f72a6368dd7407e809821d026b86e057e3b",
+      "note": "`kind` is text. An integer here would be a producer reaching for the old tag numbers, which no longer mean anything."
+    },
+    {
+      "name": "empty-parts",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/empty-parts.cbor",
+      "sha256": "1da10af2e7902decd420409636366387b9aced4e0517915c89676920d0db88f2",
+      "note": "A bundle with nothing in it. Every other container in the format forbids its own empty form, and a bundle holding no part carries no save."
+    },
+    {
+      "name": "path-spelled-empty",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/path-spelled-empty.cbor",
+      "sha256": "98c305a0a8ef8e8494205d9e71dc64f46031c70f26bb41f01dad29a04e1f7bca",
+      "note": "A default written out, which would give one part several encodings. The schema catches these two; a spelled-out `role: \"primary\"` it cannot, since `primary` is a well-formed slug, so that one is pinned in layout.test.js."
+    },
+    {
+      "name": "encoding-spelled-none",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/encoding-spelled-none.cbor",
+      "sha256": "6bb97fdead174636d771d39bdd69cd06d21725b90cc19b61486709cd4775fa67",
+      "note": "A default written out, which would give one part several encodings. The schema catches these two; a spelled-out `role: \"primary\"` it cannot, since `primary` is a well-formed slug, so that one is pinned in layout.test.js."
+    },
+    {
+      "name": "role-with-underscore",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/role-with-underscore.cbor",
+      "sha256": "02f98b4a3a97300202345c4f3d2b99bdc01926d849b4c994ca6c3b2618b7ef56",
+      "note": "The pre-coalescing spellings. `memcard_1` and `card_image` were valid when the format ran two slug grammars; one grammar means one spelling, so they are malformed now rather than unrecognized-but-round-trippable."
+    },
+    {
+      "name": "kind-with-underscore",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/kind-with-underscore.cbor",
+      "sha256": "bd0861785e723b9b1fb55a43874cca9e61988d3a7da53980bb305a269c70d754",
+      "note": "The pre-coalescing spellings. `memcard_1` and `card_image` were valid when the format ran two slug grammars; one grammar means one spelling, so they are malformed now rather than unrecognized-but-round-trippable."
+    },
+    {
+      "name": "slug-with-doubled-dash",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/slug-with-doubled-dash.cbor",
+      "sha256": "932f7f416e46d81ac9d2344000312cc02aa05a1a160fb16d6ef32cfba96f8c13",
+      "note": "A slug separates runs with a single dash and carries none at either end, so a doubled or dangling one is malformed rather than an odd name."
+    },
+    {
+      "name": "slug-too-long",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/slug-too-long.cbor",
+      "sha256": "146da53289c9ba1c0bcdf2d1c4481dfad9d1290c45675bb73b1450001da3c7da",
+      "note": "A slug separates runs with a single dash and carries none at either end, so a doubled or dangling one is malformed rather than an odd name."
+    },
+    {
+      "name": "role-with-uppercase",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/role-with-uppercase.cbor",
+      "sha256": "5819ca4bcdf22559eff8809d2ad651d4674b3fd9d985f088097776277938f8d6",
+      "note": "The bare-slug vocabularies are lowercase and closed over their own punctuation. `role`, `kind` and `app` separate words with `_`; `system` and the card format use `-`. A value written in the other convention, or in any case but lower, is malformed rather than an unknown-but-round-trippable value: round-tripping applies to names this decoder has not heard of, not to names that could not have been minted."
+    },
+    {
+      "name": "system-slug-with-underscore",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/system-slug-with-underscore.cbor",
+      "sha256": "8ef284c8958934f567f053a92ec8d066cf467351424b70a9f30f0a5bed8e997f",
+      "note": "The bare-slug vocabularies are lowercase and closed over their own punctuation. `role`, `kind` and `app` separate words with `_`; `system` and the card format use `-`. A value written in the other convention, or in any case but lower, is malformed rather than an unknown-but-round-trippable value: round-tripping applies to names this decoder has not heard of, not to names that could not have been minted."
+    },
+    {
+      "name": "card-format-with-underscore",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/card-format-with-underscore.cbor",
+      "sha256": "cc076c7189b54e4c9fb70a534855b9b2d1e9144bb8708023688d3877069e630f",
+      "note": "The bare-slug vocabularies are lowercase and closed over their own punctuation. `role`, `kind` and `app` separate words with `_`; `system` and the card format use `-`. A value written in the other convention, or in any case but lower, is malformed rather than an unknown-but-round-trippable value: round-tripping applies to names this decoder has not heard of, not to names that could not have been minted."
+    },
+    {
+      "name": "card-format-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/card-format-reverse-dns.cbor",
+      "sha256": "8ee5b9ae90675312f42b18841c51952f9bbbd36a2b0b533f48f15cb57fb7ffef",
+      "note": "A card format is one of three vocabularies a producer may not mint into. An unknown format leaves a consumer unable to write the card back at all, so a reverse-DNS name here is malformed rather than a private extension."
+    },
+    {
+      "name": "device-kind-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/device-kind-reverse-dns.cbor",
+      "sha256": "96fae7c17edf0fad0b899e977c3783931a5d3acc7795881aea639795ad65c916",
+      "note": "Same for a device kind. `app` in the same map names the producer itself and is minted freely, so the two arms of that map pull in opposite directions."
+    },
+    {
+      "name": "role-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/role-reverse-dns.cbor",
+      "sha256": "e0db8f29990d5d2591dd00e97786caa47f48661091c23af34bf72c4a3e71e057",
+      "note": "Same for a role. A socket is hardware and belongs to nobody, and a private name for one could not be matched against a target by anything but its author, which is the whole job the field does."
+    },
+    {
+      "name": "binding-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/binding-reverse-dns.cbor",
+      "sha256": "74a882d45ce98d80af24b4fadbdd5421dfdb2793cc8e50d813838e8f83965c51",
+      "note": "A binding names a category everyone shares, so it is spec-owned too. A private one would split the category instead of extending it, leaving a consumer unable to tell a device binding from an account one."
+    },
+    {
+      "name": "kind-dotted-but-not-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/kind-dotted-but-not-reverse-dns.cbor",
+      "sha256": "06cb948b49419200f52f5f310ebd98550eb93273983a229c444e71c5603ab33b",
+      "note": "A dotted name is a producer's own and therefore has to be a well-formed reverse-DNS name, which forbids `_` in a label. Failing both arms is the point: this is neither a spec slug nor a name anybody could hold."
+    },
+    {
+      "name": "path-too-long",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/path-too-long.cbor",
+      "sha256": "e4d0dd83ef2818ae82127aa4d8a41d4bcc992a74112d0196a97f9cd26f5667e3",
+      "note": "`path` is capped so a consumer can size the head region. 512 is the limit, in bytes rather than characters, since that is what a decoder can check."
+    },
+    {
+      "name": "resolver-name-not-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/resolver-name-not-reverse-dns.cbor",
+      "sha256": "a881c7e7222b0cd706efe1459ee9bcab742455ed92f2b16d5e81df7d01e90771",
+      "note": "A resolver name is minted exactly as an extension key is, so a bare word fails for the same reason: nothing says whose catalog this id is from."
+    },
+    {
+      "name": "extension-key-not-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/extension-key-not-reverse-dns.cbor",
+      "sha256": "78f7f61406f05cb35aed8d7f85971e048f8850b4ffd308a43c110596f81eb95c",
+      "note": "An extension key is a reverse-DNS name or it is nothing. Without that there is no way to tell whose key this is, which is the one thing the namespace buys. A bare word and an uppercase name are both unmintable."
+    },
+    {
+      "name": "extension-key-uppercase",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/extension-key-uppercase.cbor",
+      "sha256": "629a5237df8aefc6bbd384c44c9df1d40f9073a2d053700728ddf2a720a45899",
+      "note": "An extension key is a reverse-DNS name or it is nothing. Without that there is no way to tell whose key this is, which is the one thing the namespace buys. A bare word and an uppercase name are both unmintable."
+    },
+    {
+      "name": "created-at-as-float",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/created-at-as-float.cbor",
+      "sha256": "6731cbba4438c419e4971b8ddc1cb74151a0df3d11c9d892514a60bc994e16c5",
+      "note": "Tag 1 admits a float and this format does not. Left open, one instant would have two conforming encodings and the content hash would stop being a function of what the bundle says."
+    },
+    {
+      "name": "rom-hash-wrong-length",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/rom-hash-wrong-length.cbor",
+      "sha256": "462ac0eb513f8f89b560fc5ff1c1c7535029d4647ff9b253dbce7b797b5a56b1",
+      "note": "A digest has to match the length its algorithm tag implies, and the tag has to be one of the four the shared type defines. Neither is recoverable by guessing, so both are malformed rather than skippable."
+    },
+    {
+      "name": "rom-hash-unknown-tag",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/rom-hash-unknown-tag.cbor",
+      "sha256": "7ac84980f80219f4f3f56b43e2baa8fc86e7f15211e047747d7b18424e08b5cc",
+      "note": "A digest has to match the length its algorithm tag implies, and the tag has to be one of the four the shared type defines. Neither is recoverable by guessing, so both are malformed rather than skippable."
+    },
+    {
+      "name": "empty-rom-hashes",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/empty-rom-hashes.cbor",
+      "sha256": "aaec010a3303cab54a7f644d9116b371f3400a81ccb09f7586248d75d7d78290",
+      "note": "Empty containers, which absence already encodes."
+    },
+    {
+      "name": "empty-game-id",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/empty-game-id.cbor",
+      "sha256": "5e2877cd3ae3f1d59f3ab933c3eed8dd3edc8b2b375de05fe428229edd2fcaee",
+      "note": "Empty containers, which absence already encodes."
+    },
+    {
+      "name": "part-sha256-wrong-length",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/part-sha256-wrong-length.cbor",
+      "sha256": "d77efbe50ba6c078497f0db34acf7b920be44e6a5e45d8de414eb05a9c4e71df",
+      "note": "A part's sha256 is exactly 32 bytes; the spec pins the algorithm, so a shorter digest is a different algorithm smuggled in without its tag."
+    },
+    {
+      "name": "part-sha256-untagged",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/part-sha256-untagged.cbor",
+      "sha256": "0f87c483974b1b382c1c96629dec0ff48f84f63076329e79df96ec3db4d5cb5a",
+      "note": "The tag is what lets a generic reader name the digest, so an untagged one is not a hash value at all. A different algorithm's tag is rejected too: this spec pins sha256 here so that identity has exactly one answer."
+    },
+    {
+      "name": "part-sha256-wrong-algorithm",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/part-sha256-wrong-algorithm.cbor",
+      "sha256": "782116c2d65c4388fcb768d80e3fdcd613089deb87696e8a12a477bb6d2f5853",
+      "note": "The tag is what lets a generic reader name the digest, so an untagged one is not a hash value at all. A different algorithm's tag is rejected too: this spec pins sha256 here so that identity has exactly one answer."
+    },
+    {
+      "name": "size-on-uncompressed-part",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/size-on-uncompressed-part.cbor",
+      "sha256": "3ff48ec8ea2aba891596bb533eb8798a4d8554143bfe02b924a3e49c5ea77ad4",
+      "note": "`size` is carried only where it cannot be derived. An embedded uncompressed payload states its own length, so repeating it invites the two to disagree."
+    },
+    {
+      "name": "payload-at-old-key-8",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/payload-at-old-key-8.cbor",
+      "sha256": "4d54e33c487ca761678a245067315434530dd18826e7c0b635160112b1b5760c",
+      "note": "A pre-renumber bundle, from when the payload sat in the unsigned range. Key 8 is `game` now, and the payload is at -1, so this is rejected rather than read as a game map."
+    },
+    {
+      "name": "indefinite-length-parts",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/indefinite-length-parts.cbor",
+      "sha256": "7609163c81810ec47b0467eecefd051f2c360d48edb85d552fcb100fecdc7f4f",
+      "note": "9f/ff is an indefinite-length array. Definite lengths everywhere is the first thing 4.2 requires, and an encoder that streams without knowing its length ahead of time produces this without meaning to."
+    },
+    {
+      "name": "indefinite-length-part-map",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/indefinite-length-part-map.cbor",
+      "sha256": "bd4fde3f4e3487641e4a1d69e64c74b14dc09ad8d0ddf4b1dadf8785360560e3",
+      "note": "9f/ff is an indefinite-length array. Definite lengths everywhere is the first thing 4.2 requires, and an encoder that streams without knowing its length ahead of time produces this without meaning to."
+    },
+    {
+      "name": "non-preferred-key-head",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/non-preferred-key-head.cbor",
+      "sha256": "a2ab11fc57767ce67df7b845145a4b21826b3556469aaec72e8bed68c37aae87",
+      "note": "18 00 encodes 0 in two bytes where 00 does it in one. Preferred serialization means the shortest head that fits, and a library that always writes a fixed width emits this."
+    },
+    {
+      "name": "non-preferred-value-head",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/non-preferred-value-head.cbor",
+      "sha256": "76af489822bab045009769addb97ac5fee47e197a7ab835c58c4c196ee9aa9c6",
+      "note": "18 00 encodes 0 in two bytes where 00 does it in one. Preferred serialization means the shortest head that fits, and a library that always writes a fixed width emits this."
+    },
+    {
+      "name": "map-keys-out-of-order",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/map-keys-out-of-order.cbor",
+      "sha256": "afe315435f6e1c83f407bca22ee88ba2fbbe3755a3cc44a09cb696e83201fbbd",
+      "note": "Keys sort by the bytewise order of their encodings. Here 9 precedes 0, which decodes to the same map and hashes differently."
+    },
+    {
+      "name": "duplicate-map-key",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/duplicate-map-key.cbor",
+      "sha256": "cf7f74b3e63ff0fbe26aeec2c5b51391d6866d4e39cf814c7f4f0566b87b3250",
+      "note": "Two entries for key 0. A decoder that keeps the last one and a decoder that keeps the first disagree about what the bundle says."
+    },
+    {
+      "name": "parts-out-of-order",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/parts-out-of-order.cbor",
+      "sha256": "89c8b173ca55eb9f837ada6b5ac5070edcb7ac2f89436d7dcf3d64f68cfbf329",
+      "note": "The rules below are not about CBOR heads at all. RFC 8949 4.2 leaves them to the application, and the spec takes them on because the content hash needs them: two encoders given one logical bundle have to agree byte for byte, and text normalisation and array order both break that. Parts are stored in ascending `id` order, always. This one holds id 1 then id 0, which decodes to the same two parts and hashes differently."
+    },
+    {
+      "name": "text-not-nfc",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/text-not-nfc.cbor",
+      "sha256": "48cbbbcea824691ff53ebb1dfcd080d7a0a328ae298ef6c2589dbb7e96c5577f",
+      "note": "Text is in NFC. \"Pokémon\" written with a combining acute (U+0065 U+0301) rather than the precomposed é (U+00E9) is the same string to a reader and a different one to a hash. Real catalogues carry both forms."
+    },
+    {
+      "name": "rom-hashes-out-of-order",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/rom-hashes-out-of-order.cbor",
+      "sha256": "14d6cae7244accbe126c596fe873d77b643032ebd8164b8113c4d66f78e66b19",
+      "note": "Hash values sort ascending by tag, so sha1 (18542) after sha256 (18540). Reversed here."
+    },
+    {
+      "name": "rom-hashes-duplicate-algorithm",
+      "expect": "invalid",
+      "rejected_by": "determinism",
+      "file": "invalid/rom-hashes-duplicate-algorithm.cbor",
+      "sha256": "762b307f6ac81709951031c4a4a2174549d2a75a6b12036143675bd804e328cc",
+      "note": "At most one entry per algorithm. Two sha256 digests name two different files, and nothing says which one the bundle means."
+    },
+    {
+      "name": "nested-part-compressed",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/nested-part-compressed.cbor",
+      "sha256": "eb3f7a1f420e6537a6321c4e0a6a2effa64b41dc99c7a19db335efd9fd7a6e14",
+      "note": "Every part of a nested bundle is uncompressed with its payload embedded, so that an inner bundle's file hash and content hash are the same value. Compression belongs on the outer part."
+    },
+    {
+      "name": "bundle-part-payload-not-a-bundle",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/bundle-part-payload-not-a-bundle.cbor",
+      "sha256": "02336808d4f767c8745c238ce452c2e109abc7c9247732aa18571f960e1ffe87",
+      "note": "A `bundle` part's payload has to decode as a saves-file. This one is a plain save's bytes wearing the kind of a bundle."
+    },
+    {
+      "name": "bundle-part-sha256-mismatch",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/bundle-part-sha256-mismatch.cbor",
+      "sha256": "fc0e05cf320060537d91b8ed37d4efe3b90f4418a1e42ad5d86b3c9afbef3780",
+      "note": "The outer sha256 is the inner bundle's identity, which is what makes extracting a save a byte copy. Here it names bytes the payload is not."
+    },
+    {
+      "name": "nested-deeper-than-two",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/nested-deeper-than-two.cbor",
+      "sha256": "93dbdcaa35a2c9600fd89826a39207ffbf8a1407c2e454096f7c1d8933eb030d",
+      "note": "Depth is capped at 2: a collection of cards of saves fills all three tiers, and a `bundle` part inside the third is one level too far."
+    },
+    {
+      "name": "parts-share-an-address",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/parts-share-an-address.cbor",
+      "sha256": "6054d9c358e3bce084c1030fd6e48921bbd43aa92a72749d1b3fcaff506e4ff8",
+      "note": "No two parts may agree on `role`, `path` and `slot` together, and with all three defaulting to absence two bare parts collide on every one of them. That is a bundle a consumer cannot name a part in, or match against a target, so it cannot act on it at all."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+[package]
+name = "ps2-memcard"
+description = "Read and write PlayStation 2 memory card images: superblock, indirect FAT, directory tree and spare-area ECC"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["encoding", "filesystem", "parser-implementations"]
+keywords = ["playstation2", "ps2", "memcard", "emulation", "savegame"]
+readme = "README.md"
+
+[dependencies]
+
+[lints]
+workspace = true

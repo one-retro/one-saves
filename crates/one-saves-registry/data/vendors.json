@@ -1,0 +1,14 @@
+[
+  {
+    "name": "x.1sav",
+    "kind": "reserved",
+    "vendor": "none",
+    "notes": "Extension keys these specifications define but no producer owns, such as x.1sav.rtc."
+  },
+  {
+    "name": "x.example",
+    "kind": "reserved",
+    "vendor": "none",
+    "notes": "Reserved for documentation. Never assigned."
+  }
+]

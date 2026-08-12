@@ -1,0 +1,321 @@
+[
+  {
+    "slug": "3do",
+    "name": "3DO",
+    "aliases": [
+      "threedo"
+    ]
+  },
+  {
+    "slug": "3ds",
+    "name": "Nintendo 3DS",
+    "aliases": []
+  },
+  {
+    "slug": "atari-2600",
+    "name": "Atari 2600",
+    "aliases": [
+      "2600"
+    ]
+  },
+  {
+    "slug": "atari-5200",
+    "name": "Atari 5200",
+    "aliases": [
+      "5200"
+    ]
+  },
+  {
+    "slug": "atari-7800",
+    "name": "Atari 7800",
+    "aliases": [
+      "7800"
+    ]
+  },
+  {
+    "slug": "atari-jaguar",
+    "name": "Atari Jaguar",
+    "aliases": [
+      "jaguar"
+    ]
+  },
+  {
+    "slug": "atari-jaguar-cd",
+    "name": "Atari Jaguar CD",
+    "aliases": []
+  },
+  {
+    "slug": "atari-lynx",
+    "name": "Atari Lynx",
+    "aliases": [
+      "lynx"
+    ]
+  },
+  {
+    "slug": "c64",
+    "name": "Commodore 64",
+    "aliases": [
+      "commodore64"
+    ]
+  },
+  {
+    "slug": "colecovision",
+    "name": "ColecoVision",
+    "aliases": [
+      "coleco"
+    ]
+  },
+  {
+    "slug": "dreamcast",
+    "name": "Dreamcast",
+    "aliases": [
+      "dc"
+    ]
+  },
+  {
+    "slug": "fds",
+    "name": "Famicom Disk System",
+    "aliases": [
+      "famicomdisk"
+    ]
+  },
+  {
+    "slug": "gb",
+    "name": "Game Boy",
+    "aliases": [
+      "gameboy"
+    ]
+  },
+  {
+    "slug": "gba",
+    "name": "Game Boy Advance",
+    "aliases": [
+      "gameboyadvance"
+    ]
+  },
+  {
+    "slug": "gbc",
+    "name": "Game Boy Color",
+    "aliases": [
+      "gameboycolor"
+    ]
+  },
+  {
+    "slug": "gc",
+    "name": "GameCube",
+    "aliases": [
+      "gamecube",
+      "ngc"
+    ]
+  },
+  {
+    "slug": "genesis",
+    "name": "Sega Genesis",
+    "aliases": [
+      "megadrive",
+      "md"
+    ]
+  },
+  {
+    "slug": "intellivision",
+    "name": "Intellivision",
+    "aliases": [
+      "intv"
+    ]
+  },
+  {
+    "slug": "mame",
+    "name": "Arcade",
+    "aliases": [
+      "arcade"
+    ]
+  },
+  {
+    "slug": "mastersystem",
+    "name": "Master System",
+    "aliases": [
+      "sms"
+    ]
+  },
+  {
+    "slug": "msx",
+    "name": "MSX",
+    "aliases": []
+  },
+  {
+    "slug": "msx2",
+    "name": "MSX2",
+    "aliases": []
+  },
+  {
+    "slug": "n64",
+    "name": "Nintendo 64",
+    "aliases": []
+  },
+  {
+    "slug": "nds",
+    "name": "Nintendo DS",
+    "aliases": []
+  },
+  {
+    "slug": "neogeo",
+    "name": "Neo Geo",
+    "aliases": []
+  },
+  {
+    "slug": "nes",
+    "name": "NES",
+    "aliases": []
+  },
+  {
+    "slug": "ngp",
+    "name": "Neo Geo Pocket",
+    "aliases": [
+      "neogeopocket"
+    ]
+  },
+  {
+    "slug": "ngpc",
+    "name": "Neo Geo Pocket Color",
+    "aliases": [
+      "neogeopocketcolor"
+    ]
+  },
+  {
+    "slug": "odyssey2",
+    "name": "Odyssey 2",
+    "aliases": []
+  },
+  {
+    "slug": "pcengine",
+    "name": "TurboGrafx-16",
+    "aliases": [
+      "pce"
+    ]
+  },
+  {
+    "slug": "pcenginecd",
+    "name": "TurboGrafx-CD",
+    "aliases": [
+      "pcecd"
+    ]
+  },
+  {
+    "slug": "pcfx",
+    "name": "PC-FX",
+    "aliases": []
+  },
+  {
+    "slug": "ps2",
+    "name": "PlayStation 2",
+    "aliases": [
+      "playstation2"
+    ]
+  },
+  {
+    "slug": "ps3",
+    "name": "PlayStation 3",
+    "aliases": [
+      "playstation3"
+    ]
+  },
+  {
+    "slug": "psp",
+    "name": "PlayStation Portable",
+    "aliases": []
+  },
+  {
+    "slug": "psvita",
+    "name": "PlayStation Vita",
+    "aliases": [
+      "vita",
+      "psv"
+    ]
+  },
+  {
+    "slug": "psx",
+    "name": "PlayStation",
+    "aliases": [
+      "playstation",
+      "ps1"
+    ]
+  },
+  {
+    "slug": "saturn",
+    "name": "Sega Saturn",
+    "aliases": []
+  },
+  {
+    "slug": "sega-32x",
+    "name": "Sega 32X",
+    "aliases": [
+      "32x"
+    ]
+  },
+  {
+    "slug": "sega-cd",
+    "name": "Sega CD",
+    "aliases": [
+      "segacd",
+      "scd"
+    ]
+  },
+  {
+    "slug": "sega-gg",
+    "name": "Game Gear",
+    "aliases": [
+      "gamegear",
+      "gg"
+    ]
+  },
+  {
+    "slug": "sg-1000",
+    "name": "SG-1000",
+    "aliases": [
+      "sg"
+    ]
+  },
+  {
+    "slug": "snes",
+    "name": "Super Nintendo",
+    "aliases": []
+  },
+  {
+    "slug": "supergrafx",
+    "name": "SuperGrafx",
+    "aliases": [
+      "sgx"
+    ]
+  },
+  {
+    "slug": "vectrex",
+    "name": "Vectrex",
+    "aliases": []
+  },
+  {
+    "slug": "virtualboy",
+    "name": "Virtual Boy",
+    "aliases": [
+      "vb"
+    ]
+  },
+  {
+    "slug": "wii",
+    "name": "Wii",
+    "aliases": []
+  },
+  {
+    "slug": "wonderswan",
+    "name": "WonderSwan",
+    "aliases": [
+      "ws"
+    ]
+  },
+  {
+    "slug": "wonderswan-color",
+    "name": "WonderSwan Color",
+    "aliases": [
+      "wsc"
+    ]
+  }
+]

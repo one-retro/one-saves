@@ -1,0 +1,26 @@
+[package]
+name = "one-saves-cli"
+description = "The 1saves command-line tool: convert emulator saves and memory cards to and from the Universal Saves Format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "README.md"
+
+[[bin]]
+name = "1saves"
+path = "src/main.rs"
+
+[dependencies]
+one-saves.workspace = true
+one-saves-registry.workspace = true
+one-saves-convert.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+[package]
+name = "one-saves-convert"
+description = "Convert emulator saves and memory cards to and from the Universal Saves Format (.1saves)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "README.md"
+
+[dependencies]
+one-saves.workspace = true
+one-saves-registry.workspace = true
+crc32fast.workspace = true
+md-5.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+quick-xml.workspace = true
+ps2-memcard.workspace = true
+
+[lints]
+workspace = true

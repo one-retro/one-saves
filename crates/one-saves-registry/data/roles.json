@@ -1,0 +1,107 @@
+{
+  "roles": [
+    {
+      "role": "cartridge",
+      "description": "The game cartridge's own save memory, whether battery-backed SRAM, EEPROM or flash.",
+      "common": true,
+      "systems": [
+        "fds"
+      ]
+    },
+    {
+      "role": "extdata",
+      "description": "Extra data a title stores outside its own save, as a directory.",
+      "common": false,
+      "systems": [
+        "3ds"
+      ]
+    },
+    {
+      "role": "internal",
+      "description": "Save storage built into the console itself, as distinct from anything removable.",
+      "common": true,
+      "systems": [
+        "sega-cd",
+        "saturn",
+        "pcengine",
+        "pcenginecd",
+        "neogeo",
+        "psp",
+        "ps3",
+        "psvita"
+      ]
+    },
+    {
+      "role": "neogeo-card",
+      "description": "The Neo Geo memory card, which an arcade cabinet and a home console both take.",
+      "common": false,
+      "systems": [
+        "neogeo"
+      ]
+    },
+    {
+      "role": "primary",
+      "description": "The only socket, or the principal one. The default: a part with no role means this.",
+      "common": true,
+      "systems": []
+    },
+    {
+      "role": "ram-cart",
+      "description": "The Backup RAM Cart, which extends internal storage rather than replacing it. A console can carry saves in both at once.",
+      "common": false,
+      "systems": [
+        "sega-cd",
+        "saturn",
+        "pcengine",
+        "pcenginecd"
+      ]
+    },
+    {
+      "role": "sd",
+      "description": "A removable SD card.",
+      "common": true,
+      "systems": [
+        "wii",
+        "3ds"
+      ]
+    },
+    {
+      "role": "sysnand",
+      "description": "Internal flash holding system-managed save data (Wii, 3DS), as distinct from an SD card.",
+      "common": true,
+      "systems": [
+        "wii",
+        "3ds"
+      ]
+    }
+  ],
+  "prefixes": [
+    {
+      "prefix": "controller-pak-",
+      "description": "N64 Controller Pak slots, one per controller port.",
+      "common": true,
+      "systems": [
+        "n64"
+      ]
+    },
+    {
+      "prefix": "disk-",
+      "description": "Sides of a disk that are written separately, in the game's own order.",
+      "common": true,
+      "systems": [
+        "fds"
+      ]
+    },
+    {
+      "prefix": "memcard-",
+      "description": "Memory card slots, in the console's own order.",
+      "common": true,
+      "systems": [
+        "gc",
+        "dreamcast",
+        "psx",
+        "ps2"
+      ]
+    }
+  ]
+}

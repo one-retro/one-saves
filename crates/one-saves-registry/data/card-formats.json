@@ -1,0 +1,37 @@
+[
+  {
+    "format": "ps1-mc",
+    "dirent_len": 128,
+    "notes": ""
+  },
+  {
+    "format": "ps2-mc",
+    "dirent_len": 512,
+    "notes": "One entry for the save's directory, one per file inside it."
+  },
+  {
+    "format": "n64-cpak",
+    "dirent_len": 32,
+    "notes": ""
+  },
+  {
+    "format": "gc-mc",
+    "dirent_len": 64,
+    "notes": ""
+  },
+  {
+    "format": "vmu",
+    "dirent_len": 32,
+    "notes": ""
+  },
+  {
+    "format": "neogeo-mc",
+    "dirent_len": 4,
+    "notes": ""
+  },
+  {
+    "format": "saturn-bup",
+    "dirent_len": null,
+    "notes": "The entry lives in the first block of the save itself, so the key is absent."
+  }
+]

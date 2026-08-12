@@ -1,0 +1,4 @@
+# The prose in this codebase runs to 100 columns; code is given a little more so that a match arm
+# or a builder chain does not wrap for the sake of a few characters.
+max_width = 110
+use_small_heuristics = "Max"

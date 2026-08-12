@@ -1,0 +1,31 @@
+[package]
+name = "one-saves"
+description = "The Universal Saves Format (.1saves / 1SAV): a deterministic CBOR container for retro console save files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "README.md"
+
+[dependencies]
+dcbor.workspace = true
+sha2.workspace = true
+zstd = { workspace = true, optional = true }
+
+[features]
+default = ["zstd"]
+# Reading and writing parts whose payload carries `encoding: "zstd"`. Without it, such a part
+# decodes and round-trips fine but its payload cannot be inflated, so a content hash cannot be
+# computed for a bundle that has one.
+zstd = ["dep:zstd"]
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
