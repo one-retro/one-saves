@@ -6,6 +6,7 @@ members = [
     "crates/one-saves-convert",
     "crates/one-saves-cli",
     "crates/ps2-memcard",
+    "xtask",
 ]
 
 [workspace.package]

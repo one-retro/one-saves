@@ -1,0 +1,3 @@
+[alias]
+# `cargo xtask <task>` runs the maintainer tasks in ./xtask.
+xtask = "run --quiet --package xtask --"

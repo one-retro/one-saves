@@ -136,8 +136,14 @@ cargo test --workspace
 ```
 
 The registry data under `crates/one-saves-registry/data/` is synced from the registry pages at
-[docs.1retro.com][spec] with `tools/sync-registries.py`, then turned into Rust with
-`tools/generate-registry-rs.py`. Both are maintainer tools; nothing at build time needs them.
+[docs.1retro.com][spec]:
+
+```console
+cargo xtask registries --docs ../docs.1retro.com
+```
+
+Without `--docs` it rebuilds the Rust tables from the JSON already in the repository, which is what
+CI checks. Nothing at build time needs either form.
 
 ## Status
 

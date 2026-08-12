@@ -60,10 +60,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.12"
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
       # The generated tables are committed, so a hand edit to either half shows up as a diff here
-      # rather than as a silent divergence from the JSON.
-      - run: python3 tools/generate-registry-rs.py
+      # rather than as a silent divergence from the JSON. This needs nothing fetched: without
+      # --docs the task rebuilds the tables from the JSON already in the repository.
+      - run: cargo xtask registries
       - run: git diff --exit-code crates/one-saves-registry/src/generated.rs

@@ -67,9 +67,13 @@ harness checks it, so a hand edit shows up as corruption rather than as a passin
 The registry data is generated from the registry pages at docs.1retro.com:
 
 ```console
-python3 tools/sync-registries.py          # markdown tables  -> crates/one-saves-registry/data/*.json
-python3 tools/generate-registry-rs.py     # that JSON        -> src/generated.rs
+cargo xtask registries --docs ../docs.1retro.com   # pages -> data/*.json -> src/generated.rs
 cargo test -p one-saves-registry
 ```
 
-Both expect the docs repository checked out beside this one. Neither runs at build time.
+Without `--docs` the task rebuilds the tables from the JSON this repository already carries, which
+is what CI runs: it checks the committed tables still match their data and needs nothing fetched.
+
+Neither form runs at build time. The JSON is kept as well as the generated Rust because it is what
+makes a registry change reviewable — a diff of the tables is a diff of the data, not of a wall of
+static initialisers.
