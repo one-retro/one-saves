@@ -144,7 +144,10 @@ impl Catalog {
         use quick_xml::events::Event;
 
         let mut reader = Reader::from_str(text);
-        reader.config_mut().trim_text(true);
+        // Not trimmed by the reader: it trims each event, and a run split by an entity reference
+        // arrives as several. Trimming per fragment would eat the spaces around the entity and
+        // turn `Tom &amp; Jerry` into `Tom&Jerry`. The joined text is trimmed instead.
+        reader.config_mut().trim_text(false);
 
         let mut entries = Vec::new();
         let mut catalog_name = None;
@@ -154,6 +157,8 @@ impl Catalog {
         // The name of the element whose text we are inside. Tracked for every element, not only
         // the ones in the header, because a game's serial is an element of its own.
         let mut element = String::new();
+        // Characters seen inside the current element, joined back up.
+        let mut text = String::new();
         let mut buffer = Vec::new();
 
         loop {
@@ -176,22 +181,35 @@ impl Catalog {
                         _ => {}
                     }
                     element = String::from_utf8_lossy(name.as_ref()).into_owned();
+                    text.clear();
                 }
+                // An element's text is settled at its close rather than as it arrives, because a
+                // single run of characters reaches us as several events: an entity reference
+                // splits it, so `Tom &amp; Jerry` is three. Acting on the first would keep `Tom`.
                 Ok(Event::End(tag)) => {
-                    if tag.name().as_ref() == b"header" {
-                        in_header = false;
-                    }
-                    element.clear();
-                }
-                Ok(Event::Text(text)) => {
-                    let value = text.unescape().unwrap_or_default().trim().to_owned();
-                    match element.as_str() {
+                    let value = text.trim().to_owned();
+                    match tag.name().as_ref() {
                         // A game names itself in an attribute, so a `name` element is the
                         // catalog's own and appears only in the header.
-                        "name" if in_header && catalog_name.is_none() => catalog_name = Some(value),
+                        b"name" if in_header && catalog_name.is_none() => catalog_name = Some(value),
                         // No-Intro puts a disc's product code in an element of its own.
-                        "serial" if !in_header => serial = Some(value),
+                        b"serial" if !in_header => serial = Some(value),
+                        b"header" => in_header = false,
                         _ => {}
+                    }
+                    text.clear();
+                    element.clear();
+                }
+                Ok(Event::Text(chunk)) => text.push_str(&text_of(&chunk)),
+                // `&amp;` and `&#38;` alike, which the reader hands over separately from the text
+                // around them.
+                Ok(Event::GeneralRef(entity)) => {
+                    if let Ok(name) = entity.decode() {
+                        let written = format!("&{name};");
+                        // An entity nothing defines is left as written rather than dropped.
+                        let resolved = quick_xml::escape::unescape(&written)
+                            .map_or_else(|_| written.clone(), std::borrow::Cow::into_owned);
+                        text.push_str(&resolved);
                     }
                 }
                 Ok(Event::Empty(tag)) => {
@@ -288,11 +306,31 @@ impl Catalog {
     }
 }
 
+/// A text event's content: decoded, end-of-lines normalised, and entities resolved.
+///
+/// Those are three separate operations in quick-xml and only the first two come from the event.
+/// Skipping the third leaves a catalog full of `Tom &amp; Jerry` — which no digest lookup would
+/// notice, since matching is on bytes, but every listing would show.
+fn text_of(text: &quick_xml::events::BytesText<'_>) -> String {
+    let Ok(decoded) = text.xml10_content() else {
+        return String::new();
+    };
+    // Not trimmed: this is one fragment of a run that may continue after an entity reference, so
+    // its edges are interior once the pieces are joined.
+    match quick_xml::escape::unescape(&decoded) {
+        Ok(unescaped) => unescaped.into_owned(),
+        // An entity this crate cannot resolve is left as written rather than dropping the name.
+        Err(_) => decoded.into_owned(),
+    }
+}
+
 fn attribute(tag: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Option<String> {
-    tag.attributes()
-        .flatten()
-        .find(|a| a.key.as_ref() == key)
-        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+    tag.attributes().flatten().find(|a| a.key.as_ref() == key).map(|a| {
+        // Attribute values are escaped too, and a game names itself in one. DAT files carry no
+        // XML declaration, which is the case `Implicit1_0` names.
+        a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+            .map_or_else(|_| String::from_utf8_lossy(&a.value).into_owned(), std::borrow::Cow::into_owned)
+    })
 }
 
 fn unquote(text: &str) -> String {
@@ -459,6 +497,25 @@ game (
         let before = game.clone();
         assert!(!catalog.enrich(&mut game));
         assert_eq!(game, before);
+    }
+
+    #[test]
+    fn entities_are_resolved_in_both_names_and_elements() {
+        // A catalog full of ampersands is the common case rather than an edge one, and they are
+        // escaped wherever they appear: in the attribute a game names itself with, and in the
+        // element a serial sits in.
+        let dat = r#"<datafile>
+          <header><name>Tom &amp; Jerry Collection</name></header>
+          <game name="Tom &amp; Jerry (USA)">
+            <serial>DMG-T&amp;J-USA</serial>
+            <rom name="a" crc="11111111"/>
+          </game>
+        </datafile>"#;
+        let catalog = Catalog::parse(dat).expect("parses");
+
+        assert_eq!(catalog.name.as_deref(), Some("Tom & Jerry Collection"));
+        assert_eq!(catalog.entries()[0].name, "Tom & Jerry (USA)");
+        assert_eq!(catalog.entries()[0].serial.as_deref(), Some("DMG-T&J-USA"));
     }
 
     #[test]

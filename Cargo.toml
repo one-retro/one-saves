@@ -29,14 +29,14 @@ one-saves-convert = { version = "0.1.0", path = "crates/one-saves-convert" }
 ps2-memcard = { version = "0.1.0", path = "crates/ps2-memcard" }
 
 dcbor = "0.25"
-sha1 = "0.10"
-sha2 = "0.10"
-md-5 = "0.10"
+sha1 = "0.11"
+sha2 = "0.11"
+md-5 = "0.11"
 crc32fast = "1.4"
 unicode-normalization = "0.1"
 zstd = "0.13"
 clap = { version = "4.5", features = ["derive"] }
-quick-xml = "0.37"
+quick-xml = "0.41"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
