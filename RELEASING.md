@@ -27,15 +27,13 @@ done
 ## Before publishing
 
 ```console
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features
-cargo test --workspace --all-features
-cargo test -p one-saves --no-default-features
-cargo +1.88 check --workspace --all-features        # the declared MSRV
-cargo doc --workspace --no-deps
+just check      # fmt, lint, tests, docs, and the registry drift check
+just msrv       # the declared minimum Rust version
+just package    # dry-run packaging, in dependency order
 ```
 
-CI runs all of these. It also regenerates `crates/one-saves-registry/src/generated.rs` from the
+CI runs everything `just check` does. `just msrv` is checked there too; `just package` is not,
+since the last two crates cannot be packaged until their dependencies are published. It also regenerates `crates/one-saves-registry/src/generated.rs` from the
 committed JSON and fails on a diff, so a hand edit to either half shows up rather than diverging
 quietly.
 
@@ -54,9 +52,7 @@ The corpus under `crates/one-saves/tests/conformance/` is copied from the specif
 repository. When that spec moves:
 
 ```console
-rm -rf crates/one-saves/tests/conformance
-cp -R ../docs.1retro.com/conformance/universal-saves crates/one-saves/tests/conformance
-cargo test -p one-saves --test conformance
+just vendor-conformance       # defaults to ../docs.1retro.com
 ```
 
 Do not edit anything under that directory by hand. The manifest carries a digest per case, and the
@@ -67,8 +63,8 @@ harness checks it, so a hand edit shows up as corruption rather than as a passin
 The registry data is generated from the registry pages at docs.1retro.com:
 
 ```console
-cargo xtask registries --docs ../docs.1retro.com   # pages -> data/*.json -> src/generated.rs
-cargo test -p one-saves-registry
+just sync-registries          # defaults to ../docs.1retro.com
+just sync-registries ../elsewhere
 ```
 
 Without `--docs` the task rebuilds the tables from the JSON this repository already carries, which

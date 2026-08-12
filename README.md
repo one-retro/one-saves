@@ -135,6 +135,15 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+There is a [`just`](https://just.systems) file for the rest. `just check` runs what CI runs, in
+the order CI runs it, so a green run locally means a green run there:
+
+```console
+just            # list the recipes
+just check      # fmt, lint, tests, docs, and the registry drift check
+just fixtures   # the converters against the real emulator saves under data/
+```
+
 The registry data under `crates/one-saves-registry/data/` is synced from the registry pages at
 [docs.1retro.com][spec]:
 
