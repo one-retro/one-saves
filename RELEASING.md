@@ -17,20 +17,39 @@ dependency order. A crate cannot be packaged until everything it depends on is a
 `one-saves-registry` and `ps2-memcard` depend on nothing in this workspace and can go at any point
 before step 4.
 
+Cargo works that order out itself, so the whole workspace goes in one command. It publishes in
+dependency order and waits for each crate to appear in the index before the next one needs it:
+
+```console
+cargo publish --workspace
+```
+
+`xtask` is not published; it carries `publish = false`.
+
+On cargo older than 1.90, `--workspace` is not available and the crates go one at a time, in the
+order above, pausing between each for the index to catch up:
+
 ```console
 for crate in one-saves one-saves-registry ps2-memcard one-saves-convert one-saves-cli; do
   cargo publish -p "$crate"
-  # Wait for the index to catch up before the next one, or its path dependency will not resolve.
 done
 ```
 
 ## Before publishing
 
 ```console
-just check      # fmt, lint, tests, docs, and the registry drift check
-just msrv       # the declared minimum Rust version
-just package    # dry-run packaging, in dependency order
+git push                          # a published crate records its commit; make it fetchable first
+just check                        # fmt, lint, tests, docs, and the registry drift check
+just msrv                         # the declared minimum Rust version
+cargo publish --workspace --dry-run
 ```
+
+The dry run does everything but upload: it packages each crate, then builds the dependent ones
+against the packaged copies rather than against the workspace, which is what catches a file that
+the tests reach for but `cargo package` leaves out.
+
+Publishing cannot be undone. A version can be yanked, which stops new dependants resolving it, but
+it stays downloadable and its number can never be reused — and the crate name is claimed for good.
 
 CI runs everything `just check` does. `just msrv` is checked there too; `just package` is not,
 since the last two crates cannot be packaged until their dependencies are published. It also regenerates `crates/one-saves-registry/src/generated.rs` from the
