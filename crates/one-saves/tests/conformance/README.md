@@ -2,9 +2,12 @@
 
 Bundles for testing an implementation of the
 [Universal Saves Format](https://docs.1retro.com/specifications/universal-saves-format/). The layout, the manifest
-fields and how to run a corpus are in the [parent README](../README.md); this page covers what is specific to this spec.
+fields and how to run a corpus are described with the
+[specifications](https://docs.1retro.com/specifications/); this page covers what is specific to this spec.
 
-Cases are generated from `test/bundles.js`.
+Cases are generated from `test/bundles.js` in the specifications repository. This copy is
+vendored: re-copy it with `just vendor-conformance` rather than editing it here. The manifest
+carries a digest per case and the harness checks it, so a hand edit shows up as corruption.
 
 ## What a green run does not cover
 

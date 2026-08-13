@@ -24,6 +24,10 @@ default = ["zstd"]
 # computed for a bundle that has one.
 zstd = ["dep:zstd"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dev-dependencies]
 serde_json.workspace = true
 
