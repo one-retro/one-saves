@@ -2,7 +2,14 @@
 //!
 //! No-Intro, Redump, TOSEC and MAME all publish their sets as DAT files, in one of two shapes:
 //! Logiqx XML, which is what the download sites serve, and the older ClrMamePro text format.
-//! Both are read here, since which one a user has is not their choice to make.
+//! Both are accepted, since which one a user has is not their choice to make.
+//!
+//! The XML is [`datary`]'s to read. It models the dialects those projects actually publish and
+//! types every digest, which is a larger job than a save converter should be doing inline — and a
+//! job with more corners than it looks: entity references split a run of text, attribute values
+//! are escaped too, and a reader that misses either quietly truncates a game's name. What is left
+//! in this module is the ClrMamePro shape, which has no such crate, and the mapping of both onto
+//! one [`Entry`].
 //!
 //! A catalog is matched **by digest, never by filename**. A filename says what somebody called
 //! the file; a digest says which dump it is, and that is the question a catalog answers.
@@ -139,109 +146,31 @@ impl Catalog {
     }
 
     /// Reads the Logiqx XML shape, which is what the download sites serve.
+    ///
+    /// The parsing is [`datary`]'s, which models the dialects No-Intro, Redump and TOSEC publish
+    /// rather than the subset one reader happened to need. What is left here is the mapping onto
+    /// this crate's [`Entry`], since a catalog has to present one shape whichever format it came
+    /// from.
     fn parse_logiqx(text: &str) -> Result<Self> {
-        use quick_xml::Reader;
-        use quick_xml::events::Event;
+        let datafile = datary::from_str(text)
+            .map_err(|error| Error::NotThisFormat { format: "Logiqx DAT", why: error.to_string() })?;
 
-        let mut reader = Reader::from_str(text);
-        // Not trimmed by the reader: it trims each event, and a run split by an entity reference
-        // arrives as several. Trimming per fragment would eat the spaces around the entity and
-        // turn `Tom &amp; Jerry` into `Tom&Jerry`. The joined text is trimmed instead.
-        reader.config_mut().trim_text(false);
-
-        let mut entries = Vec::new();
-        let mut catalog_name = None;
-        let mut game_name = String::new();
-        let mut serial = None;
-        let mut in_header = false;
-        // The name of the element whose text we are inside. Tracked for every element, not only
-        // the ones in the header, because a game's serial is an element of its own.
-        let mut element = String::new();
-        // Characters seen inside the current element, joined back up.
-        let mut text = String::new();
-        let mut buffer = Vec::new();
-
-        loop {
-            match reader.read_event_into(&mut buffer) {
-                Err(error) => {
-                    return Err(Error::NotThisFormat {
-                        format: "Logiqx DAT",
-                        why: format!("at position {}: {error}", reader.buffer_position()),
-                    });
-                }
-                Ok(Event::Eof) => break,
-                Ok(Event::Start(tag)) => {
-                    let name = tag.name();
-                    match name.as_ref() {
-                        b"header" => in_header = true,
-                        b"game" | b"machine" => {
-                            game_name = attribute(&tag, b"name").unwrap_or_default();
-                            serial = None;
-                        }
-                        _ => {}
-                    }
-                    element = String::from_utf8_lossy(name.as_ref()).into_owned();
-                    text.clear();
-                }
-                // An element's text is settled at its close rather than as it arrives, because a
-                // single run of characters reaches us as several events: an entity reference
-                // splits it, so `Tom &amp; Jerry` is three. Acting on the first would keep `Tom`.
-                Ok(Event::End(tag)) => {
-                    let value = text.trim().to_owned();
-                    match tag.name().as_ref() {
-                        // A game names itself in an attribute, so a `name` element is the
-                        // catalog's own and appears only in the header.
-                        b"name" if in_header && catalog_name.is_none() => catalog_name = Some(value),
-                        // No-Intro puts a disc's product code in an element of its own.
-                        b"serial" if !in_header => serial = Some(value),
-                        b"header" => in_header = false,
-                        _ => {}
-                    }
-                    text.clear();
-                    element.clear();
-                }
-                Ok(Event::Text(chunk)) => text.push_str(&text_of(&chunk)),
-                // `&amp;` and `&#38;` alike, which the reader hands over separately from the text
-                // around them.
-                Ok(Event::GeneralRef(entity)) => {
-                    if let Ok(name) = entity.decode() {
-                        let written = format!("&{name};");
-                        // An entity nothing defines is left as written rather than dropped.
-                        let resolved = quick_xml::escape::unescape(&written)
-                            .map_or_else(|_| written.clone(), std::borrow::Cow::into_owned);
-                        text.push_str(&resolved);
-                    }
-                }
-                Ok(Event::Empty(tag)) => {
-                    if tag.name().as_ref() != b"rom" {
-                        continue;
-                    }
-                    let hashes = [
-                        (HashAlgorithm::Sha256, "sha256"),
-                        (HashAlgorithm::Sha1, "sha1"),
-                        (HashAlgorithm::Crc32, "crc"),
-                        (HashAlgorithm::Md5, "md5"),
-                    ]
-                    .into_iter()
-                    .filter_map(|(algorithm, key)| {
-                        let text = attribute(&tag, key.as_bytes())?;
-                        hash_from_hex(algorithm, &text)
-                    })
-                    .collect();
-
-                    entries.push(Entry {
-                        name: game_name.clone(),
-                        rom_name: attribute(&tag, b"name").unwrap_or_default(),
-                        size: attribute(&tag, b"size").and_then(|s| s.parse().ok()),
-                        hashes,
-                        serial: serial.clone(),
-                    });
-                }
-                Ok(_) => {}
-            }
-            buffer.clear();
-        }
-        Ok(Self::index(entries, catalog_name))
+        let name = datafile.header.as_ref().map(|header| header.name.clone());
+        let entries = datafile
+            .games
+            .iter()
+            .flat_map(|game| {
+                game.roms.iter().map(move |rom| Entry {
+                    name: game.name.clone(),
+                    rom_name: rom.name.clone(),
+                    // Logiqx makes `size` mandatory, so absence is not a case here.
+                    size: Some(rom.size),
+                    hashes: rom_hashes(rom),
+                    serial: rom.serial.clone(),
+                })
+            })
+            .collect();
+        Ok(Self::index(entries, name))
     }
 
     /// Reads the older ClrMamePro text shape.
@@ -306,31 +235,31 @@ impl Catalog {
     }
 }
 
-/// A text event's content: decoded, end-of-lines normalised, and entities resolved.
+/// Every digest a catalog entry carries, as this crate's values.
 ///
-/// Those are three separate operations in quick-xml and only the first two come from the event.
-/// Skipping the third leaves a catalog full of `Tom &amp; Jerry` — which no digest lookup would
-/// notice, since matching is on bytes, but every listing would show.
-fn text_of(text: &quick_xml::events::BytesText<'_>) -> String {
-    let Ok(decoded) = text.xml10_content() else {
-        return String::new();
+/// There is no hex to parse and no length to check: `datary` types its digests, so a value that
+/// reached this point is already the right width. CRC-32 is the exception, being a `u32` rather
+/// than a byte string; it is laid out big-endian, which is the order its eight hex digits read in.
+fn rom_hashes(rom: &datary::Rom) -> Vec<HashValue> {
+    let mut hashes = Vec::new();
+    let mut push = |algorithm, digest: Vec<u8>| {
+        if let Ok(value) = HashValue::new(algorithm, digest) {
+            hashes.push(value);
+        }
     };
-    // Not trimmed: this is one fragment of a run that may continue after an entity reference, so
-    // its edges are interior once the pieces are joined.
-    match quick_xml::escape::unescape(&decoded) {
-        Ok(unescaped) => unescaped.into_owned(),
-        // An entity this crate cannot resolve is left as written rather than dropping the name.
-        Err(_) => decoded.into_owned(),
+    if let Some(crc) = rom.crc {
+        push(HashAlgorithm::Crc32, crc.0.to_be_bytes().to_vec());
     }
-}
-
-fn attribute(tag: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Option<String> {
-    tag.attributes().flatten().find(|a| a.key.as_ref() == key).map(|a| {
-        // Attribute values are escaped too, and a game names itself in one. DAT files carry no
-        // XML declaration, which is the case `Implicit1_0` names.
-        a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
-            .map_or_else(|_| String::from_utf8_lossy(&a.value).into_owned(), std::borrow::Cow::into_owned)
-    })
+    if let Some(md5) = rom.md5.as_ref() {
+        push(HashAlgorithm::Md5, md5.as_bytes().to_vec());
+    }
+    if let Some(sha1) = rom.sha1.as_ref() {
+        push(HashAlgorithm::Sha1, sha1.as_bytes().to_vec());
+    }
+    if let Some(sha256) = rom.sha256.as_ref() {
+        push(HashAlgorithm::Sha256, sha256.as_bytes().to_vec());
+    }
+    hashes
 }
 
 fn unquote(text: &str) -> String {
@@ -385,9 +314,8 @@ mod tests {
   </header>
   <game name="Pokemon - Red Version (USA, Europe)">
     <description>Pokemon - Red Version (USA, Europe)</description>
-    <serial>DMG-APAE-USA</serial>
     <rom name="Pokemon - Red Version (USA, Europe).gb" size="1048576"
-         crc="9F7FDD53" md5="3d45c1ee9abd5738df46d2bdda8b57dc"
+         serial="DMG-APAE-USA" crc="9F7FDD53" md5="3d45c1ee9abd5738df46d2bdda8b57dc"
          sha1="ea9bcae617fdf159b045185467ae58b2e4a48b9a"/>
   </game>
   <game name="Tetris (World) (Rev 1)">
@@ -502,13 +430,13 @@ game (
     #[test]
     fn entities_are_resolved_in_both_names_and_elements() {
         // A catalog full of ampersands is the common case rather than an edge one, and they are
-        // escaped wherever they appear: in the attribute a game names itself with, and in the
-        // element a serial sits in.
+        // escaped wherever they appear: in the element the catalog names itself in, and in the
+        // attributes carrying a game's name and a dump's product code.
         let dat = r#"<datafile>
           <header><name>Tom &amp; Jerry Collection</name></header>
           <game name="Tom &amp; Jerry (USA)">
-            <serial>DMG-T&amp;J-USA</serial>
-            <rom name="a" crc="11111111"/>
+            <description>Tom &amp; Jerry (USA)</description>
+            <rom name="a" size="1" serial="DMG-T&amp;J-USA" crc="11111111"/>
           </game>
         </datafile>"#;
         let catalog = Catalog::parse(dat).expect("parses");

@@ -205,6 +205,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "datary"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6df920537a150b43e02cd333da932791b235b01eca642a0207556d14aad371d"
+dependencies = [
+ "digest",
+ "md-5",
+ "quick-xml",
+ "serde",
+ "sha1",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "dcbor"
 version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -433,11 +448,11 @@ name = "one-saves-convert"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "datary",
  "md-5",
  "one-saves",
  "one-saves-registry",
  "ps2-memcard",
- "quick-xml",
  "sha1",
  "sha2",
 ]
@@ -484,6 +499,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]
