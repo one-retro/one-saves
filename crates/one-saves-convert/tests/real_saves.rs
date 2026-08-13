@@ -34,8 +34,13 @@ struct Fixture {
     len: usize,
     /// The cartridge clock: days, hours, minutes, seconds.
     clock: (u32, u32, u32, u32),
-    /// The instant the reading was taken.
-    instant: i64,
+    /// The instant the save was written: the point the counters advance *from*, never the
+    /// reading itself.
+    anchor: i64,
+    /// What the cartridge clock therefore showed — the anchor plus the elapsed time above. This
+    /// is the number `x.1sav.rtc` carries, and on the Pocket sample it is 2.8 days from the
+    /// anchor, so writing the anchor there would be visibly wrong rather than subtly so.
+    reading: i64,
     /// A sidecar clock file beside the save, and the instant it was written.
     sidecar: Option<(&'static str, i64)>,
 }
@@ -51,7 +56,8 @@ fn fixtures() -> Vec<Fixture> {
             system: "gb",
             len: 32_816,
             clock: (0, 0, 2, 13),
-            instant: 1_786_559_074,
+            anchor: 1_786_559_074,
+            reading: 1_786_559_207,
             sidecar: None,
         },
         // Appended, one 512-byte SD block: a write time and the registers bit-packed.
@@ -61,7 +67,8 @@ fn fixtures() -> Vec<Fixture> {
             system: "gb",
             len: 33_280,
             clock: (0, 0, 2, 17),
-            instant: 1_786_533_688,
+            anchor: 1_786_533_688,
+            reading: 1_786_533_825,
             sidecar: None,
         },
         // The same packing as MiSTer, in a 16-byte reserved region.
@@ -71,7 +78,8 @@ fn fixtures() -> Vec<Fixture> {
             system: "gb",
             len: 32_784,
             clock: (2, 19, 49, 7),
-            instant: 1_786_532_469,
+            anchor: 1_786_532_469,
+            reading: 1_786_776_616,
             sidecar: None,
         },
         // A sidecar holding an origin rather than a reading. The instant is stated because the
@@ -82,7 +90,8 @@ fn fixtures() -> Vec<Fixture> {
             system: "gb",
             len: 32_768,
             clock: (0, 0, 4, 54),
-            instant: 1_786_558_622,
+            anchor: 1_786_558_622,
+            reading: 1_786_558_916,
             sidecar: Some(("Pokemon - Crystal Version (USA, Europe) (Rev 1).rtc", 1_786_558_622)),
         },
     ]
@@ -92,6 +101,18 @@ fn fixtures() -> Vec<Fixture> {
 fn budude2_later() -> PathBuf {
     fixtures_root()
         .join("GBC/Pokemon Crystal/budude2/Pokemon - Crystal Version (USA, Europe) (Rev 1).5min.sav")
+}
+
+/// The instant a bundle's `x.1sav.rtc` carries, read back the way any consumer would.
+fn reading_of(bundle: &Bundle) -> Option<i64> {
+    let map = bundle.header.extensions.get(&rtc::rtc_key())?.as_map()?;
+    match map.get::<u64, one_saves::dcbor::CBOR>(0)?.as_case() {
+        one_saves::dcbor::CBORCase::Tagged(_, inner) => match inner.as_case() {
+            one_saves::dcbor::CBORCase::Unsigned(n) => i64::try_from(*n).ok(),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Skips rather than fails when the fixtures are not present, which is the case for a packaged
@@ -164,7 +185,17 @@ fn every_real_save_decodes_to_the_clock_it_was_taken_with() {
             "{}: cartridge clock",
             fixture.path
         );
-        assert_eq!(clock.written_at, fixture.instant, "{}: instant", fixture.path);
+        assert_eq!(clock.written_at, fixture.anchor, "{}: anchor", fixture.path);
+
+        // And the reading is the anchor plus that elapsed time, which is the distinction the key
+        // exists to make. A producer that cannot compute it omits the key; none here has to.
+        assert_eq!(clock.reading().instant, fixture.reading, "{}: reading", fixture.path);
+        assert_eq!(
+            reading_of(&bundle),
+            Some(fixture.reading),
+            "{}: the reading written to the header",
+            fixture.path
+        );
     }
 }
 
@@ -241,15 +272,17 @@ fn one_cartridge_clock_reads_the_same_through_every_producer() {
         let (_, bundle) = fixture.wrap();
         shapes.insert(format!("{:?}", rtc::form_of(&bundle)));
 
-        // Whatever the shape, the reading is in the same place and says the same kind of thing.
+        // Whatever the shape, the reading is in the same place and says the same kind of thing:
+        // key 0, tagged, and nothing else. `accuracy_ms` is omitted because nothing here can
+        // measure it, and which clock produced it is not a field at all.
         let reading = bundle.header.extensions.get(&rtc::rtc_key()).expect("a reading");
         let map = reading.as_map().expect("a map");
-        assert_eq!(
-            map.get::<u64, one_saves::dcbor::CBOR>(1).and_then(|c| c.as_text().map(str::to_owned)),
-            Some(rtc::SOURCE_CLOCK_MBC3.to_owned()),
-            "{}: source_clock",
+        assert!(
+            map.get::<u64, one_saves::dcbor::CBOR>(0).is_some_and(|v| v.as_tagged_value().is_some()),
+            "{}: key 0 should be a tagged instant",
             fixture.path
         );
+        assert!(map.get::<u64, one_saves::dcbor::CBOR>(1).is_none(), "{}: no accuracy", fixture.path);
     }
     assert!(shapes.len() >= 3, "the fixtures should cover several shapes, got {shapes:?}");
 }

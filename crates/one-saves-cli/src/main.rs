@@ -439,7 +439,7 @@ fn inspect(path: &Path) -> Fallible {
     }
     for (key, value) in &header.extensions {
         if key.as_str() == one_saves_convert::rtc::RTC_KEY {
-            println!("  clock        {}", describe_clock(value));
+            println!("  clock        {}", describe_clock(value, &header.extensions));
         } else {
             println!("  extension    {key}");
         }
@@ -465,8 +465,11 @@ fn inspect(path: &Path) -> Fallible {
     Ok(())
 }
 
-/// Renders an `x.1sav.rtc` value, which is a Unix instant and the clock that produced it.
-fn describe_clock(value: &one_saves::dcbor::CBOR) -> String {
+/// Renders an `x.1sav.rtc` value: what the clock showed, as a Unix instant.
+///
+/// Which chip produced it is not part of the value — the key names an instant and nothing else —
+/// so the chip is named from whichever sibling key sits beside it.
+fn describe_clock(value: &one_saves::dcbor::CBOR, extensions: &one_saves::Extensions) -> String {
     let Some(map) = value.as_map() else {
         return "unreadable".to_owned();
     };
@@ -482,11 +485,25 @@ fn describe_clock(value: &one_saves::dcbor::CBOR) -> String {
             _ => None,
         })
         .unwrap_or_else(|| "?".to_owned());
-    let clock = map
+
+    // A sibling under the same root is a chip's own state; its last label is the chip's name.
+    let chip = extensions
+        .keys()
+        .filter(|k| k.as_str() != one_saves_convert::rtc::RTC_KEY)
+        .find_map(|k| k.as_str().strip_prefix(&format!("{}.", one_saves_convert::rtc::RTC_KEY)));
+
+    let accuracy = map
         .get::<u64, one_saves::dcbor::CBOR>(1)
-        .and_then(|c| c.as_text().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "?".to_owned());
-    format!("{clock}, read at epoch {instant}")
+        .and_then(|a| match a.as_case() {
+            one_saves::dcbor::CBORCase::Unsigned(ms) => Some(format!(", ±{ms}ms")),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    match chip {
+        Some(chip) => format!("epoch {instant}{accuracy} ({chip})"),
+        None => format!("epoch {instant}{accuracy}"),
+    }
 }
 
 fn verify(path: &Path) -> Fallible {

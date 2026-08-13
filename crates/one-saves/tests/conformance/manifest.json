@@ -1,6 +1,6 @@
 {
   "corpus": "Universal Saves Format conformance cases",
-  "spec_version": "0.2",
+  "spec_version": "0.1",
   "generated_from": "test/bundles.js",
   "counts": {
     "valid": 24,
@@ -88,7 +88,7 @@
       "name": "fully-identified",
       "expect": "valid",
       "file": "valid/fully-identified.cbor",
-      "sha256": "f6f7bed2a65cfb52c8a7abde571445b1a7ac3f77e0a5e98d359e8ffe58802ca0",
+      "sha256": "ce40fe11adb8f8b0689a6dc8789eb91e1ef8b6630319a9ab97b3cb1f654d8a67",
       "note": "Every identification hint at once, plus a populated metadata slot. A real producer emits the hashes it has already computed rather than all four; this is the upper bound, and the only fixture carrying a clock reading."
     },
     {
@@ -172,7 +172,7 @@
       "name": "part-extension-keys",
       "expect": "valid",
       "file": "valid/part-extension-keys.cbor",
-      "sha256": "510334f440e3ce3319037baf8204a2ed63118a04f7b9bf2518bb4e9b3bfc057e",
+      "sha256": "08d0ad4b558900ab43e729ae3d5c84bc0e7de7a0751f5e443f39428c5ce59e9a",
       "note": "Extension keys sit flat on the header and on a part alike, named by reversing a domain the producer holds or by taking a reserved name in the `x` tree when the value belongs to no one producer. Both kinds ride here."
     },
     {

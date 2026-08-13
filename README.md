@@ -156,7 +156,7 @@ CI checks. Nothing at build time needs either form.
 
 ## Status
 
-Version 0.1, tracking version 0.2 of the specification, which is **not yet stabilized**. Until the
+Version 0.1, tracking version 0.1 of the specification, which is **not yet stabilized**. Until the
 spec reaches 1.0, breaking changes happen in place under the same bundle tag.
 
 ## License

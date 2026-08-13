@@ -7,7 +7,7 @@
 //!
 //! The specification lives at
 //! <https://docs.1retro.com/specifications/universal-saves-format/>. This crate implements
-//! version 0.2, which is **not yet stabilized** — until 1.0, breaking changes happen in place
+//! version 0.1, which is **not yet stabilized** — until 1.0, breaking changes happen in place
 //! under the same bundle tag.
 //!
 //! # Determinism
@@ -84,7 +84,7 @@ pub const EXTENSION: &str = "1saves";
 pub const MEDIA_TYPE: &str = "application/vnd.1saves+cbor";
 
 /// The version of the specification this crate implements.
-pub const SPEC_VERSION: &str = "0.2";
+pub const SPEC_VERSION: &str = "0.1";
 
 /// How deep a `bundle` part may nest.
 ///

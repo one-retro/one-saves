@@ -110,12 +110,11 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
         let clock = crate::rtc::parse_gambatte_sidecar(sidecar, *captured_at).ok_or_else(|| {
             Error::NotConvertible("this sidecar is not a clock, or its instant is wrong".into())
         })?;
-        let reading =
-            crate::rtc::Reading { instant: clock.written_at, source_clock: crate::rtc::SOURCE_CLOCK_MBC3 };
         let sidecar_split = crate::rtc::Split {
             sram: Vec::new(),
             footer: Vec::new(),
-            reading,
+            // The anchor plus the elapsed time the counters describe, never the anchor itself.
+            reading: Some(clock.reading()),
             clock: crate::rtc::Clock::Mbc3(clock),
         };
         extensions = sidecar_split.extensions();

@@ -111,14 +111,6 @@ pub const RTC_NATIVE_KEY: &str = "x.1sav.rtc.mbc3";
 /// [`x.1sav.rtc`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc/
 pub const RTC_S3511A_KEY: &str = "x.1sav.rtc.s3511a";
 
-/// What [`x.1sav.rtc`]'s `source_clock` is set to for a footer read as an MBC3 clock.
-///
-/// [`x.1sav.rtc`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc/
-pub const SOURCE_CLOCK_MBC3: &str = "mbc3";
-
-/// What `source_clock` is set to for a GBA cartridge's Seiko S-3511A.
-pub const SOURCE_CLOCK_S3511A: &str = "s3511a";
-
 /// The footer mGBA appends for a GBA cartridge clock: seven BCD bytes, a control register, and an
 /// eight-byte little-endian instant.
 const S3511A_LEN: usize = 16;
@@ -154,8 +146,11 @@ pub struct Split {
     pub sram: Vec<u8>,
     /// The bytes the emulator appended, verbatim.
     pub footer: Vec<u8>,
-    /// The clock reading, normalized to a Unix instant.
-    pub reading: Reading,
+    /// What the clock showed, when it can be computed.
+    ///
+    /// Absent rather than approximated: the key must be omitted rather than filled with the
+    /// anchor or a guess, because nothing downstream can tell a wrong reading from a right one.
+    pub reading: Option<Reading>,
     /// The chip's own state.
     pub clock: Clock,
 }
@@ -193,30 +188,50 @@ impl S3511aClock {
     pub fn hour24(self) -> bool {
         self.control & 0x40 != 0
     }
+
+    /// What this chip showed, as a Unix instant.
+    ///
+    /// A dating chip needs no anchor: it holds the instant already, and `latched_at` is it — the
+    /// moment the producer last read the chip, which is the moment those components describe.
+    ///
+    /// Deriving the instant from the components instead is the obvious move and the wrong one.
+    /// The chip holds wall-clock time with no zone, so re-deriving means inventing one: on the
+    /// Ruby sample it lands 7 hours before the truth, which is exactly the offset of the zone
+    /// mGBA was running in. `latched_at` is the same moment recorded by something that knew the
+    /// zone, and it is the only copy — the chip's own key holds components and control, nothing
+    /// else — so reading it back is also what lets a footer be rebuilt byte for byte.
+    #[must_use]
+    pub fn reading(self) -> Reading {
+        Reading { instant: self.latched_at }
+    }
 }
 
-/// A clock reading, normalized to the shape `x.1sav.rtc` defines.
+/// A clock reading: what the game's clock showed when the bundle was written.
+///
+/// **Never the point a counting clock advances from.** An MBC3 keeps elapsed time beside a host
+/// timestamp, and that timestamp is the anchor rather than the reading — writing it here would be
+/// wrong by however long the cartridge has been running, which on a save a few days old is days.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Reading {
-    /// The instant the reading corresponds to, in whole epoch seconds.
+    /// What the clock showed, in whole epoch seconds.
     pub instant: i64,
-    /// Which clock produced it.
-    pub source_clock: &'static str,
 }
 
 impl Reading {
     /// The CBOR value this reading is carried as.
     ///
     /// ```text
-    /// { 0: 1(1700000000), 1: "mbc3" }
+    /// { 0: 1(1700000000) }
     /// ```
+    ///
+    /// `accuracy_ms` is omitted throughout: it states the uncertainty of the reading, and nothing
+    /// here can measure that. The key says to leave it out rather than guess.
     #[must_use]
     pub fn to_cbor(self) -> CBOR {
         let mut map = Map::new();
         // Tag 1 over whole seconds. The key admits a float and this format does not, for the
         // reason `created_at` gives: one instant would otherwise have two encodings.
         map.insert(0u64, CBOR::from(CBORCase::Tagged(Tag::new(1u64, "epoch"), self.instant.into())));
-        map.insert(1u64, self.source_clock);
         map.into()
     }
 }
@@ -249,6 +264,25 @@ pub struct Mbc3Clock {
 }
 
 impl Mbc3Clock {
+    /// How long the cartridge clock has been running, in seconds.
+    #[must_use]
+    pub fn elapsed_seconds(self) -> i64 {
+        i64::from(self.days()) * 86_400
+            + i64::from(self.hours) * 3_600
+            + i64::from(self.minutes) * 60
+            + i64::from(self.seconds)
+    }
+
+    /// What this clock showed when the save was written.
+    ///
+    /// The anchor plus the elapsed time the counters describe. The anchor alone — key 2 of
+    /// `x.1sav.rtc.mbc3`, which is what the footer stores — is wrong by exactly that elapsed
+    /// time, which on a cartridge running for days is days.
+    #[must_use]
+    pub fn reading(self) -> Reading {
+        Reading { instant: self.written_at + self.elapsed_seconds() }
+    }
+
     /// The five live registers, in the order the footer stores them.
     #[must_use]
     pub fn live(self) -> [u32; 5] {
@@ -326,8 +360,8 @@ pub fn split(bytes: &[u8], system: Option<&str>) -> Option<Split> {
         // elapsed time from a cartridge epoch nothing records, so they are not an instant and
         // cannot be normalized into one.
         let reading = match clock {
-            Clock::Mbc3(c) => Reading { instant: c.written_at, source_clock: SOURCE_CLOCK_MBC3 },
-            Clock::S3511a(c) => Reading { instant: c.latched_at, source_clock: SOURCE_CLOCK_S3511A },
+            Clock::Mbc3(c) => Some(c.reading()),
+            Clock::S3511a(c) => Some(c.reading()),
         };
         return Some(Split { sram: bytes[..size].to_vec(), footer: footer.to_vec(), reading, clock });
     }
@@ -383,12 +417,15 @@ pub fn parse_mbc3(footer: &[u8]) -> Option<Mbc3Clock> {
 impl Split {
     /// The extension keys this split contributes to a bundle's header.
     ///
-    /// Both go on together: the portable instant when the footer was readable, and the chip's own
-    /// state, which is what puts the file back the way the emulator wrote it.
+    /// The chip's own state always goes on, since it is what puts the file back the way the
+    /// emulator wrote it. The portable instant joins it only when the reading could be computed:
+    /// a chip whose components are not a date leaves the key out rather than carrying a guess.
     #[must_use]
     pub fn extensions(&self) -> Extensions {
         let mut extensions = Extensions::new();
-        extensions.insert(rtc_key(), self.reading.to_cbor());
+        if let Some(reading) = self.reading {
+            extensions.insert(rtc_key(), reading.to_cbor());
+        }
 
         let mut native = Map::new();
         match self.clock {
@@ -835,7 +872,6 @@ mod tests {
 
         let split = split(&save, Some("gb")).expect("has a clock");
         assert_eq!(split.sram.len(), 32_768);
-        assert_eq!(split.reading.source_clock, SOURCE_CLOCK_MBC3);
 
         let Clock::Mbc3(clock) = split.clock else { panic!("wrong chip") };
         let rebuilt = build_mbc3(&clock.live(), &clock.latched, clock.written_at, clock.timestamp_width);
@@ -859,8 +895,9 @@ mod tests {
         let split = split(&save, Some("gb")).expect("has a footer");
         assert_eq!(split.sram.len(), 32_768);
         assert_eq!(split.footer.len(), MBC3_LEN_64);
-        assert_eq!(split.reading.instant, 1_700_000_000);
-        assert_eq!(split.reading.source_clock, SOURCE_CLOCK_MBC3);
+        // The anchor plus 300 days, 13:45:30 of elapsed cartridge time.
+        let elapsed = 300 * 86_400 + 13 * 3_600 + 45 * 60 + 30;
+        assert_eq!(split.reading.unwrap().instant, 1_700_000_000 + elapsed);
     }
 
     #[test]
@@ -914,13 +951,10 @@ mod tests {
 
     #[test]
     fn the_reading_encodes_as_the_extension_schema_says() {
-        let reading = Reading { instant: 1_700_000_000, source_clock: "mbc3" };
-        let encoded = reading.to_cbor().to_cbor_data();
-        // { 0: 1(1700000000), 1: "mbc3" } — a2 00 c1 1a 6553f100 01 64 6d626333
-        assert_eq!(
-            encoded,
-            [0xa2, 0x00, 0xc1, 0x1a, 0x65, 0x53, 0xf1, 0x00, 0x01, 0x64, 0x6d, 0x62, 0x63, 0x33]
-        );
+        let encoded = Reading { instant: 1_700_000_000 }.to_cbor().to_cbor_data();
+        // { 0: 1(1700000000) } — one key, tagged whole seconds, and nothing else. Which clock
+        // produced it is not a field: the chip key beside this one names it.
+        assert_eq!(encoded, [0xa1, 0x00, 0xc1, 0x1a, 0x65, 0x53, 0xf1, 0x00]);
     }
 
     #[test]
@@ -1011,8 +1045,8 @@ mod tests {
 
         let split = split(&save, Some("gba")).expect("has a clock");
         assert_eq!(split.sram.len(), 131_072);
-        assert_eq!(split.reading.instant, 1_786_556_383);
-        assert_eq!(split.reading.source_clock, SOURCE_CLOCK_S3511A);
+        // A dating chip needs no anchor: the latched components are the reading.
+        assert_eq!(split.reading.unwrap().instant, 1_786_556_383);
 
         // Both keys go on, and the chip key carries only what the chip holds.
         let extensions = split.extensions();
@@ -1188,7 +1222,7 @@ mod tests {
         let split = Split {
             sram: Vec::new(),
             footer: Vec::new(),
-            reading: Reading { instant: clock.written_at, source_clock: SOURCE_CLOCK_MBC3 },
+            reading: Some(clock.reading()),
             clock: Clock::Mbc3(clock),
         };
         for (app, want) in [
@@ -1232,7 +1266,7 @@ mod tests {
         let split = Split {
             sram: Vec::new(),
             footer: Vec::new(),
-            reading: Reading { instant: clock.written_at, source_clock: SOURCE_CLOCK_MBC3 },
+            reading: Some(clock.reading()),
             clock: Clock::Mbc3(clock),
         };
 
