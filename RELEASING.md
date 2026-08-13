@@ -51,10 +51,10 @@ the tests reach for but `cargo package` leaves out.
 Publishing cannot be undone. A version can be yanked, which stops new dependants resolving it, but
 it stays downloadable and its number can never be reused — and the crate name is claimed for good.
 
-CI runs everything `just check` does. `just msrv` is checked there too; `just package` is not,
-since the last two crates cannot be packaged until their dependencies are published. It also regenerates `crates/one-saves-registry/src/generated.rs` from the
-committed JSON and fails on a diff, so a hand edit to either half shows up rather than diverging
-quietly.
+CI runs everything `just check` does, including `just msrv`. It does not run the dry run, which
+needs a network fetch per crate. `just check` also regenerates
+`crates/one-saves-registry/src/generated.rs` from the committed JSON and fails on a diff, so a hand
+edit to either half shows up rather than diverging quietly.
 
 ## Version numbers
 

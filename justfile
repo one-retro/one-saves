@@ -86,15 +86,12 @@ vendor-conformance docs=docs:
 install:
     cargo install --path crates/one-saves-cli --locked
 
-# Dry-run packaging every publishable crate, in dependency order.
+# Dry-run the whole release: package every crate and verify the dependents against it.
 package:
-    #!/usr/bin/env bash
-    # The last two fail until their dependencies are on crates.io, since `cargo package` resolves
-    # path dependencies against the registry. See RELEASING.md.
-    for crate in one-saves one-saves-registry ps2-memcard one-saves-convert one-saves-cli; do
-        printf '%-20s' "$crate"
-        cargo package -p "$crate" --no-verify --allow-dirty 2>&1 | tail -1
-    done
+    # Everything publishing does except the upload. Cargo packages each crate, then builds the
+    # dependent ones against those packaged copies rather than against the workspace, which is
+    # what catches a file the tests reach for but `cargo package` leaves out.
+    cargo publish --workspace --dry-run
 
 # Remove build artifacts.
 clean:
