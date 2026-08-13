@@ -206,9 +206,9 @@ dependencies = [
 
 [[package]]
 name = "datary"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6df920537a150b43e02cd333da932791b235b01eca642a0207556d14aad371d"
+checksum = "3a522fe827c628affc3eb42b74f91bb12f59f0a96e6a727a1e6862f3bc5e0b9d"
 dependencies = [
  "digest",
  "md-5",
@@ -217,6 +217,7 @@ dependencies = [
  "sha1",
  "sha2",
  "thiserror",
+ "winnow",
 ]
 
 [[package]]
@@ -801,6 +802,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
+]
+
+[[package]]
+name = "winnow"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

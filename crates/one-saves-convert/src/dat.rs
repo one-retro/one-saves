@@ -4,12 +4,16 @@
 //! Logiqx XML, which is what the download sites serve, and the older ClrMamePro text format.
 //! Both are accepted, since which one a user has is not their choice to make.
 //!
-//! The XML is [`datary`]'s to read. It models the dialects those projects actually publish and
+//! Reading both is [`datary`]'s job. It models the dialects those projects actually publish and
 //! types every digest, which is a larger job than a save converter should be doing inline — and a
-//! job with more corners than it looks: entity references split a run of text, attribute values
-//! are escaped too, and a reader that misses either quietly truncates a game's name. What is left
-//! in this module is the ClrMamePro shape, which has no such crate, and the mapping of both onto
-//! one [`Entry`].
+//! job with more corners than it looks. The XML shape splits a run of text at every entity
+//! reference and escapes attribute values separately, so a reader that misses either quietly
+//! truncates a game's name. The ClrMamePro shape has no specification at all: `sample` is a bare
+//! scalar where `rom` is a block, `crc` is `crc32` to ckmame, `forcepacking` is `forcezipping`,
+//! and a header block may be called `clrmamepro` or `emulator`. What is left in this module is
+//! the mapping onto one [`Entry`], since a catalog presents one shape whichever syntax it arrived
+//! in.
+//!
 //!
 //! A catalog is matched **by digest, never by filename**. A filename says what somebody called
 //! the file; a digest says which dump it is, and that is the question a catalog answers.
@@ -46,25 +50,50 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// Reads a catalog, working out which of the two formats it is.
+    /// Reads a catalog in either syntax.
     ///
-    /// The discriminator is the first non-space character: XML opens with `<`, and ClrMamePro
-    /// opens with a keyword.
+    /// Which one it is comes from the bytes rather than the file name — both conventionally end
+    /// in `.dat` — and [`datary`] does the detecting.
+    ///
+    /// A malformed checksum fails the whole catalog rather than being skipped. That is stricter
+    /// than dropping the digest and carrying on, and deliberately so: an entry whose checksum
+    /// went missing still matches on size and name, so a typo would quietly turn into a dump that
+    /// resolves to the wrong game.
     pub fn parse(text: &str) -> Result<Self> {
-        if text.trim_start().starts_with('<') {
-            Self::parse_logiqx(text)
-        } else {
-            Self::parse_clrmamepro(text)
-        }
+        let datafile = datary::from_str(text)
+            .map_err(|error| Error::NotThisFormat { format: "DAT catalog", why: error.to_string() })?;
+        Ok(Self::from_datafile(&datafile))
     }
 
     /// Reads a catalog from a file.
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
         // DATs are Latin-1 as often as UTF-8, and a stray byte in one game's name is no reason to
-        // refuse the whole set.
+        // refuse the whole set. `datary` reports the encoding rather than guessing at it, which is
+        // right for a library and too strict for a converter handed whatever a user has.
         let bytes = std::fs::read(path)?;
         let text = String::from_utf8_lossy(&bytes);
         Self::parse(&text)
+    }
+
+    /// Maps a parsed datafile onto entries, one per dump.
+    fn from_datafile(datafile: &datary::Datafile) -> Self {
+        let name = datafile.header.as_ref().map(|header| header.name.clone());
+        let entries = datafile
+            .games
+            .iter()
+            .flat_map(|game| {
+                game.roms.iter().map(move |rom| Entry {
+                    name: game.name.clone(),
+                    rom_name: rom.name.clone(),
+                    // Logiqx makes `size` mandatory and ClrMamePro does not, where `datary`
+                    // reports 0. Nothing here matches on size, so it is carried as stated.
+                    size: Some(rom.size),
+                    hashes: rom_hashes(rom),
+                    serial: rom.serial.clone(),
+                })
+            })
+            .collect();
+        Self::index(entries, name)
     }
 
     fn index(mut entries: Vec<Entry>, name: Option<String>) -> Self {
@@ -144,95 +173,6 @@ impl Catalog {
         game.rom_hashes.sort();
         true
     }
-
-    /// Reads the Logiqx XML shape, which is what the download sites serve.
-    ///
-    /// The parsing is [`datary`]'s, which models the dialects No-Intro, Redump and TOSEC publish
-    /// rather than the subset one reader happened to need. What is left here is the mapping onto
-    /// this crate's [`Entry`], since a catalog has to present one shape whichever format it came
-    /// from.
-    fn parse_logiqx(text: &str) -> Result<Self> {
-        let datafile = datary::from_str(text)
-            .map_err(|error| Error::NotThisFormat { format: "Logiqx DAT", why: error.to_string() })?;
-
-        let name = datafile.header.as_ref().map(|header| header.name.clone());
-        let entries = datafile
-            .games
-            .iter()
-            .flat_map(|game| {
-                game.roms.iter().map(move |rom| Entry {
-                    name: game.name.clone(),
-                    rom_name: rom.name.clone(),
-                    // Logiqx makes `size` mandatory, so absence is not a case here.
-                    size: Some(rom.size),
-                    hashes: rom_hashes(rom),
-                    serial: rom.serial.clone(),
-                })
-            })
-            .collect();
-        Ok(Self::index(entries, name))
-    }
-
-    /// Reads the older ClrMamePro text shape.
-    ///
-    /// Nothing here can fail today: an unparseable line is skipped rather than refused, since a
-    /// DAT with one odd entry is still a usable catalog. The `Result` matches the other arm of
-    /// [`parse`](Self::parse) so the two stay interchangeable.
-    #[allow(clippy::unnecessary_wraps)]
-    fn parse_clrmamepro(text: &str) -> Result<Self> {
-        let mut entries = Vec::new();
-        let mut catalog_name = None;
-        let mut game_name = String::new();
-        let mut serial: Option<String> = None;
-
-        for line in text.lines() {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix("name ") {
-                let value = unquote(rest);
-                // The first `name` belongs to the header block; the rest name games.
-                if catalog_name.is_none() && game_name.is_empty() {
-                    catalog_name = Some(value);
-                } else {
-                    game_name = value;
-                }
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("serial ") {
-                serial = Some(unquote(rest));
-                continue;
-            }
-            if line == ")" {
-                continue;
-            }
-            let Some(rest) = line.strip_prefix("rom (") else {
-                continue;
-            };
-
-            // `rom ( name "x.gb" size 1048576 crc 9F7FDD53 sha1 ... )` — a flat sequence of
-            // keyword and value, where only the name is ever quoted.
-            let body = rest.trim_end_matches(')').trim();
-            let tokens = tokenize(body);
-            let mut rom_name = String::new();
-            let mut size = None;
-            let mut hashes = Vec::new();
-            let mut index = 0;
-            while index + 1 < tokens.len() {
-                let (key, value) = (&tokens[index], &tokens[index + 1]);
-                match key.as_str() {
-                    "name" => rom_name.clone_from(value),
-                    "size" => size = value.parse().ok(),
-                    "crc" => hashes.extend(hash_from_hex(HashAlgorithm::Crc32, value)),
-                    "sha1" => hashes.extend(hash_from_hex(HashAlgorithm::Sha1, value)),
-                    "sha256" => hashes.extend(hash_from_hex(HashAlgorithm::Sha256, value)),
-                    "md5" => hashes.extend(hash_from_hex(HashAlgorithm::Md5, value)),
-                    _ => {}
-                }
-                index += 2;
-            }
-            entries.push(Entry { name: game_name.clone(), rom_name, size, hashes, serial: serial.clone() });
-        }
-        Ok(Self::index(entries, catalog_name))
-    }
 }
 
 /// Every digest a catalog entry carries, as this crate's values.
@@ -262,49 +202,22 @@ fn rom_hashes(rom: &datary::Rom) -> Vec<HashValue> {
     hashes
 }
 
-fn unquote(text: &str) -> String {
-    text.trim().trim_matches('"').to_owned()
-}
-
-/// Splits a ClrMamePro line into tokens, keeping a quoted run together.
-fn tokenize(line: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    for character in line.chars() {
-        match character {
-            '"' => quoted = !quoted,
-            c if c.is_whitespace() && !quoted => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            c => current.push(c),
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
-}
-
-/// Reads a hex digest, checking it against the length its algorithm implies.
-fn hash_from_hex(algorithm: HashAlgorithm, text: &str) -> Option<HashValue> {
-    let text = text.trim();
-    if text.len() != algorithm.digest_len() * 2 {
-        return None;
-    }
-    let mut digest = Vec::with_capacity(algorithm.digest_len());
-    for pair in text.as_bytes().chunks_exact(2) {
-        let hex = std::str::from_utf8(pair).ok()?;
-        digest.push(u8::from_str_radix(hex, 16).ok()?);
-    }
-    HashValue::new(algorithm, digest).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds an expected digest from hex. Only tests construct one by hand; a catalog's
+    /// digests arrive already typed from `datary`.
+    fn hash_from_hex(algorithm: HashAlgorithm, text: &str) -> Option<HashValue> {
+        if text.len() != algorithm.digest_len() * 2 {
+            return None;
+        }
+        let mut digest = Vec::with_capacity(algorithm.digest_len());
+        for pair in text.as_bytes().chunks_exact(2) {
+            digest.push(u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?);
+        }
+        HashValue::new(algorithm, digest).ok()
+    }
 
     const LOGIQX: &str = r#"<?xml version="1.0"?>
 <datafile>
@@ -447,8 +360,38 @@ game (
     }
 
     #[test]
-    fn a_digest_of_the_wrong_length_is_not_a_digest() {
-        assert_eq!(hash_from_hex(HashAlgorithm::Crc32, "9F7F"), None);
-        assert_eq!(hash_from_hex(HashAlgorithm::Sha1, "nothex..."), None);
+    fn a_malformed_digest_fails_the_whole_catalog() {
+        // Skipping the digest and keeping the entry would leave a dump that still matches on
+        // size and name, so a typo would resolve to the wrong game rather than to none.
+        let bad = r#"<datafile><game name="g"><description>g</description>
+            <rom name="a.gb" size="4" crc="zzzzzzzz"/></game></datafile>"#;
+        assert!(Catalog::parse(bad).is_err(), "a bad digest must not be silently dropped");
+        assert!(Catalog::parse("game ( name g rom ( name a size 4 crc zzzzzzzz ) )").is_err());
+    }
+
+    #[test]
+    fn the_clrmamepro_dialects_are_read_as_published() {
+        // None of this is hypothetical: `sample` is a bare scalar where `rom` is a block, ckmame
+        // writes `crc32` where ClrMamePro writes `crc`, MAME's `-listinfo` names its header block
+        // `emulator`, and a set may be spelled `set` rather than `game`.
+        let dat = r#"emulator (
+	name "MAME"
+)
+
+set (
+	name pacman
+	description "PuckMan (Japan set 1)"
+	rom ( name namcopac.6e size 4096 crc32 0xfee263b3 )
+	sample shot.wav
+	sampleof galaxian
+)
+"#;
+        let catalog = Catalog::parse(dat).expect("parses");
+        assert_eq!(catalog.name.as_deref(), Some("MAME"));
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog.entries()[0].name, "pacman");
+        // `0x`-prefixed and bare digests are the same digest.
+        let crc = hash_from_hex(HashAlgorithm::Crc32, "fee263b3").expect("hex");
+        assert_eq!(catalog.lookup(&crc).map(|e| e.rom_name.as_str()), Some("namcopac.6e"));
     }
 }

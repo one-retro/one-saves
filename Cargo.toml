@@ -36,9 +36,10 @@ crc32fast = "1.4"
 unicode-normalization = "0.1"
 zstd = "0.13"
 clap = { version = "4.5", features = ["derive"] }
-# DAT catalogs. `index` and `verify` are off: this crate keeps its own digest index, which has
-# to span the ClrMamePro text shape too, and hashing is one-saves' job.
-datary = { version = "0.2", default-features = false }
+# DAT catalogs, in both the Logiqx XML and ClrMamePro syntaxes — `cmpro` is what supplies the
+# second, and detection between them. `index` and `verify` stay off: this crate keeps its own
+# digest index, keyed by `one_saves::HashValue`, and hashing is one-saves' job.
+datary = { version = "0.3", default-features = false, features = ["cmpro"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
