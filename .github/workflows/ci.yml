@@ -1,5 +1,9 @@
 name: CI
 
+# Every job runs a justfile recipe rather than its own copy of the commands, so `just check`
+# locally and a green run here are the same thing by construction. Add a step here only when it
+# is a new recipe; change what a step *does* in the justfile.
+
 on:
   push:
     branches: [main]
@@ -20,10 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@just
       - uses: Swatinem/rust-cache@v2
       # The conformance corpus is the point of the suite, so it runs everywhere rather than on one
       # platform: an endianness or path assumption that only bites on Windows should fail here.
-      - run: cargo test --workspace --all-features
+      - run: just test
 
   lint:
     runs-on: ubuntu-latest
@@ -32,28 +37,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - uses: taiki-e/install-action@just
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --all-features
-      - run: cargo doc --workspace --no-deps
+      - run: just fmt-check
+      - run: just lint
+      - run: just doc
 
   msrv:
     name: minimum supported Rust version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88.0
+      # Stable, deliberately: the recipe installs and selects the old toolchain from the `msrv`
+      # variable in the justfile, so the version this checks is stated in one place rather than
+      # here as well.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@just
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-features
+      - run: just msrv
 
-  no-default-features:
-    name: one-saves without zstd
+  features:
+    name: the crates with their features turned down
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: taiki-e/install-action@just
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p one-saves --no-default-features
+      - run: just test-features
 
   registries-in-sync:
     name: registry tables match their data
@@ -63,9 +76,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - uses: taiki-e/install-action@just
       - uses: Swatinem/rust-cache@v2
       # The generated tables are committed, so a hand edit to either half shows up as a diff here
       # rather than as a silent divergence from the JSON. This needs nothing fetched: without
-      # --docs the task rebuilds the tables from the JSON already in the repository.
-      - run: cargo xtask registries
-      - run: git diff --exit-code crates/one-saves-registry/src/generated.rs
+      # --docs the recipe rebuilds the tables from the JSON already in the repository.
+      - run: just registries-in-sync

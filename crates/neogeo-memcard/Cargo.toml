@@ -1,0 +1,20 @@
+[package]
+name = "neogeo-memcard"
+description = "Read and write Neo Geo memory card images: header, directory, mirrored FAT, and the MiSTer container"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["encoding", "filesystem", "parser-implementations"]
+keywords = ["neogeo", "snk", "memcard", "emulation", "savegame"]
+readme = "README.md"
+# The integration tests read cards from the workspace's `data/saves`, which is not part of
+# this crate. They stay behind rather than shipping a copy of a 72 KiB save per card.
+exclude = ["tests"]
+
+[dependencies]
+
+[lints]
+workspace = true

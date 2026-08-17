@@ -9,28 +9,33 @@
 //! [`path`](one_saves::Part::path). The directory's own entry belongs to no file, and rides on
 //! the outer `bundle` part alongside the slot.
 
-use one_saves::{Bundle, Card, Game, Header, Part, PartKind, Slug};
+use one_saves::{Bundle, Game, Header, Part, PartKind};
 use ps2_memcard::{Capacity, CardBuilder, File, MemoryCard, Save};
 
 use crate::CardOptions;
+use crate::card::{card_header, slug};
+use crate::detect::Format;
 use crate::error::{Error, Result};
 
-const FORMAT: &str = "PS2 memory card";
+/// What the format is called, for error messages.
+const FORMAT: &str = Format::Ps2Card.label();
 
 /// The card format slug a bundle carries.
-pub const CARD_FORMAT: &str = "ps2-mc";
+pub const CARD_FORMAT: &str = match Format::Ps2Card.card_format() {
+    Some(slug) => slug,
+    None => panic!("a PS2 card is a card format"),
+};
 
 /// The system slug these saves are for.
-pub const SYSTEM: &str = "ps2";
+pub const SYSTEM: &str = match Format::Ps2Card.system() {
+    Some(slug) => slug,
+    None => panic!("a PS2 card holds saves for a system"),
+};
 
 /// Whether these bytes look like a PS2 memory card.
 #[must_use]
 pub fn detect(bytes: &[u8]) -> bool {
     MemoryCard::parse(bytes).is_ok()
-}
-
-fn slug(text: &str) -> Slug {
-    Slug::parse(text).expect("a spec slug is well-formed")
 }
 
 /// Reads a card into a bundle: one nested bundle per save, one part per file in it.
@@ -69,7 +74,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
         let mut part = Part::new(u64::try_from(parts.len()).expect("fits"), inner.to_vec()?);
         part.kind = PartKind::Bundle;
-        part.role = Some(options.role.clone());
+        part.role = Some(options.role_for(Format::Ps2Card));
         part.path = Some(save.name.clone());
         part.slot = Some(u64::try_from(index).expect("fits"));
         // The directory's own entry, carrying its mode bits and timestamps, belongs to no file.
@@ -80,25 +85,13 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     }
 
     if parts.is_empty() {
-        parts.push(crate::card::card_image_part(0, bytes, &options.role));
+        parts.push(crate::card::card_image_part(0, bytes, &options.role_for(Format::Ps2Card)));
     }
 
-    Ok(Bundle {
-        header: Header {
-            system: Some(slug(SYSTEM)),
-            card: Some(Card {
-                format: slug(CARD_FORMAT),
-                // The card's data capacity, which is not the length of a dump of it: an 8 MB card
-                // dumps to 8650752 bytes because every page carries a 16-byte spare area.
-                capacity: card.capacity() as u64,
-                system_area: None,
-                unknown: one_saves::UnknownKeys::new(),
-            }),
-            source: options.source.clone(),
-            ..Header::default()
-        },
-        parts,
-    })
+    // The capacity is the card's data capacity, which is not the length of a dump of it: an 8 MB
+    // card dumps to 8650752 bytes because every page carries a 16-byte spare area. Nothing on a
+    // PS2 card belongs to no save, so there is no system area to keep.
+    Ok(Bundle { header: card_header(Format::Ps2Card, card.capacity(), None, options), parts })
 }
 
 /// Writes a bundle back out as a card image.

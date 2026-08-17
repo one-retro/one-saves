@@ -1,0 +1,17 @@
+[package]
+name = "ps1-memcard"
+description = "Read and write PlayStation memory card images: directory, block chains and the DexDrive, VGS and PSP containers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["encoding", "filesystem", "parser-implementations"]
+keywords = ["playstation", "psx", "memcard", "emulation", "savegame"]
+readme = "README.md"
+
+[dependencies]
+
+[lints]
+workspace = true

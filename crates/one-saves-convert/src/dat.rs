@@ -2,7 +2,9 @@
 //!
 //! No-Intro, Redump, TOSEC and MAME all publish their sets as DAT files, in one of two shapes:
 //! Logiqx XML, which is what the download sites serve, and the older ClrMamePro text format.
-//! Both are accepted, since which one a user has is not their choice to make.
+//! Both are accepted by default, since which one a user has is not their choice to make; the
+//! `dat-cmpro` feature is what supplies the second, and with it off such a file is refused rather
+//! than misread.
 //!
 //! Reading both is [`datary`]'s job. It models the dialects those projects actually publish and
 //! types every digest, which is a larger job than a save converter should be doing inline — and a
@@ -59,7 +61,21 @@ impl Catalog {
     /// than dropping the digest and carrying on, and deliberately so: an entry whose checksum
     /// went missing still matches on size and name, so a typo would quietly turn into a dump that
     /// resolves to the wrong game.
+    ///
+    /// Without `dat-cmpro`, a ClrMamePro catalog is refused and the error says which feature would
+    /// have read it, rather than reporting it as unreadable XML.
     pub fn parse(text: &str) -> Result<Self> {
+        #[cfg(not(feature = "dat-cmpro"))]
+        if !is_xml(text) {
+            return Err(Error::NotThisFormat {
+                format: "DAT catalog",
+                // Only two syntaxes exist, so not-XML means ClrMamePro, and the reason this build
+                // cannot read it is a build-time choice rather than anything about the file.
+                why: "this is not Logiqx XML, and the `dat-cmpro` feature that reads the \
+                      ClrMamePro syntax is off in this build"
+                    .to_owned(),
+            });
+        }
         let datafile = datary::from_str(text)
             .map_err(|error| Error::NotThisFormat { format: "DAT catalog", why: error.to_string() })?;
         Ok(Self::from_datafile(&datafile))
@@ -175,6 +191,16 @@ impl Catalog {
     }
 }
 
+/// Whether this is the XML syntax, for telling the two shapes apart before handing them over.
+///
+/// A Logiqx file opens with `<?xml` or with `<datafile` and a ClrMamePro one opens with a bare
+/// word, so the first non-blank character settles it. A UTF-8 BOM survives the lossy decode in
+/// [`Catalog::open`] as a character rather than as bytes, so it is skipped here.
+#[cfg(not(feature = "dat-cmpro"))]
+fn is_xml(text: &str) -> bool {
+    text.trim_start_matches('\u{feff}').trim_start().starts_with('<')
+}
+
 /// Every digest a catalog entry carries, as this crate's values.
 ///
 /// There is no hex to parse and no length to check: `datary` types its digests, so a value that
@@ -237,6 +263,7 @@ mod tests {
   </game>
 </datafile>"#;
 
+    #[cfg(feature = "dat-cmpro")]
     const CLRMAMEPRO: &str = r#"clrmamepro (
 	name "Nintendo - Game Boy"
 	version 20260101
@@ -265,6 +292,7 @@ game (
     }
 
     #[test]
+    #[cfg(feature = "dat-cmpro")]
     fn reads_the_clrmamepro_shape_to_the_same_result() {
         let catalog = Catalog::parse(CLRMAMEPRO).expect("parses");
         assert_eq!(catalog.name.as_deref(), Some("Nintendo - Game Boy"));
@@ -366,10 +394,27 @@ game (
         let bad = r#"<datafile><game name="g"><description>g</description>
             <rom name="a.gb" size="4" crc="zzzzzzzz"/></game></datafile>"#;
         assert!(Catalog::parse(bad).is_err(), "a bad digest must not be silently dropped");
+        #[cfg(feature = "dat-cmpro")]
         assert!(Catalog::parse("game ( name g rom ( name a size 4 crc zzzzzzzz ) )").is_err());
     }
 
     #[test]
+    #[cfg(not(feature = "dat-cmpro"))]
+    fn a_clrmamepro_catalog_names_the_feature_that_would_read_it() {
+        // The alternative is `datary` reporting it as XML that ran out, which sends a user looking
+        // at their file for a fault that is in their build.
+        let error = Catalog::parse(CLRMAMEPRO_ONLY).expect_err("cmpro is off");
+        assert!(error.to_string().contains("dat-cmpro"), "unhelpful: {error}");
+        // The XML syntax is unaffected, BOM and leading blank lines included.
+        assert!(Catalog::parse(&format!("\u{feff}\n  {LOGIQX}")).is_ok());
+    }
+
+    /// A minimal ClrMamePro catalog, for the one test that needs the syntax without a reader.
+    #[cfg(not(feature = "dat-cmpro"))]
+    const CLRMAMEPRO_ONLY: &str = "clrmamepro ( name \"Nintendo - Game Boy\" )\n";
+
+    #[test]
+    #[cfg(feature = "dat-cmpro")]
     fn the_clrmamepro_dialects_are_read_as_published() {
         // None of this is hypothetical: `sample` is a bare scalar where `rom` is a block, ckmame
         // writes `crc32` where ClrMamePro writes `crc`, MAME's `-listinfo` names its header block

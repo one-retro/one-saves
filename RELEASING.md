@@ -9,13 +9,18 @@ dependency order. A crate cannot be packaged until everything it depends on is a
 ```
 1. one-saves            (dcbor, sha2, zstd)
 2. one-saves-registry   (nothing)
-3. ps2-memcard          (nothing)
+3. dreamcast-vmu        (nothing)
+   gc-memcard           (nothing)
+   n64-cpak             (nothing)
+   neogeo-memcard       (nothing)
+   ps1-memcard          (nothing)
+   ps2-memcard          (nothing)
 4. one-saves-convert    (1, 2, 3)
 5. one-saves-cli        (1, 2, 4)
 ```
 
-`one-saves-registry` and `ps2-memcard` depend on nothing in this workspace and can go at any point
-before step 4.
+`one-saves-registry` and the six card crates depend on nothing at all — not on this workspace, not
+on anything outside it — so they can go at any point before step 4, in any order.
 
 Cargo works that order out itself, so the whole workspace goes in one command. It publishes in
 dependency order and waits for each crate to appear in the index before the next one needs it:
@@ -30,7 +35,8 @@ On cargo older than 1.90, `--workspace` is not available and the crates go one a
 order above, pausing between each for the index to catch up:
 
 ```console
-for crate in one-saves one-saves-registry ps2-memcard one-saves-convert one-saves-cli; do
+for crate in one-saves one-saves-registry dreamcast-vmu gc-memcard n64-cpak neogeo-memcard \
+             ps1-memcard ps2-memcard one-saves-convert one-saves-cli; do
   cargo publish -p "$crate"
 done
 ```

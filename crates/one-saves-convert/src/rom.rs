@@ -2,7 +2,7 @@
 //!
 //! Most consoles put a title and a product code in a fixed header, so a ROM alongside a save
 //! answers questions the save cannot. This module reads that header and computes the digests a
-//! catalog keys on; turning either into a canonical name is [`crate::dat`]'s job.
+//! catalog keys on; turning either into a canonical name is the `dat` module's job.
 //!
 //! Every parser here checks a magic before believing a field. A header read out of a file that is
 //! not that console's ROM is worse than no header at all, because it produces a `game` map that

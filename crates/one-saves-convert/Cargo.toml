@@ -11,16 +11,53 @@ authors.workspace = true
 categories.workspace = true
 keywords.workspace = true
 readme = "README.md"
+# The integration tests read saves from the workspace's `data/saves`, which is not part of
+# this crate. They stay behind rather than shipping a copy of every fixture.
+exclude = ["tests"]
 
 [dependencies]
 one-saves.workspace = true
 one-saves-registry.workspace = true
-crc32fast.workspace = true
-md-5.workspace = true
-sha1.workspace = true
-sha2.workspace = true
-datary.workspace = true
-ps2-memcard.workspace = true
+dreamcast-vmu = { workspace = true, optional = true }
+gc-memcard = { workspace = true, optional = true }
+n64-cpak = { workspace = true, optional = true }
+neogeo-memcard = { workspace = true, optional = true }
+ps1-memcard = { workspace = true, optional = true }
+ps2-memcard = { workspace = true, optional = true }
+crc32fast = { workspace = true, optional = true }
+md-5 = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+datary = { workspace = true, optional = true }
+
+[features]
+default = ["cards", "dat", "dat-cmpro", "rom", "zstd"]
+# Every card format. Each is a crate of its own and an adapter here; none of them brings anything
+# from outside the workspace, so what a format costs is its own code and nothing else.
+cards = ["gc", "n64", "neogeo", "ps1", "ps2", "vmu"]
+gc = ["dep:gc-memcard"]
+n64 = ["dep:n64-cpak"]
+neogeo = ["dep:neogeo-memcard"]
+ps1 = ["dep:ps1-memcard"]
+ps2 = ["dep:ps2-memcard"]
+vmu = ["dep:dreamcast-vmu"]
+# Reading DAT catalogs, which is where this crate's weight is: `datary` brings an XML reader, a
+# derive macro and the proc-macro chain under it. A converter that is handed a game's identity, or
+# does not want one, does not need any of that.
+dat = ["dep:datary"]
+# The ClrMamePro syntax on top of the Logiqx XML one, and the `winnow` parser it is written with.
+# Off, a `.dat` in that syntax is refused rather than misread.
+dat-cmpro = ["dat", "datary/cmpro"]
+# Reading a ROM's header and computing the digests a catalog is keyed on. This is what the four
+# hash crates are for; nothing else in the crate hashes anything.
+rom = ["dep:crc32fast", "dep:md-5", "dep:sha1", "dep:sha2"]
+# Forwarded to one-saves, whose `zstd` compiles a C library. Off, a part whose payload carries
+# `encoding: "zstd"` still round-trips; its payload just cannot be inflated.
+zstd = ["one-saves/zstd"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true

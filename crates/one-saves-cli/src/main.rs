@@ -60,9 +60,11 @@ struct Convert {
     #[arg(long)]
     description: Option<String>,
     /// The game's ROM, read for its header fields and hashed for `rom_hashes`.
+    #[cfg(feature = "rom")]
     #[arg(long, value_name = "FILE")]
     rom: Option<PathBuf>,
     /// A No-Intro, Redump or TOSEC DAT to resolve the ROM's digest into a canonical name.
+    #[cfg(feature = "dat")]
     #[arg(long, value_name = "FILE")]
     dat: Option<PathBuf>,
     /// A sidecar clock file written beside the save, such as Gambatte's `.rtc`.
@@ -176,7 +178,7 @@ fn convert(args: Convert) -> Fallible {
         return Err("this file is already a bundle".into());
     }
 
-    let mut game = identify(args.rom.as_deref(), args.dat.as_deref())?;
+    let Identified { mut game, system: rom_system } = identify(&args)?;
 
     // A clock kept in its own file has to be found, since the save does not mention it. The file
     // records an origin rather than a reading, so an instant is what turns one into the other.
@@ -211,12 +213,6 @@ fn convert(args: Convert) -> Fallible {
 
     let source = profile.as_ref().map(|p| p.source(args.app_version.clone()));
     // A profile that covers exactly one system settles `system` when the user did not say.
-    let rom_system = args
-        .rom
-        .as_ref()
-        .and_then(|path| std::fs::read(path).ok())
-        .and_then(|rom| one_saves_convert::rom::identify(&rom))
-        .and_then(|info| info.system);
     let system = args
         .system
         .clone()
@@ -238,10 +234,11 @@ fn convert(args: Convert) -> Fallible {
     } else {
         let mut options = card::CardOptions { source, ..card::CardOptions::default() };
         if let Some(role) = &args.role {
-            options.role =
-                one_saves::Slug::parse(role).map_err(|e| format!("--role {role:?} is not a slug: {e}"))?;
+            options.role = Some(
+                one_saves::Slug::parse(role).map_err(|e| format!("--role {role:?} is not a slug: {e}"))?,
+            );
         }
-        read_card(format, &bytes, &options)?
+        card::read(format, &bytes, &options)?
     };
     if let Some(description) = args.description {
         bundle.header.description = Some(description);
@@ -281,22 +278,36 @@ fn convert(args: Convert) -> Fallible {
     Ok(())
 }
 
+/// What a ROM and a catalog were able to say about the save.
+///
+/// A build without the `rom` feature has neither flag to say it with, so both stay empty and the
+/// bundle carries whatever `--system` and `--from` gave it.
+#[derive(Default)]
+struct Identified {
+    /// The `game` map, when a ROM was given.
+    game: Option<one_saves::Game>,
+    /// The system the ROM's header names, as a registry slug.
+    system: Option<&'static str>,
+}
+
 /// Works out what game a save belongs to, from a ROM's header and a catalog.
 ///
-/// A ROM says what the save cannot: its header gives a title and often a product code, and its
-/// digests are what a catalog is keyed on.
-fn identify(
-    rom: Option<&Path>,
-    dat: Option<&Path>,
-) -> Result<Option<one_saves::Game>, Box<dyn std::error::Error>> {
-    let Some(rom_path) = rom else {
-        return Ok(None);
+/// A ROM says what the save cannot: its header gives a title, a system and often a product code,
+/// and its digests are what a catalog is keyed on.
+#[cfg(feature = "rom")]
+fn identify(args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
+    let Some(rom_path) = args.rom.as_deref() else {
+        return Ok(Identified::default());
     };
     let bytes = std::fs::read(rom_path)?;
     let filename = rom_path.file_name().and_then(|n| n.to_str());
+    // The header is the whole of it without `dat`; a catalog is the only thing that revises it.
+    #[cfg_attr(not(feature = "dat"), allow(unused_mut))]
     let mut game = one_saves_convert::rom::game_from_rom(&bytes, filename);
+    let system = one_saves_convert::rom::identify(&bytes).and_then(|info| info.system);
 
-    if let Some(dat) = dat {
+    #[cfg(feature = "dat")]
+    if let Some(dat) = args.dat.as_deref() {
         let catalog = one_saves_convert::dat::Catalog::open(dat)?;
         if catalog.enrich(&mut game) {
             println!("identified as {:?}", game.name.as_deref().unwrap_or_default());
@@ -304,18 +315,17 @@ fn identify(
             eprintln!("note: this ROM is not in {}", dat.display());
         }
     }
-    Ok(Some(game))
+    Ok(Identified { game: Some(game), system })
 }
 
-fn read_card(format: Format, bytes: &[u8], options: &card::CardOptions) -> one_saves_convert::Result<Bundle> {
-    match format {
-        Format::Ps1Card => card::ps1::read(bytes, options),
-        Format::N64Pak => card::n64::read(bytes, options),
-        Format::GcCard => card::gc::read(bytes, options),
-        Format::Vmu => card::vmu::read(bytes, options),
-        Format::Ps2Card => card::ps2::read(bytes, options),
-        Format::Raw | Format::Bundle => unreachable!("handled by the caller"),
-    }
+/// Stands in for the above in a build without `rom`, where there is no `--rom` to read.
+///
+/// It cannot fail, having nothing to read, but it keeps the signature so the caller does not have
+/// to know which build it is in.
+#[cfg(not(feature = "rom"))]
+#[allow(clippy::unnecessary_wraps)]
+fn identify(_args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
+    Ok(Identified::default())
 }
 
 fn extract(args: Extract) -> Fallible {
@@ -337,29 +347,23 @@ fn extract(args: Extract) -> Fallible {
     let target = match args.to.as_deref() {
         Some(name) => Format::from_name(name).ok_or_else(|| format!("unknown format {name:?}"))?,
         None => match card_format.as_deref() {
-            Some("ps1-mc") => Format::Ps1Card,
-            Some("n64-cpak") => Format::N64Pak,
-            Some("gc-mc") => Format::GcCard,
-            Some("vmu") => Format::Vmu,
-            Some("ps2-mc") => Format::Ps2Card,
-            Some(other) => {
-                return Err(format!("this bundle is a {other}, which this build cannot write").into());
-            }
+            // A slug nothing here knows is not a card this build can lay out, and rebuilding one
+            // it cannot lay out would corrupt it. A slug it does know but was not compiled with
+            // gets a different message, out of the writer below.
+            Some(slug) => Format::from_card_format(slug)
+                .ok_or_else(|| format!("this bundle is a {slug}, which this build cannot write"))?,
             None => Format::Raw,
         },
     };
 
-    let (payload, suffix) = match target {
-        Format::Raw => (raw::unwrap(&bundle)?, "srm".to_owned()),
-        Format::Ps1Card => (card::ps1::write(&bundle)?, "mcr".to_owned()),
-        Format::N64Pak => (card::n64::write(&bundle)?, "mpk".to_owned()),
-        Format::GcCard => (card::gc::write(&bundle)?, "raw".to_owned()),
-        Format::Vmu => (card::vmu::write(&bundle)?, "bin".to_owned()),
-        // A dump's spare area is regenerated rather than stored, so writing one back is a
-        // choice the caller makes with --to ps2-ecc rather than something the bundle records.
-        Format::Ps2Card => (card::ps2::write(&bundle)?, "ps2".to_owned()),
+    let payload = match target {
+        Format::Raw => raw::unwrap(&bundle)?,
         Format::Bundle => return Err("extracting a bundle as a bundle is a copy".into()),
+        // A PS2 dump's spare area is regenerated rather than stored, so writing one back is a
+        // choice the caller makes rather than something the bundle records.
+        card => card::write(card, &bundle)?,
     };
+    let suffix = target.extension();
 
     // A clock kept in its own file is written back to one, and left off the save: the two forms
     // are alternatives, and a save carrying both would have its clock read twice over.
@@ -374,7 +378,7 @@ fn extract(args: Extract) -> Fallible {
         None => payload,
     };
 
-    let output = args.output.unwrap_or_else(|| args.input.with_extension(&suffix));
+    let output = args.output.unwrap_or_else(|| args.input.with_extension(suffix));
     write_out(&output, &payload, args.force)?;
     println!(
         "{} -> {} ({}, {} bytes)",
@@ -449,18 +453,32 @@ fn inspect(path: &Path) -> Fallible {
     for part in &bundle.parts {
         let kind = part.kind.as_str().unwrap_or("save");
         let role = part.role.as_ref().map_or("primary", |r| r.as_str());
+        // A save's own product code, where the card carried one. It is what identifies a part
+        // whose format writes no name — a Neo Geo card has no filenames at all, and a game that
+        // skips the BIOS's title convention leaves `path` empty with nothing else to go on.
+        let serial = part.game.as_ref().and_then(|game| game.serial.as_deref()).unwrap_or("");
         let path = part.path.as_deref().unwrap_or("");
         let slot = part.slot.map_or_else(String::new, |s| format!("slot {s}"));
+        // A card can hold 200 saves, so the id is padded as a token rather than as a number: a
+        // bracket that moves is worse to read down a column than one that does not.
+        let id = format!("[{}]", part.id);
         // The head of the digest is enough to see at a glance that two parts hold the same bytes,
         // which is the question a reader comparing two bundles is usually asking.
         let digest = part.sha256.to_string();
         let short = digest.strip_prefix("sha256:").unwrap_or(&digest);
-        println!(
-            "    [{}] {kind:10} {role:16} {:>9} bytes  {}  {path} {slot}",
-            part.id,
+        // Every column is fixed-width except the last, and `path` is last because it is the one
+        // with no bound worth padding to: a GameCube filename runs to 32 characters where a VMU's
+        // stops at 12. Padding it would misalign every line a long name appears on, so it goes
+        // where nothing follows it instead.
+        //
+        // Trimmed because the tail columns are all optional — a flat save has no serial, no slot
+        // and no path — and the line would otherwise end in the padding for all three.
+        let line = format!(
+            "    {id:<5} {kind:10} {role:16} {:>9} bytes  {}  {serial:12} {slot:8} {path}",
             part.payload.len(),
             &short[..16]
         );
+        println!("{}", line.trim_end());
     }
     Ok(())
 }

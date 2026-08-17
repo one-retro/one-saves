@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use one_saves::Bundle;
 use one_saves_convert::{profile, raw, rtc};
 
+/// The workspace's fixtures, which are not packaged with the crate — see this file's header.
 fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves")
 }

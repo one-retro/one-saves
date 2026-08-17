@@ -5,12 +5,17 @@ members = [
     "crates/one-saves-registry",
     "crates/one-saves-convert",
     "crates/one-saves-cli",
+    "crates/dreamcast-vmu",
+    "crates/gc-memcard",
+    "crates/n64-cpak",
+    "crates/neogeo-memcard",
+    "crates/ps1-memcard",
     "crates/ps2-memcard",
     "xtask",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # 1.88 is the floor `dcbor` imposes: it uses let-chains and declares no rust-version
 # of its own, so ours has to state the real one.
@@ -23,23 +28,34 @@ categories = ["encoding", "filesystem", "parser-implementations"]
 keywords = ["1saves", "emulation", "retro", "savegame", "cbor"]
 
 [workspace.dependencies]
-one-saves = { version = "0.1.0", path = "crates/one-saves" }
-one-saves-registry = { version = "0.1.0", path = "crates/one-saves-registry" }
-one-saves-convert = { version = "0.1.0", path = "crates/one-saves-convert" }
-ps2-memcard = { version = "0.1.0", path = "crates/ps2-memcard" }
+# `default-features = false` on the two crates that carry optional weight, so a member decides
+# what it pays for rather than inheriting it. Both re-expose what they need as their own features,
+# and both keep it on by default; see each crate's README for the list.
+one-saves = { version = "0.2.0", path = "crates/one-saves", default-features = false }
+one-saves-registry = { version = "0.2.0", path = "crates/one-saves-registry" }
+one-saves-convert = { version = "0.2.0", path = "crates/one-saves-convert", default-features = false }
+# One crate per card filesystem. None of them depends on anything, in this workspace or outside it,
+# so a consumer that only wants to read a card takes one and none of the container above it. They
+# still share the workspace version: nothing here is released without the rest.
+dreamcast-vmu = { version = "0.2.0", path = "crates/dreamcast-vmu" }
+gc-memcard = { version = "0.2.0", path = "crates/gc-memcard" }
+n64-cpak = { version = "0.2.0", path = "crates/n64-cpak" }
+neogeo-memcard = { version = "0.2.0", path = "crates/neogeo-memcard" }
+ps1-memcard = { version = "0.2.0", path = "crates/ps1-memcard" }
+ps2-memcard = { version = "0.2.0", path = "crates/ps2-memcard" }
 
 dcbor = "0.25"
 sha1 = "0.11"
 sha2 = "0.11"
 md-5 = "0.11"
 crc32fast = "1.4"
-unicode-normalization = "0.1"
 zstd = "0.13"
 clap = { version = "4.5", features = ["derive"] }
-# DAT catalogs, in both the Logiqx XML and ClrMamePro syntaxes — `cmpro` is what supplies the
-# second, and detection between them. `index` and `verify` stay off: this crate keeps its own
-# digest index, keyed by `one_saves::HashValue`, and hashing is one-saves' job.
-datary = { version = "0.3", default-features = false, features = ["cmpro"] }
+# DAT catalogs, in both the Logiqx XML and ClrMamePro syntaxes. `index` and `verify` stay off:
+# one-saves-convert keeps its own digest index, keyed by `one_saves::HashValue`, and hashing is
+# one-saves' job. `cmpro` is the ClrMamePro syntax and the `winnow` parser under it, which
+# one-saves-convert turns on through its own `dat-cmpro` feature rather than here.
+datary = { version = "0.3", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

@@ -1,0 +1,17 @@
+[package]
+name = "gc-memcard"
+description = "Read and write GameCube memory card images: mirrored directory and block-allocation table, with the console's checksum pairs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["encoding", "filesystem", "parser-implementations"]
+keywords = ["gamecube", "nintendo", "memcard", "emulation", "savegame"]
+readme = "README.md"
+
+[dependencies]
+
+[lints]
+workspace = true

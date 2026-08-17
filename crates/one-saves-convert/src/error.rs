@@ -36,6 +36,16 @@ pub enum Error {
     /// A consumer that does not know a card format **must not** attempt the write: rebuilding a
     /// card it cannot lay out would corrupt it.
     CannotWrite(String),
+    /// A card format this build was not compiled with.
+    ///
+    /// Every card format is behind a feature. One that is off leaves the format nameable — so a
+    /// file is still identified rather than misread — and takes the reader and writer with it.
+    Unsupported {
+        /// What the format is called.
+        format: &'static str,
+        /// The feature that would have supplied it.
+        feature: &'static str,
+    },
     /// The bundle does not hold what this format needs to be rebuilt from.
     NotConvertible(String),
     /// The bundle itself is malformed.
@@ -57,6 +67,11 @@ impl fmt::Display for Error {
                 f,
                 "this build cannot write a {format}, and writing a card format it does not know \
                  would corrupt it"
+            ),
+            Error::Unsupported { format, feature } => write!(
+                f,
+                "this is a {format}, and this build has the `{feature}` feature off, so it can \
+                 name the format and not read or write it"
             ),
             Error::NotConvertible(why) => write!(f, "cannot convert this bundle: {why}"),
             Error::Bundle(source) => write!(f, "{source}"),
@@ -89,12 +104,3 @@ impl From<std::io::Error> for Error {
 
 /// The result of a conversion.
 pub type Result<T> = core::result::Result<T, Error>;
-
-/// Builds a [`Error::Corrupt`] with a formatted reason.
-macro_rules! corrupt {
-    ($format:expr, $($arg:tt)*) => {
-        $crate::error::Error::Corrupt { format: $format, why: format!($($arg)*) }
-    };
-}
-
-pub(crate) use corrupt;

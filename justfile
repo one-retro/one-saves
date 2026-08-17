@@ -1,7 +1,11 @@
 # Task runner for this workspace: https://just.systems
 #
-# `just check` runs what CI runs, in the order CI runs it, so a green run here means a green run
-# there. Anything added to .github/workflows/ci.yml belongs in that recipe too.
+# This file is what CI runs: every job in .github/workflows/ci.yml is a `just` recipe and nothing
+# else, so `just check` locally and a green run there are the same commands by construction. Change
+# what CI does by changing a recipe; touch the workflow only to add a job or a toolchain component.
+#
+# `just check` is every recipe CI runs, in the order it runs them. A recipe added here belongs in
+# `check` — and, if it needs a job of its own rather than a step, in the workflow too.
 
 # The Rust version the workspace declares. `dcbor` uses let-chains and states no rust-version of
 # its own, so ours has to state the real floor.
@@ -15,7 +19,7 @@ default:
     @just --list
 
 # Everything CI runs.
-check: fmt-check lint test test-no-default doc registries-in-sync
+check: fmt-check lint test test-features doc registries-in-sync
 
 # Run the test suite.
 test:
@@ -29,9 +33,31 @@ conformance:
 fixtures:
     cargo test -p one-saves-convert --test real_saves -- --nocapture
 
-# Check the format crate still builds and passes without zstd.
-test-no-default:
+# `just test` runs --all-features, which never compiles a `#[cfg(not(feature = ...))]` arm, so a
+# slim build can rot with CI green. Clippy is in here for the same reason: the lints that fire on
+# an arm only one configuration has are lints --all-features cannot see.
+
+# Check every crate still builds and passes with its features turned down.
+test-features:
     cargo test -p one-saves --no-default-features
+    cargo test -p one-saves-convert --no-default-features
+    # `dat` without `dat-cmpro` refuses a ClrMamePro catalog in its own words, which is the one
+    # feature-off arm that carries behaviour rather than just an absence.
+    cargo test -p one-saves-convert --no-default-features --features dat
+    cargo test -p one-saves-convert --no-default-features --features rom
+    # One card format at a time. PS2 is the odd one — its saves are directories, so it is the only
+    # format that does not use the shared save-to-part helper — and a lone `ps1` is the smallest
+    # build that still has a card in it.
+    cargo test -p one-saves-convert --no-default-features --features ps1
+    cargo test -p one-saves-convert --no-default-features --features ps2
+    cargo clippy -p one-saves-convert --all-targets --no-default-features --features n64
+    cargo clippy -p one-saves-convert --all-targets --no-default-features --features gc
+    cargo clippy -p one-saves-convert --all-targets --no-default-features --features vmu
+    cargo test -p one-saves-convert --no-default-features --features neogeo
+    # The CLI has no tests; what these check is that the flag-free and card-free arms compile clean.
+    cargo clippy -p one-saves-cli --all-targets --no-default-features
+    cargo clippy -p one-saves-cli --all-targets --no-default-features --features rom
+    cargo clippy -p one-saves-cli --all-targets --no-default-features --features cards
 
 # Format the tree.
 fmt:

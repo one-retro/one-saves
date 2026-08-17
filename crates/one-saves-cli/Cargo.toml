@@ -22,5 +22,29 @@ one-saves-registry.workspace = true
 one-saves-convert.workspace = true
 clap.workspace = true
 
+[features]
+default = ["cards", "dat", "dat-cmpro", "rom", "zstd"]
+# Every card format. Each is forwarded to one-saves-convert, where it gates one crate and one
+# adapter. A format that is off is still named — `1saves inspect` reads a bundle of it, and
+# `convert` and `extract` say which feature would have handled it — and cannot be read or written.
+cards = ["one-saves-convert/cards"]
+gc = ["one-saves-convert/gc"]
+n64 = ["one-saves-convert/n64"]
+neogeo = ["one-saves-convert/neogeo"]
+ps1 = ["one-saves-convert/ps1"]
+ps2 = ["one-saves-convert/ps2"]
+vmu = ["one-saves-convert/vmu"]
+# `--dat FILE`. Unlike in the library, this one needs `rom`: the catalog is looked up by the ROM's
+# digest, so there is nothing for `--dat` to resolve without `--rom`.
+dat = ["rom", "one-saves-convert/dat"]
+# The ClrMamePro syntax as well as Logiqx XML, for `--dat`.
+dat-cmpro = ["dat", "one-saves-convert/dat-cmpro"]
+# `--rom FILE`.
+rom = ["one-saves-convert/rom"]
+# Inflating parts whose payload carries `encoding: "zstd"`, which compiles a C library. Off,
+# `verify` and `hash` report a content hash as unavailable on such a bundle rather than computing
+# one, and everything else still works.
+zstd = ["one-saves/zstd", "one-saves-convert/zstd"]
+
 [lints]
 workspace = true

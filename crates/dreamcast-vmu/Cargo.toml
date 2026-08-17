@@ -1,0 +1,17 @@
+[package]
+name = "dreamcast-vmu"
+description = "Read and write Dreamcast Visual Memory Unit images: root block, allocation table and the downward-growing directory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["encoding", "filesystem", "parser-implementations"]
+keywords = ["dreamcast", "vmu", "sega", "emulation", "savegame"]
+readme = "README.md"
+
+[dependencies]
+
+[lints]
+workspace = true

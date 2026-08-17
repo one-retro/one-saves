@@ -246,6 +246,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreamcast-vmu"
+version = "0.2.0"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -274,6 +278,10 @@ dependencies = [
  "pin-project-lite",
  "slab",
 ]
+
+[[package]]
+name = "gc-memcard"
+version = "0.2.0"
 
 [[package]]
 name = "getrandom"
@@ -404,6 +412,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "n64-cpak"
+version = "0.2.0"
+
+[[package]]
+name = "neogeo-memcard"
+version = "0.2.0"
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -426,7 +442,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "one-saves"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dcbor",
  "serde_json",
@@ -436,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "one-saves-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "one-saves",
@@ -446,13 +462,18 @@ dependencies = [
 
 [[package]]
 name = "one-saves-convert"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32fast",
  "datary",
+ "dreamcast-vmu",
+ "gc-memcard",
  "md-5",
+ "n64-cpak",
+ "neogeo-memcard",
  "one-saves",
  "one-saves-registry",
+ "ps1-memcard",
  "ps2-memcard",
  "sha1",
  "sha2",
@@ -460,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "one-saves-registry"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "paste"
@@ -490,8 +511,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ps1-memcard"
+version = "0.2.0"
+
+[[package]]
 name = "ps2-memcard"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "quick-xml"

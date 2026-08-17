@@ -15,10 +15,15 @@ $ 1saves inspect card.1saves
   system       psx (PlayStation)
   card         ps1-mc, capacity 131072 bytes
   parts        3
-    [0] bundle     memcard-1             8264 bytes  BASCUS-94163FF7-S01 slot 1
-    [1] bundle     memcard-1             8264 bytes  BASCUS-94163FF7-S03 slot 2
-    [2] bundle     memcard-1             8264 bytes  BASLUS-00594 slot 3
+    [0]   bundle     memcard-1             8264 bytes  2db9dc7f051620d4  SCUS-94163   slot 1   BASCUS-94163FF7-S01
+    [1]   bundle     memcard-1             8264 bytes  1364dd5cfc4c8b54  SCUS-94163   slot 2   BASCUS-94163FF7-S03
+    [2]   bundle     memcard-1             8264 bytes  60fff59a7d0ca245  SLUS-00594   slot 3   BASLUS-00594
 ```
+
+Each part line is its id, kind, socket, size, the head of its digest, the game's product code, the
+slot it sat in and the name the card held. The name goes last because it is the one field with no
+useful bound — a GameCube filename runs to 32 characters — so everything before it stays in column.
+The two Final Fantasy VII saves share a product code and are told apart by the rest.
 
 ## The crates
 
@@ -28,10 +33,50 @@ $ 1saves inspect card.1saves
 | [`one-saves-registry`](crates/one-saves-registry) | Systems, emulator cores, save roles, vendor names. |
 | [`one-saves-convert`](crates/one-saves-convert) | Emulator saves and memory cards, both directions. |
 | [`one-saves-cli`](crates/one-saves-cli) | The `1saves` command-line tool. |
-| [`ps2-memcard`](crates/ps2-memcard) | PlayStation 2 memory card filesystem, standalone. |
 
-`ps2-memcard` depends on nothing in this workspace, so anything that needs to read a PS2 card can
-take it on its own.
+Every memory card filesystem is a crate of its own, because a memory card is a reusable format and
+nothing about reading one needs this container. Each depends on nothing at all — not on the rest of
+this workspace, not on anything outside it — so a program that just wants to read a card takes one
+and stops there.
+
+| Crate | Format |
+| ----- | ------ |
+| [`ps1-memcard`](crates/ps1-memcard) | PlayStation memory cards, and the containers they ship in |
+| [`ps2-memcard`](crates/ps2-memcard) | PlayStation 2 memory cards, ECC and all |
+| [`n64-cpak`](crates/n64-cpak) | Nintendo 64 Controller Paks |
+| [`neogeo-memcard`](crates/neogeo-memcard) | Neo Geo memory cards, MVS and AES alike |
+| [`gc-memcard`](crates/gc-memcard) | GameCube memory cards |
+| [`dreamcast-vmu`](crates/dreamcast-vmu) | Dreamcast Visual Memory Units |
+
+What `one-saves-convert` holds for each is the adapter — the mapping between a card's saves and a
+bundle's nested parts — and nothing else.
+
+## Features
+
+Everything optional is a feature, and all of them are on by default, so a consumer pays for what it
+uses. Reading and writing bundles needs none of them.
+
+| Feature | On | What it brings |
+| ------- | -- | -------------- |
+| `cards` | `one-saves-convert`, `one-saves-cli` | all six card formats below |
+| `ps1` `ps2` `n64` `gc` `vmu` `neogeo` | `one-saves-convert`, `one-saves-cli` | one card crate each, and nothing else |
+| `dat` | `one-saves-convert`, `one-saves-cli` | `datary`, `quick-xml`, `serde` and its derive |
+| `dat-cmpro` | `one-saves-convert`, `one-saves-cli` | `winnow` |
+| `rom` | `one-saves-convert`, `one-saves-cli` | `crc32fast`, `md-5`, `sha1` |
+| `zstd` | those two and `one-saves` | `zstd`, and the C library it compiles |
+
+Turning every one off takes 19 crates out of a `1saves` build, the C compile among them:
+
+```console
+cargo install one-saves-cli --no-default-features
+```
+
+A card format that is off is still **named**: `inspect`, `verify` and `hash` read a bundle of it,
+and `convert` and `extract` say which feature would have handled it rather than guessing. What such
+a build cannot do is tell that format's dump from a flat save when the extension is ambiguous —
+`.bin`, `.srm` — because the reader that knows the signature is what came off.
+
+Each crate's README has the detail.
 
 ## What converts
 
@@ -43,6 +88,7 @@ take it on its own.
 | GameCube memory cards | `.raw` `.gcp` | yes |
 | Dreamcast VMU | `.bin` | yes |
 | PS2 memory cards | `.ps2`, with or without ECC spare | yes |
+| Neo Geo memory cards | `.neo`, bare or in a MiSTer save | yes |
 
 Detection reads the bytes before the extension, because the extension is the less reliable of the
 two: the same PS1 card ships as `.mcr`, `.mcd`, `.bin` and `.srm`, and that last one is also what
@@ -73,7 +119,7 @@ split a real-time-clock footer off the save, so its bytes hash the same over tim
   extension    x.1sav.rtc.mbc3
   clock        mbc3, read at epoch 1700000000
   parts        1
-    [0] save       primary              32768 bytes  09fed9cbfb98b6ab
+    [0]   save       primary              32768 bytes  09fed9cbfb98b6ab
 ```
 
 Where the clock lives varies by emulator, and the bundle hides that: mGBA and SameBoy append it to
