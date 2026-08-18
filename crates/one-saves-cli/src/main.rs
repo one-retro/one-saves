@@ -397,6 +397,10 @@ fn inspect(path: &Path) -> Fallible {
 
     println!("{}", path.display());
     println!("  {} bytes, spec version {}", bytes.len(), one_saves::SPEC_VERSION);
+    // What the bundle *is*, which decides how the parts below it should be read. It comes from
+    // the container crate rather than from a rule spelled out here, so this listing and any other
+    // consumer classify the same file the same way.
+    println!("  shape        {}", bundle.shape());
     if let Some(system) = &header.system {
         let name = one_saves_registry::system(system.as_str()).map_or("unlisted", |s| s.name);
         println!("  system       {system} ({name})");

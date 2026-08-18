@@ -18,10 +18,14 @@ println!("content hash: {}", bundle.content_hash()?);
 - **Decodes and encodes** bundles, enforcing the deterministic encoding the format rests on.
 - **Validates** every structural rule: nesting depth, normalized nested bundles, part addressing,
   hash-value ordering, and the shape rules that make `size` present exactly where it is needed.
+- **Classifies** an arbitrary bundle into the tier it belongs to — a save, a card, a collection,
+  or none of the three — so every consumer reads the same file the same way. A formatted card with
+  nothing on it is still a card, and a collection is recognised by what it lacks.
 - **Hashes** a bundle two ways. The *file hash* identifies this exact file; the *content hash* is
   a pure function of what the bundle says, and is what a content-addressable store keys on.
 - **Round-trips what it does not understand**: an extension key from a producer you have never
-  heard of, and an integer key from a later minor version, both survive unchanged.
+  heard of, and an integer key from a later minor version, both survive unchanged. Decoding and
+  re-encoding gives back the bytes it was handed, for every file it accepts.
 
 ## Two strictness modes
 

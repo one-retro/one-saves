@@ -23,6 +23,21 @@
 //! Breaking either is malformed rather than merely unusual, because a consumer that accepted
 //! both spellings would compute two content hashes for one save.
 //!
+//! ## Decoding and re-encoding gives the bytes back
+//!
+//! It follows that `Bundle::from_slice(&bytes)?.to_vec()? == bytes`, for every byte string
+//! `from_slice` accepts. Determinism is enforced on the way *in* as well as on the way out — a
+//! non-preferred integer head, a misordered map key, a duplicate key and an indefinite length are
+//! all decode errors — so an accepted file was already written the one way this crate writes it,
+//! and nothing a decoder does not recognise is dropped along the way.
+//!
+//! A store may lean on this: a bundle it decoded, inspected and re-encoded is byte-identical to
+//! the one it was handed, so the [file hash](crate::Bundle::file_hash) survives the trip and the
+//! original bytes need not be kept beside it. What the guarantee does *not* cover is a bundle you
+//! have modified, or one you built rather than decoded: neither compression nor an external
+//! reference is pinned by the format, so two producers can write one logical bundle as different
+//! bytes. That is what the [content hash](crate::Bundle::content_hash) is for.
+//!
 //! # Reading a bundle
 //!
 //! ```no_run
@@ -41,6 +56,54 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! # Nesting: cards, collections and the saves inside them
+//!
+//! A [`bundle`](crate::PartKind::Bundle) part's payload is itself a complete `.1saves` file, which
+//! is how a card holds its saves and how a collection holds its cards. Ask
+//! [`shape`](crate::Bundle::shape) what you have been handed, then step in with the same
+//! [`from_slice`](crate::Bundle::from_slice) you used on the outside:
+//!
+//! ```no_run
+//! use one_saves::{Bundle, Part, PartKind, Shape};
+//!
+//! let card = Bundle::from_slice(&std::fs::read("card.1saves")?)?;
+//! assert_eq!(card.shape(), Shape::Card);
+//!
+//! for part in &card.parts {
+//!     if part.kind == PartKind::Bundle {
+//!         // One save, standing on its own: the inner bundle repeats the system and the game,
+//!         // because nothing is inherited across the nesting boundary.
+//!         let save = Bundle::from_slice(&part.bytes()?)?;
+//!         std::fs::write(format!("save-{}.1saves", part.id), save.to_vec()?)?;
+//!     }
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Going the other way is [`Part::new`], which computes the digest a `bundle` part's `sha256`
+//! has to hold, followed by setting `kind`:
+//!
+//! ```
+//! use one_saves::{Bundle, Header, Part, PartKind};
+//!
+//! let save = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
+//! let mut entry = Part::new(0, save.to_vec()?);
+//! entry.kind = PartKind::Bundle;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Because that payload is a whole file, slicing a save out of a card is a byte copy rather than a
+//! re-encode, and the outer part's `sha256` is already the inner bundle's content hash.
+//!
+//! The cost is that decoding a nested bundle twice is the expected pattern, not a mistake to
+//! design around. [`validate`](crate::Bundle::validate) — which
+//! [`from_slice`](crate::Bundle::from_slice) runs for you — decodes every `bundle` part to check
+//! it and then discards the result, since holding it would mean either a second representation of
+//! a bundle or paying for the inner decode whether or not a caller wants it. So the loop above
+//! decodes each save a second time. On a 16 MiB GameCube card that is the work twice; if it
+//! matters, [`from_cbor`](crate::Bundle::from_cbor) skips validation and lets you decode the
+//! outer bundle once without walking into its payloads.
+//!
 //! # What this crate will not do for you
 //!
 //! It never looks inside a payload. Whether a 64 KB dump and its 32 KB half are the same save
@@ -56,6 +119,7 @@ pub mod hash;
 mod identity;
 mod model;
 pub mod name;
+mod shape;
 mod validate;
 
 pub use codec::Strictness;
@@ -65,6 +129,7 @@ pub use model::{
     Bundle, Card, Extensions, ExternalRef, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys,
 };
 pub use name::{Name, NameError, ReverseDnsName, Slug};
+pub use shape::Shape;
 
 /// Re-exported so callers can read and build the values under extension keys.
 pub use dcbor;

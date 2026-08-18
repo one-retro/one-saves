@@ -14,6 +14,16 @@ impl Bundle {
     ///
     /// Called for you by [`from_slice`](Bundle::from_slice) and [`to_vec`](Bundle::to_vec), so a
     /// bundle that came from either has already passed.
+    ///
+    /// # Cost
+    ///
+    /// Every [`bundle`](crate::PartKind::Bundle) part is decoded here, checked, and then
+    /// discarded: the rules about a nested bundle are rules about what its payload decodes to, and
+    /// keeping the result would mean either a second in-memory shape for a bundle or making every
+    /// caller pay for an inner decode it may not want. A caller that then walks the nested bundles
+    /// decodes each of them a second time, which is the expected pattern rather than a mistake —
+    /// on a 16 MiB card it is the work twice. [`from_cbor`](Bundle::from_cbor) is the way out: it
+    /// does not validate, so it does not step into a payload.
     pub fn validate(&self) -> Result<(), Error> {
         self.validate_at_depth(0)
     }

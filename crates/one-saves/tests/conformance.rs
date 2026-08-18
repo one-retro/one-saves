@@ -8,11 +8,13 @@
 //! must; they cannot prove properties that no single file expresses. The three the corpus README
 //! names as its own blind spots — determinism, nesting depth, and whether an unknown value
 //! round-trips — are covered by the tests at the bottom of this file rather than by the corpus.
+//! [`Bundle::shape`] is checked there too: the corpus is the one place that has a file per tier,
+//! with the spec's own note on each saying which tier it is.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use one_saves::{Bundle, Strictness};
+use one_saves::{Bundle, Shape, Strictness};
 use serde_json::Value;
 
 fn corpus_dir() -> PathBuf {
@@ -118,6 +120,32 @@ fn valid_cases_re_encode_to_the_bytes_they_came_from() {
     assert!(failures.is_empty(), "{} case(s) failed:\n{}", failures.len(), failures.join("\n"));
 }
 
+/// The other half of the round-trip guarantee: the decoder is strict on the way *in*.
+///
+/// `from_slice(&bytes)?.to_vec()? == bytes` only holds because a file spelled any other way is
+/// refused rather than quietly re-spelled. The corpus runs at [`Strictness::Schema`], which would
+/// leave open whether a *shipped* decoder — the lenient one, which keeps integer keys it does not
+/// know — is equally strict about the encoding beneath the data model. It is, and these are the
+/// cases that say so.
+#[test]
+fn a_decoder_refuses_every_non_deterministic_encoding() {
+    for name in [
+        "non-preferred-key-head",
+        "non-preferred-value-head",
+        "map-keys-out-of-order",
+        "duplicate-map-key",
+        "indefinite-length-parts",
+        "indefinite-length-part-map",
+        "text-not-nfc",
+    ] {
+        let bytes = fs::read(corpus_dir().join(format!("invalid/{name}.cbor"))).expect("read case");
+        assert!(
+            Bundle::from_slice(&bytes).is_err(),
+            "{name} must be refused by a shipped decoder, not re-spelled on re-encoding"
+        );
+    }
+}
+
 /// Whether an unknown value round-trips.
 ///
 /// Several valid cases carry a name or key the spec expects a decoder *not* to recognise.
@@ -179,4 +207,53 @@ fn rejects_a_bundle_nested_deeper_than_the_cap() {
             if deep { "" } else { "not" }
         );
     }
+}
+
+/// What each corpus case *is*, checked against the shapes the corpus was written to demonstrate.
+///
+/// [`Bundle::shape`] is spec knowledge rather than plumbing, so it is pinned to the spec's own
+/// files: every case named here has a note in the corpus manifest saying which tier it belongs
+/// to, and this is that note as an assertion.
+#[test]
+fn valid_cases_classify_into_the_shapes_the_corpus_describes() {
+    let expected = [
+        // "An empty header and one bare save. The floor of what a bundle is."
+        ("minimal", Shape::Save),
+        // "No `system`, because several consoles read one and none of them owns it." Absence on
+        // all three header keys is not enough on its own — a collection also holds bundles.
+        ("token-bound-save", Shape::Save),
+        ("compressed-and-aux", Shape::Save),
+        ("binding", Shape::Save),
+        ("transfer-pak", Shape::Save),
+        ("zero-byte-payload", Shape::Save),
+        ("ps1-card", Shape::Card),
+        ("ps2-card", Shape::Card),
+        ("card-of-one-game", Shape::Card),
+        ("card-system-area", Shape::Card),
+        ("card-image-beside-splits", Shape::Card),
+        // The save spans two blocks, but the bundle around it is still a card: what the case
+        // varies is the size of the one nested entry, not the tier it sits in.
+        ("ps1-multi-block-save", Shape::Card),
+        // A thin card's entries point at content hashes, which changes nothing about what it is.
+        ("thin-card", Shape::Card),
+        // "A `card_image` is the only part it can have, since there is no save to nest."
+        ("empty-formatted-card", Shape::Card),
+        // "No system, no game, no card of its own, and entries that do not agree on a system."
+        ("collection", Shape::Collection),
+        // "Neither a card (the bundle is not one) nor a collection (it has a system and a game)."
+        ("cartridge-and-card", Shape::Mixed),
+    ];
+
+    let mut failures = Vec::new();
+    for (name, want) in expected {
+        let bytes = fs::read(corpus_dir().join(format!("valid/{name}.cbor")))
+            .unwrap_or_else(|e| panic!("read {name}: {e}"));
+        let bundle = Bundle::from_slice(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let got = bundle.shape();
+        if got != want {
+            failures.push(format!("{name}: classified as {got}, not {want}"));
+        }
+    }
+
+    assert!(failures.is_empty(), "{} case(s) failed:\n{}", failures.len(), failures.join("\n"));
 }
