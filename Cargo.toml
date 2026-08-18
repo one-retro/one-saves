@@ -58,6 +58,10 @@ clap = { version = "4.5", features = ["derive"] }
 datary = { version = "0.3", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Format-preserving TOML, for the one task that edits the root manifest. `toml` would round-trip
+# through a data structure and drop every comment in it, which in this file is most of the reason
+# the file is readable; `toml_edit` rewrites a value and leaves the rest of the bytes alone.
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 
 [workspace.lints.rust]
 missing_docs = "warn"

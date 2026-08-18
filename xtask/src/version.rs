@@ -12,6 +12,8 @@
 use std::fmt;
 use std::path::Path;
 
+use toml_edit::{DocumentMut, Item, value};
+
 /// A version as this workspace states it: three numbers and nothing else.
 ///
 /// No pre-release and no build metadata, because nothing here has ever wanted one and refusing
@@ -100,8 +102,7 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     let path = root.join("Cargo.toml");
     let manifest = std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
 
-    let members = members(&manifest)?;
-    let (current, rewritten) = retarget(&manifest, &members, how)?;
+    let (current, rewritten) = retarget(&manifest, how)?;
     let new = current.bumped(how);
 
     if how == Bump::Same {
@@ -118,15 +119,13 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
 ///
 /// Read from the manifest rather than assumed, so a member added later is covered without
 /// touching this file. The name is the last path segment, which is what every member here uses.
-fn members(manifest: &str) -> Result<Vec<String>, String> {
-    let start = manifest.find("members = [").ok_or("the root manifest has no `members` list")?;
-    let list = &manifest[start..];
-    let end = list.find(']').ok_or("the `members` list is not closed")?;
+fn members(doc: &DocumentMut) -> Result<Vec<String>, String> {
+    let list = doc["workspace"]["members"].as_array().ok_or("the root manifest has no `members` list")?;
 
     let mut members = Vec::new();
-    for quoted in list[..end].split('"').skip(1).step_by(2) {
-        let name = quoted.rsplit('/').next().unwrap_or(quoted);
-        members.push(name.to_owned());
+    for entry in list {
+        let path = entry.as_str().ok_or("a `members` entry is not a string")?;
+        members.push(path.rsplit('/').next().unwrap_or(path).to_owned());
     }
     if members.is_empty() {
         return Err("the `members` list is empty".to_owned());
@@ -139,46 +138,28 @@ fn members(manifest: &str) -> Result<Vec<String>, String> {
 /// Returns the version that was there and the manifest with the new one in it. A pin that
 /// disagreed with `[workspace.package]` is an error rather than something to quietly fix: the two
 /// only drift when an edit went half-done, and which half was right is not this task's to guess.
-fn retarget(manifest: &str, members: &[String], how: Bump) -> Result<(Version, String), String> {
-    let mut section = String::new();
-    let mut declared: Option<Version> = None;
-    let mut pinned: Vec<(String, Version)> = Vec::new();
-    let mut lines: Vec<String> = Vec::new();
+fn retarget(manifest: &str, how: Bump) -> Result<(Version, String), String> {
+    let mut doc: DocumentMut =
+        manifest.parse().map_err(|e| format!("the root manifest is not valid TOML: {e}"))?;
+    let members = members(&doc)?;
 
-    for line in manifest.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            section = trimmed.to_owned();
-            lines.push(line.to_owned());
-            continue;
-        }
+    let declared = Version::parse(
+        doc["workspace"]["package"]["version"].as_str().ok_or("`[workspace.package]` has no `version`")?,
+    )?;
+    let new = declared.bumped(how);
 
-        // The `[workspace.package]` version, which is what every member inherits. `rust-version`
-        // sits in the same table and is not it, so the key is matched whole.
-        if section == "[workspace.package]" && key_of(trimmed) == Some("version") {
-            let (found, rewritten) = swap_version(line, how)?;
-            declared = Some(found);
-            lines.push(rewritten);
-            continue;
-        }
+    set_version(&mut doc["workspace"]["package"], new)?;
 
-        // A member's pin. A third-party dependency in the same table keeps whatever it says.
-        if section == "[workspace.dependencies]"
-            && let Some(key) = key_of(trimmed)
-            && members.iter().any(|member| member == key)
-        {
-            let (found, rewritten) = swap_version(line, how)?;
-            pinned.push((key.to_owned(), found));
-            lines.push(rewritten);
-            continue;
-        }
-
-        lines.push(line.to_owned());
-    }
-
-    let declared = declared.ok_or("`[workspace.package]` has no `version`")?;
-    for (member, pin) in &pinned {
-        if *pin != declared {
+    let deps = doc["workspace"]["dependencies"]
+        .as_table_mut()
+        .ok_or("the root manifest has no `[workspace.dependencies]`")?;
+    for member in &members {
+        // A member with no entry here is one nothing else depends on, which is fine: `xtask` is
+        // one, and so is the binary. A third-party dependency in the same table is not a member
+        // and keeps whatever it says.
+        let Some(dep) = deps.get_mut(member) else { continue };
+        let Some(pin) = set_version(dep, new)? else { continue };
+        if pin != declared {
             return Err(format!(
                 "{member} is pinned at {pin} but the workspace is at {declared}; the manifest is \
                  half-edited, so fix it by hand before releasing"
@@ -186,47 +167,26 @@ fn retarget(manifest: &str, members: &[String], how: Bump) -> Result<(Version, S
         }
     }
 
-    let mut rewritten = lines.join("\n");
-    if manifest.ends_with('\n') {
-        rewritten.push('\n');
-    }
-    Ok((declared, rewritten))
+    Ok((declared, doc.to_string()))
 }
 
-/// The key a manifest line assigns to, or `None` if it does not look like an assignment.
-fn key_of(trimmed: &str) -> Option<&str> {
-    let key = trimmed.split('=').next()?.trim();
-    (!key.is_empty() && !key.starts_with('#')).then_some(key)
-}
-
-/// Replaces the quoted value of the `version` key on one line, whichever table it sits in.
+/// Replaces the `version` of one table, returning what was there.
 ///
-/// The key is found rather than the value, because a line carries other quoted strings — a path,
-/// a feature list — and a search for the old number would sooner or later hit one of them.
-fn swap_version(line: &str, how: Bump) -> Result<(Version, String), String> {
-    let mut at = 0;
-    let found = loop {
-        let offset = line[at..].find("version").ok_or_else(|| format!("no `version` in {line:?}"))?;
-        let start = at + offset;
-        // `rust-version` ends in `version` too, so the character before has to be one that cannot
-        // continue a key.
-        let joined =
-            line[..start].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '-' || c == '_');
-        at = start + "version".len();
-        if !joined {
-            break start;
-        }
-    };
+/// `None` means the table has no `version` at all, which for a dependency is a path-only entry.
+/// The value is swapped in under the key's existing decor, so the spacing and any trailing comment
+/// on that line survive; addressing the key rather than searching the text for the old number is
+/// the whole reason this task uses a TOML parser.
+fn set_version(item: &mut Item, new: Version) -> Result<Option<Version>, String> {
+    let Some(table) = item.as_table_like_mut() else { return Ok(None) };
+    let Some(slot) = table.get_mut("version") else { return Ok(None) };
+    let Some(current) = slot.as_str().map(Version::parse).transpose()? else { return Ok(None) };
 
-    let rest = &line[found..];
-    let open = rest.find('"').ok_or_else(|| format!("no quoted version in {line:?}"))?;
-    let close = rest[open + 1..].find('"').ok_or_else(|| format!("unterminated version in {line:?}"))?;
-    let text = &rest[open + 1..open + 1 + close];
-
-    let current = Version::parse(text)?;
-    let new = current.bumped(how);
-    let value = found + open + 1;
-    Ok((current, format!("{}{new}{}", &line[..value], &line[value + text.len()..])))
+    let decor = slot.as_value().map(|v| v.decor().clone());
+    *slot = value(new.to_string());
+    if let (Some(rewritten), Some(decor)) = (slot.as_value_mut(), decor) {
+        *rewritten.decor_mut() = decor;
+    }
+    Ok(Some(current))
 }
 
 #[cfg(test)]
@@ -239,6 +199,7 @@ members = [
     "xtask",
 ]
 
+# Why this crate pays for what it pays for.
 [workspace.package]
 version = "0.2.0"
 rust-version = "1.88"
@@ -250,13 +211,13 @@ datary = { version = "0.3", default-features = false }
 "#;
 
     fn bumped(how: Bump) -> String {
-        let members = members(MANIFEST).unwrap();
-        retarget(MANIFEST, &members, how).unwrap().1
+        retarget(MANIFEST, how).unwrap().1
     }
 
     #[test]
     fn a_member_is_named_by_its_last_path_segment() {
-        assert_eq!(members(MANIFEST).unwrap(), ["one-saves", "xtask"]);
+        let doc: DocumentMut = MANIFEST.parse().unwrap();
+        assert_eq!(members(&doc).unwrap(), ["one-saves", "xtask"]);
     }
 
     #[test]
@@ -264,6 +225,14 @@ datary = { version = "0.3", default-features = false }
         let out = bumped(Bump::Patch);
         assert!(out.contains("version = \"0.2.1\"\n"), "{out}");
         assert!(out.contains("one-saves = { version = \"0.2.1\", path"), "{out}");
+    }
+
+    #[test]
+    fn nothing_but_the_version_is_touched() {
+        // The point of parsing rather than scanning: comments, key order and spacing all survive,
+        // and the only bytes that differ are the ones that had to.
+        let out = bumped(Bump::Patch);
+        assert_eq!(out, MANIFEST.replace("\"0.2.0\"", "\"0.2.1\""), "{out}");
     }
 
     #[test]
@@ -276,11 +245,23 @@ datary = { version = "0.3", default-features = false }
 
     #[test]
     fn rust_version_is_not_the_version() {
-        // It ends in `version` and sits in the same table, which is the one way this could go
-        // quietly wrong: a bumped MSRV would be caught by nothing until CI.
+        // It ends in `version` and sits in the same table, which a search over the text has to be
+        // told about and a parser simply cannot confuse.
         for how in [Bump::Major, Bump::Minor, Bump::Patch] {
             assert!(bumped(how).contains("rust-version = \"1.88\""), "{how:?}");
         }
+    }
+
+    #[test]
+    fn a_path_may_contain_the_word_version() {
+        // What the hand-rolled scanner this replaced got wrong: it found `version` inside the path
+        // string and failed on a manifest that is perfectly legal.
+        let m = MANIFEST.replace(
+            "one-saves = { version = \"0.2.0\", path = \"crates/one-saves\"",
+            "one-saves = { path = \"crates/version-x\", version = \"0.2.0\"",
+        );
+        let out = retarget(&m, Bump::Patch).unwrap().1;
+        assert!(out.contains("path = \"crates/version-x\", version = \"0.2.1\""), "{out}");
     }
 
     #[test]
@@ -300,8 +281,7 @@ datary = { version = "0.3", default-features = false }
     fn a_half_edited_manifest_is_an_error_rather_than_a_guess() {
         let drifted =
             MANIFEST.replace("one-saves = { version = \"0.2.0\"", "one-saves = { version = \"0.1.0\"");
-        let members = members(&drifted).unwrap();
-        let error = retarget(&drifted, &members, Bump::Patch).unwrap_err();
+        let error = retarget(&drifted, Bump::Patch).unwrap_err();
         assert!(error.contains("pinned at 0.1.0"), "{error}");
     }
 
