@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "dreamcast-vmu"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "find-msvc-tools"
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "gc-memcard"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "getrandom"
@@ -413,11 +413,11 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "n64-cpak"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "neogeo-memcard"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "num-traits"
@@ -442,7 +442,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "one-saves"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dcbor",
  "serde_json",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "one-saves-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "one-saves",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "one-saves-convert"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "crc32fast",
  "datary",
@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "one-saves-registry"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "paste"
@@ -512,11 +512,11 @@ dependencies = [
 
 [[package]]
 name = "ps1-memcard"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "ps2-memcard"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "quick-xml"
