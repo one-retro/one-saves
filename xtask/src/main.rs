@@ -6,6 +6,7 @@
 mod generate;
 mod markdown;
 mod registry;
+mod version;
 
 use std::path::{Path, PathBuf};
 
@@ -13,13 +14,18 @@ const USAGE: &str = "\
 cargo xtask <task>
 
 Tasks:
-  registries [--docs <path>]   Regenerate the registry tables.
+  registries [--docs <path>]        Regenerate the registry tables.
+  version <major|minor|patch|same>  Set the version every crate shares.
 
 Without --docs, the tables are rebuilt from the JSON this repository already carries, which is
 what CI runs: it checks the committed tables still match their data, and needs nothing fetched.
 
 With --docs pointing at a checkout of the specifications repository, the JSON is re-read from the
 registry pages first, so a change made there lands in the JSON and then in the tables.
+
+`version` writes the new number to stdout on its own, so a release script can take it without
+parsing anything. Use `just release` rather than calling it directly: the version is only half of
+what a release is.
 ";
 
 fn main() -> std::process::ExitCode {
@@ -36,6 +42,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("registries") => registries(&args[1..]),
+        Some("version") => version::run(&workspace_root(), &args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
             Ok(())

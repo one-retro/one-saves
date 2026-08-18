@@ -1,5 +1,45 @@
 # Releasing
 
+## Cutting one
+
+```console
+just release patch        # major, minor, patch or same
+```
+
+That is the whole of it: the recipe bumps the version, runs the gate, commits, pushes, publishes
+the workspace and tags it. It refuses to start unless the working tree is clean, the branch is
+`main`, and `main` and `origin/main` are the same commit — a published crate records the commit it
+came from, so that commit has to already be fetchable.
+
+Everything that can fail is made to fail first. `just check`, `just msrv` and the packaging dry run
+all run before anything leaves the machine, and the tag is written last, after the upload, so a tag
+that exists is a release that happened.
+
+Which word to pass: while the major is 0 the **minor** is Cargo's breaking position, so an additive
+change takes `patch` and a breaking one takes `minor`. `major` is the move to 1.0, which for this
+workspace means the specification stabilized. `same` releases the number already in `Cargo.toml` —
+for a bump made by hand, and for a second run after one failed between the bump and the publish,
+which is the one failure that leaves a commit behind without a release.
+
+The rest of this file is what that recipe does, for when it has to be done by hand.
+
+## The version number
+
+Every crate shares the workspace version: each member carries `version.workspace = true`, so there
+is no per-crate number to edit. What there is instead is the same number written ten times in
+the root `Cargo.toml` — once under `[workspace.package]`, and once in each member's entry under
+`[workspace.dependencies]`, where the pin is what makes a published crate depend on the version it
+was released beside rather than on whatever is newest.
+
+```console
+cargo xtask version patch     # writes all of them, and prints the new number
+```
+
+A pin left behind is not caught by the build, because a path dependency resolves against the
+workspace either way. It surfaces at `cargo publish`, which resolves against the registry — the
+worst moment to find out. The task refuses outright if the copies disagree before it starts, since
+that means an earlier edit went half-done and which half was right is not something to guess.
+
 ## Publish order
 
 The crates depend on each other by path *and* version, so they have to go to crates.io in
@@ -44,11 +84,15 @@ done
 ## Before publishing
 
 ```console
+cargo xtask version patch         # every copy of the version, in one file
 git push                          # a published crate records its commit; make it fetchable first
 just check                        # fmt, lint, tests, docs, and the registry drift check
 just msrv                         # the declared minimum Rust version
-cargo publish --workspace --dry-run
+just package                      # cargo publish --workspace --dry-run
 ```
+
+Commit the bump before the dry run rather than after it: `cargo publish` refuses to package a
+dirty tree, in either mode.
 
 The dry run does everything but upload: it packages each crate, then builds the dependent ones
 against the packaged copies rather than against the workspace, which is what catches a file that
@@ -62,14 +106,16 @@ needs a network fetch per crate. `just check` also regenerates
 `crates/one-saves-registry/src/generated.rs` from the committed JSON and fails on a diff, so a hand
 edit to either half shows up rather than diverging quietly.
 
-## Version numbers
+## Version policy
 
-Every crate shares the workspace version. The specification is at 0.1 and **not yet stabilized**,
-so until it reaches 1.0 these stay on 0.x and breaking changes happen in place.
+The specification is at 0.1 and **not yet stabilized**, so until it reaches 1.0 these stay on 0.x
+and breaking changes happen in place.
 
 `one-saves::SPEC_VERSION` and the vendored corpus's `manifest.json` must agree; the conformance
 suite asserts it, so a corpus re-vendored from a newer spec fails the build until the crate is
 updated to match.
+
+Releases are tagged `v<version>`, on the commit that carries the bump.
 
 ## Re-vendoring the conformance corpus
 

@@ -119,6 +119,69 @@ package:
     # what catches a file the tests reach for but `cargo package` leaves out.
     cargo publish --workspace --dry-run
 
+# Cut a release: bump the version, run every gate, publish the workspace and tag it.
+#
+# `bump` is major, minor, patch or same. While the major is 0 the *minor* is Cargo's breaking
+# position, so an additive change takes `patch` and a breaking one takes `minor`; `major` is the
+# move to 1.0. `same` releases the number already in Cargo.toml, which is what a bump made by hand
+# needs, and what a second run needs after one failed between the bump and the publish.
+#
+# Publishing cannot be undone: a version can be yanked but never reused. Everything that can fail
+# is made to fail first — the gate, the oldest toolchain, and the packaging dry run all run before
+# anything leaves the machine — and the tag is written last, so a tag means it went out.
+# The list shows the last comment line above a recipe, which for this one is a caveat rather than
+# a summary, so the summary is given outright.
+[doc("Bump the version, run every gate, publish the workspace and tag it.")]
+[confirm("This publishes every crate to crates.io, which cannot be undone. Continue?")]
+release bump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # A published crate records the commit it came from, so that commit has to already be upstream
+    # and there must be nothing local sitting on top of it.
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "release: the working tree is dirty; commit or stash first" >&2
+        exit 1
+    fi
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$branch" != "main" ]; then
+        echo "release: on $branch, and a release comes off main" >&2
+        exit 1
+    fi
+    git fetch --quiet origin main
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+        echo "release: main and origin/main disagree; push or pull first" >&2
+        exit 1
+    fi
+
+    version=$(cargo xtask version {{ bump }})
+    tag="v$version"
+    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+        echo "release: $tag already exists, so $version has been released from here before" >&2
+        exit 1
+    fi
+
+    # Everything CI runs, plus the oldest toolchain it claims to support. The bump is in the tree
+    # by now, so this is the gate running against the version that will actually go out.
+    just check
+    just msrv
+
+    # `cargo publish` refuses a dirty tree, so the bump is committed before the dry run rather
+    # than after it. `same` moved nothing and has nothing to commit.
+    if ! git diff --quiet; then
+        git add Cargo.toml Cargo.lock
+        git commit --message "Release $version"
+    fi
+
+    just package
+    git push origin main
+    cargo publish --workspace
+
+    # Last, and only on success: a tag that exists is a release that happened.
+    git tag --annotate "$tag" --message "Release $version"
+    git push origin "$tag"
+    echo "released $version"
+
 # Remove build artifacts.
 clean:
     cargo clean
