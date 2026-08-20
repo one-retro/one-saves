@@ -21,8 +21,8 @@
 //! about reading one needs this container. What is in this module is the adapter per format: the
 //! mapping between a card's saves and a bundle's nested parts, and nothing else.
 //!
-//! Each adapter is behind the feature of the same name, and [`read`] and [`write`] are the one
-//! place that knows which are on.
+//! Each adapter is behind the feature of the same name, and [`read`] and [`write`](write()) are
+//! the one place that knows which are on.
 
 /// Applies "this build has at least one card format" to everything it wraps.
 ///
@@ -64,7 +64,7 @@ use crate::error::{Error, Result};
 
 /// Reads a card into a bundle: one nested bundle per save.
 ///
-/// `format` is what [`detect`](crate::detect) worked out. A format this build was not compiled
+/// `format` is what [`detect`](crate::detect()) worked out. A format this build was not compiled
 /// with is [`Unsupported`](Error::Unsupported) rather than misread.
 // A build with no card format at all reads neither argument, since every arm that would have is
 // gone. That is the point of the configuration rather than an oversight in it.

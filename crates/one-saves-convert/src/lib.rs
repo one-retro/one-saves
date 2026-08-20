@@ -52,9 +52,9 @@
 //!
 //! [`Format`] keeps every variant whichever card features are on, so a downstream `match` compiles
 //! the same way in every build. What a format's feature takes away is the reader and the writer:
-//! [`card::read`] and [`card::write`] then return [`Error::Unsupported`], and [`detect`] can no
-//! longer recognise that format by its **signature** — its extensions still resolve, so a `.mcr`
-//! is named as a PS1 card and refused rather than misread.
+//! [`card::read`] and [`card::write`] then return [`Error::Unsupported`], and
+//! [`detect`](detect()) can no longer recognise that format by its **signature** — its extensions
+//! still resolve, so a `.mcr` is named as a PS1 card and refused rather than misread.
 
 // docs.rs builds with `--cfg docsrs` on nightly, which is what puts the feature badge on the two
 // modules below. Nothing else sets it, so a stable build never sees the nightly attribute.
