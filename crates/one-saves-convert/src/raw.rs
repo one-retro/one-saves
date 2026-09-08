@@ -4,9 +4,18 @@
 //! wrapping it is a matter of saying what it belongs to — which is exactly what the container is
 //! for, and exactly what a bare file cannot say.
 //!
+//! One file here does say. A Sega CD backup RAM ends in a volume footer whose second half never
+//! varies, and that names the system as plainly as a ROM header would, so it settles `system` when
+//! the caller did not. Its filesystem stays unread — a `.brm` becomes one part holding the whole
+//! volume — which is why it is a flat save here and not a card.
+//!
 //! The role stays absent, meaning `primary`. A great many systems have exactly one place a save
 //! can live, and the registry's advice is to prefer a Common role where one fits rather than
 //! reaching for `cartridge` because the medium happens to be a cartridge.
+//!
+//! A Sega CD is the exception to that too: it carries internal backup RAM and a Backup RAM Cart at
+//! the same time, so which of `internal` and `ram-cart` a dump came out of is worth stating rather
+//! than letting it claim to be the only socket.
 
 use one_saves::{Bundle, Game, Header, Part, Slug, Source};
 
@@ -66,6 +75,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
     ("fla", "flash memory"),
     ("flash", "flash memory"),
     ("sa1", "SA-1 cartridge save RAM"),
+    ("brm", "Sega CD backup RAM, internal or Backup RAM Cart"),
     ("rtc", "real-time clock state"),
     ("bsv", "bsnes save RAM"),
 ];
@@ -77,6 +87,38 @@ pub fn is_raw_extension(extension: &str) -> bool {
     EXTENSIONS.iter().any(|(known, _)| *known == lowered)
 }
 
+/// The system a backup RAM belongs to.
+const SEGA_CD: &str = "sega-cd";
+
+/// The half of a Sega CD backup RAM's volume footer that never varies.
+///
+/// The last 0x40 bytes of a volume are its footer, and only the first half of that moves: the
+/// volume name, the free-block count and the file count all change as saves come and go. These 32
+/// bytes do not, on the console's internal 8 KiB and on a Backup RAM Cart alike, which is what
+/// makes them a signature rather than a guess.
+const SEGA_CD_BRAM_FOOTER: &[u8] = b"SEGA_CD_ROM\0\x01\0\0\0RAM_CARTRIDGE___";
+
+/// How big a block is on a backup RAM. A volume is a whole number of them.
+const SEGA_CD_BRAM_BLOCK: usize = 0x40;
+
+/// The smallest volume there is: the console's internal backup RAM, which is always this.
+///
+/// Every Backup RAM Cart is this size or larger, so nothing shorter is a volume — and requiring
+/// it keeps a short file that happens to end the right way from being read as one.
+const SEGA_CD_BRAM_MIN: usize = 8192;
+
+/// Whether these bytes are a Sega CD backup RAM.
+///
+/// The footer is checked at the end of the volume, so a dump padded past it — as some producers
+/// write one — reads as an ordinary flat save rather than being trimmed to fit. Cutting bytes off
+/// a save is not something to do on a guess.
+#[must_use]
+pub fn is_segacd_bram(bytes: &[u8]) -> bool {
+    bytes.len() >= SEGA_CD_BRAM_MIN
+        && bytes.len().is_multiple_of(SEGA_CD_BRAM_BLOCK)
+        && bytes.ends_with(SEGA_CD_BRAM_FOOTER)
+}
+
 /// Wraps flat save bytes in a bundle.
 pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
     // A zero-byte payload is legal, but an emulator that wrote one has almost certainly written
@@ -86,8 +128,9 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
     }
 
     let system = match &options.system {
+        // What the caller says is a statement and keeps the last word, whatever the bytes hold.
         Some(text) => Some(parse_slug(text, "system")?),
-        None => None,
+        None => is_segacd_bram(bytes).then(|| slug(SEGA_CD)),
     };
     let role = match &options.role {
         Some(text) => Some(parse_slug(text, "role")?),
@@ -144,6 +187,11 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
         },
         parts,
     })
+}
+
+/// Parses a slug the specification defines, which is always well-formed.
+fn slug(text: &str) -> Slug {
+    Slug::parse(text).expect("a spec slug is well-formed")
 }
 
 fn parse_slug(text: &str, field: &str) -> Result<Slug> {
@@ -293,6 +341,57 @@ mod tests {
             ..RawOptions::default()
         };
         assert!(wrap(&vec![7u8; 32768], &options).is_err());
+    }
+
+    /// A Sega CD backup RAM: blocks of 0x40 with the volume footer at the end of the last one.
+    fn backup_ram(size: usize) -> Vec<u8> {
+        let footer = b"SEGA_CD_ROM\0\x01\0\0\0RAM_CARTRIDGE___";
+        let mut bram: Vec<u8> = (0..size).map(|i| u8::try_from(i % 251).expect("under 251")).collect();
+        bram[size - footer.len()..].copy_from_slice(footer);
+        bram
+    }
+
+    #[test]
+    fn a_backup_ram_says_which_system_it_belongs_to() {
+        // The one flat save that identifies itself. Nothing was passed here: no `--system`, no
+        // `--from`, no ROM — and the bundle still knows what it is.
+        let bundle = wrap(&backup_ram(8192), &RawOptions::default()).expect("wraps");
+        assert_eq!(bundle.header.system.as_ref().unwrap().as_str(), "sega-cd");
+        bundle.validate().expect("valid bundle");
+    }
+
+    #[test]
+    fn what_the_caller_says_beats_what_the_bytes_say() {
+        // The signature fills a gap; it does not overrule a statement.
+        let options = RawOptions { system: Some("genesis".into()), ..RawOptions::default() };
+        let bundle = wrap(&backup_ram(8192), &options).expect("wraps");
+        assert_eq!(bundle.header.system.as_ref().unwrap().as_str(), "genesis");
+    }
+
+    #[test]
+    fn a_backup_ram_is_wrapped_whole_and_comes_back_byte_for_byte() {
+        // The filesystem is not read, so the volume is one part and nothing in it is rearranged.
+        let bram = backup_ram(524_288);
+        let bundle = wrap(&bram, &RawOptions::default()).expect("wraps");
+        assert_eq!(bundle.parts.len(), 1);
+        assert!(bundle.header.extensions.is_empty(), "a backup RAM carries no clock");
+
+        let reread = Bundle::from_slice(&bundle.to_vec().unwrap()).unwrap();
+        assert_eq!(unwrap(&reread).unwrap(), bram);
+    }
+
+    #[test]
+    fn a_save_that_is_not_a_backup_ram_is_left_unnamed() {
+        // Nothing else says what system it is for, and guessing would be worse than an absence.
+        assert!(wrap(&[7u8; 8192], &RawOptions::default()).unwrap().header.system.is_none());
+        // Nor is a run of bytes that merely ends the right way: a volume is whole blocks.
+        let mut ragged = backup_ram(8192);
+        ragged.insert(0, 0);
+        assert!(wrap(&ragged, &RawOptions::default()).unwrap().header.system.is_none());
+        // Nor a short one. The console's own backup RAM is the smallest volume there is, so a
+        // file under 8 KiB carrying the footer is something else that happens to end that way.
+        assert!(!is_segacd_bram(&backup_ram(4096)));
+        assert!(wrap(&backup_ram(4096), &RawOptions::default()).unwrap().header.system.is_none());
     }
 
     #[test]

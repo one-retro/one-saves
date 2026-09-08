@@ -239,7 +239,7 @@ mod tests {
             return None;
         }
         let mut digest = Vec::with_capacity(algorithm.digest_len());
-        for pair in text.as_bytes().chunks_exact(2) {
+        for pair in text.as_bytes().as_chunks::<2>().0 {
             digest.push(u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?);
         }
         HashValue::new(algorithm, digest).ok()

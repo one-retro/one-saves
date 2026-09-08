@@ -165,7 +165,7 @@ impl CardBuilder {
 #[must_use]
 pub fn add_spare(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() / PAGE * (PAGE + SPARE));
-    for page in data.chunks_exact(PAGE) {
+    for page in data.as_chunks::<PAGE>().0 {
         out.extend_from_slice(page);
         let mut spare = [0u8; SPARE];
         ecc::fill_spare(page, &mut spare);
