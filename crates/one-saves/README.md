@@ -44,6 +44,10 @@ properties the corpus README says a green run cannot prove. See the [workspace R
 
 - `zstd` (default) — read and write parts whose payload carries `encoding: "zstd"`. Without it,
   such a part still decodes and round-trips; its payload just cannot be inflated.
+- `multithread` (off) — `Arc` rather than `Rc` under `dcbor`, which is what makes `Bundle` and
+  everything reachable from it `Send` and `Sync`. Turn it on to hold a bundle across an `.await`
+  in a future that has to be `Send`. It changes no behaviour and no encoding; the cost is atomic
+  reference counting, which a caller that stays on one thread has no use for.
 
 [spec]: https://docs.1retro.com/specifications/universal-saves-format/
 [root]: https://github.com/one-retro/one-saves

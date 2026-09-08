@@ -53,8 +53,8 @@ bundle's nested parts — and nothing else.
 
 ## Features
 
-Everything optional is a feature, and all of them are on by default, so a consumer pays for what it
-uses. Reading and writing bundles needs none of them.
+Everything optional is a feature, and all of them are on by default except `multithread`, so a
+consumer pays for what it uses. Reading and writing bundles needs none of them.
 
 | Feature | On | What it brings |
 | ------- | -- | -------------- |
@@ -64,8 +64,11 @@ uses. Reading and writing bundles needs none of them.
 | `dat-cmpro` | `one-saves-convert`, `one-saves-cli` | `winnow` |
 | `rom` | `one-saves-convert`, `one-saves-cli` | `crc32fast`, `md-5`, `sha1` |
 | `zstd` | those two and `one-saves` | `zstd`, and the C library it compiles |
+| `multithread` | off; `one-saves-convert` and `one-saves` | nothing — `Arc` rather than `Rc` under `dcbor`, so a `Bundle` is `Send` and `Sync` |
 
-Turning every one off takes 19 crates out of a `1saves` build, the C compile among them:
+`multithread` is the one that is off by default: it buys nothing unless a bundle has to cross a
+thread or sit in a `Send` future, and it makes `dcbor`'s reference counts atomic. Turning every
+*other* one off takes 19 crates out of a `1saves` build, the C compile among them:
 
 ```console
 cargo install one-saves-cli --no-default-features

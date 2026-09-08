@@ -40,7 +40,7 @@ the filesystem — keep a `card-image` part if you need that.
 
 ## Features
 
-Everything optional is a feature, and all of them are on by default.
+Everything optional is a feature, and all of them are on by default except `multithread`.
 
 | Feature | What it is | What it brings |
 | ------- | ---------- | -------------- |
@@ -50,6 +50,7 @@ Everything optional is a feature, and all of them are on by default.
 | `dat-cmpro` | The ClrMamePro syntax as well as Logiqx XML | `winnow` |
 | `rom` | The `rom` module: ROM headers and digests | `crc32fast`, `md-5`, `sha1`, `sha2` |
 | `zstd` | Forwarded to `one-saves` | `zstd`, and the C library it compiles |
+| `multithread` (off) | Forwarded to `one-saves`: `Arc` rather than `Rc` under `dcbor` | nothing — it makes what this crate returns `Send` and `Sync` |
 
 Flat saves, detection, profiles and clock handling are always present: they are what this crate is,
 and they depend on nothing but `one-saves`. With everything off, the crate builds against

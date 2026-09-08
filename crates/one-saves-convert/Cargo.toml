@@ -54,6 +54,11 @@ rom = ["dep:crc32fast", "dep:md-5", "dep:sha1", "dep:sha2"]
 # Forwarded to one-saves, whose `zstd` compiles a C library. Off, a part whose payload carries
 # `encoding: "zstd"` still round-trips; its payload just cannot be inflated.
 zstd = ["one-saves/zstd"]
+# Forwarded to one-saves: `Arc` rather than `Rc` under `dcbor`, which is what makes a `Bundle` and
+# everything this crate hands back `Send` and `Sync`. Needed to hold one across an `.await` in a
+# future that has to be `Send`. Unlike the rest, it is off by default — the atomic refcounts cost
+# something and most callers stay on one thread.
+multithread = ["one-saves/multithread"]
 
 [package.metadata.docs.rs]
 all-features = true

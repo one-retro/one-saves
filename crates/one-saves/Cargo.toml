@@ -23,6 +23,13 @@ default = ["zstd"]
 # decodes and round-trips fine but its payload cannot be inflated, so a content hash cannot be
 # computed for a bundle that has one.
 zstd = ["dep:zstd"]
+# `Arc` instead of `Rc` for `dcbor`'s reference counting, which is what makes every type here
+# `Send` and `Sync` — a `Bundle` held across an `.await` in a future that has to be `Send` needs
+# it. Off, the whole crate is single-threaded and the refcounts are non-atomic. It is a feature
+# rather than the default because the atomic traffic is real and most callers never leave a
+# thread. Note that Cargo unifies features: something else in the graph turning
+# `dcbor/multithreaded` on turns it on here too.
+multithread = ["dcbor/multithreaded"]
 
 [package.metadata.docs.rs]
 all-features = true
