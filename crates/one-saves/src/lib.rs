@@ -104,6 +104,22 @@
 //! matters, [`from_cbor`](crate::Bundle::from_cbor) skips validation and lets you decode the
 //! outer bundle once without walking into its payloads.
 //!
+//! # Threads
+//!
+//! Every type here is a plain owned value except for the CBOR under an extension key, which
+//! `dcbor` reference-counts. That makes [`Bundle`] and everything reachable from it `Send` and
+//! `Sync` only when those refcounts are atomic, which is what the off-by-default `multithread`
+//! feature switches on:
+//!
+//! ```toml
+//! one-saves = { version = "0.2", features = ["multithread"] }
+//! ```
+//!
+//! Turn it on to hold a bundle across an `.await` in a future that has to be `Send`, or to move
+//! one between threads at all. Without it the reference counts are non-atomic and cheaper, which
+//! is the right trade for a caller that stays on one thread. It changes no behaviour and no
+//! encoding — a bundle written by either build is the same bytes.
+//!
 //! # What this crate will not do for you
 //!
 //! It never looks inside a payload. Whether a 64 KB dump and its 32 KB half are the same save
@@ -164,6 +180,20 @@ pub const MAX_NESTING_DEPTH: usize = 2;
 /// Bytes rather than characters, since that is what a consumer sizing the head region has to
 /// budget for.
 pub const MAX_PATH_LEN: usize = 512;
+
+/// What the `multithread` feature promises, checked at compile time.
+///
+/// The bound lives on `Bundle` because it reaches every other type in the crate: a header, its
+/// parts, their payloads, and the `dcbor::CBOR` under an extension key, which is the only thing
+/// here that is reference-counted and so the only thing the feature changes. `Error` is checked
+/// separately because it is what crosses the boundary on the failure path and shares none of
+/// `Bundle`'s fields.
+#[cfg(feature = "multithread")]
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Bundle>();
+    assert_send_sync::<Error>();
+};
 
 #[cfg(test)]
 mod tests {

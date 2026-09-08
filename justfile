@@ -40,6 +40,9 @@ fixtures:
 # Check every crate still builds and passes with its features turned down.
 test-features:
     cargo test -p one-saves --no-default-features
+    # `multithread` is the only feature that is off by default, so --all-features covers the `Arc`
+    # arm and nothing covers it standing on its own. This is the slim build a `Send` future takes.
+    cargo test -p one-saves --no-default-features --features multithread
     cargo test -p one-saves-convert --no-default-features
     # `dat` without `dat-cmpro` refuses a ClrMamePro catalog in its own words, which is the one
     # feature-off arm that carries behaviour rather than just an absence.
