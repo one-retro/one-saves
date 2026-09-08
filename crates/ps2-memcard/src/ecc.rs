@@ -98,7 +98,7 @@ pub fn fill_spare(page: &[u8], spare: &mut [u8]) {
     assert_eq!(spare.len(), crate::SPARE, "a spare area is {} bytes", crate::SPARE);
 
     spare.fill(0);
-    for (chunk, code) in page.chunks_exact(CHUNK).zip(spare.chunks_exact_mut(3)) {
+    for (chunk, code) in page.as_chunks::<CHUNK>().0.iter().zip(spare.as_chunks_mut::<3>().0.iter_mut()) {
         code.copy_from_slice(&calculate(chunk));
     }
     // The four bytes past the four codes are not ECC and are left clear.
@@ -143,7 +143,7 @@ mod tests {
         let mut spare = [0xFFu8; crate::SPARE];
         fill_spare(&page, &mut spare);
 
-        for (index, chunk) in page.chunks_exact(CHUNK).enumerate() {
+        for (index, chunk) in page.as_chunks::<CHUNK>().0.iter().enumerate() {
             assert_eq!(&spare[index * 3..index * 3 + 3], &calculate(chunk));
         }
         assert_eq!(&spare[12..], &[0, 0, 0, 0], "the tail is not ECC");

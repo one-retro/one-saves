@@ -95,9 +95,11 @@ fn n64(bytes: &[u8]) -> Option<RomInfo> {
     let normalised: Vec<u8> = match magic {
         0x8037_1240 => bytes[..0x40].to_vec(),
         // Byte-swapped within each 16-bit word.
-        0x3780_4012 => bytes[..0x40].chunks_exact(2).flat_map(|w| [w[1], w[0]]).collect(),
+        0x3780_4012 => bytes[..0x40].as_chunks::<2>().0.iter().flat_map(|w| [w[1], w[0]]).collect(),
         // Wholly little-endian, within each 32-bit word.
-        0x4012_3780 => bytes[..0x40].chunks_exact(4).flat_map(|w| [w[3], w[2], w[1], w[0]]).collect(),
+        0x4012_3780 => {
+            bytes[..0x40].as_chunks::<4>().0.iter().flat_map(|w| [w[3], w[2], w[1], w[0]]).collect()
+        }
         _ => return None,
     };
     Some(RomInfo {
@@ -250,8 +252,9 @@ mod tests {
         native[0x20..0x20 + 14].copy_from_slice(b"SUPER MARIO 64");
         native[0x3B..0x3F].copy_from_slice(b"NSME");
 
-        let byteswapped: Vec<u8> = native.chunks_exact(2).flat_map(|w| [w[1], w[0]]).collect();
-        let little: Vec<u8> = native.chunks_exact(4).flat_map(|w| [w[3], w[2], w[1], w[0]]).collect();
+        let byteswapped: Vec<u8> = native.as_chunks::<2>().0.iter().flat_map(|w| [w[1], w[0]]).collect();
+        let little: Vec<u8> =
+            native.as_chunks::<4>().0.iter().flat_map(|w| [w[3], w[2], w[1], w[0]]).collect();
 
         for (name, rom) in [("z64", &native), ("v64", &byteswapped), ("n64", &little)] {
             let info = identify(rom).unwrap_or_else(|| panic!("{name} should parse"));

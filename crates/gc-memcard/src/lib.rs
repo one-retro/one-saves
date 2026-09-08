@@ -87,7 +87,7 @@ fn block(bytes: &[u8], index: usize) -> &[u8] {
 pub fn checksum(bytes: &[u8]) -> (u16, u16) {
     let mut sum: u16 = 0;
     let mut inverse: u16 = 0;
-    for word in bytes.chunks_exact(2) {
+    for word in bytes.as_chunks::<2>().0 {
         let value = u16::from_be_bytes([word[0], word[1]]);
         sum = sum.wrapping_add(value);
         inverse = inverse.wrapping_add(!value);

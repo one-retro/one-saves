@@ -200,8 +200,10 @@ impl MemoryCard {
 
         let bytes = self.read_chain_bytes(cluster, count * ENTRY)?;
         bytes
-            .chunks_exact(ENTRY)
-            .map(Entry::parse)
+            .as_chunks::<ENTRY>()
+            .0
+            .iter()
+            .map(|entry| Entry::parse(entry.as_slice()))
             .filter(|entry| entry.as_ref().is_ok_and(|entry| entry.mode & mode::EXISTS != 0))
             .collect()
     }
@@ -321,7 +323,7 @@ fn strip_spare(bytes: &[u8]) -> Result<(Vec<u8>, bool)> {
         return Err(Error::TooShort(bytes.len()));
     }
     if bytes.len().is_multiple_of(RAW_PAGE) && !bytes.len().is_multiple_of(PAGE) {
-        let data = bytes.chunks_exact(RAW_PAGE).flat_map(|page| &page[..PAGE]).copied().collect();
+        let data = bytes.as_chunks::<RAW_PAGE>().0.iter().flat_map(|page| &page[..PAGE]).copied().collect();
         return Ok((data, true));
     }
     if bytes.len().is_multiple_of(PAGE) {
@@ -333,7 +335,8 @@ fn strip_spare(bytes: &[u8]) -> Result<(Vec<u8>, bool)> {
         {
             let looks_raw = bytes.len() > RAW_PAGE && bytes[RAW_PAGE..].len() >= PAGE;
             if looks_raw && bytes.len().is_multiple_of(RAW_PAGE) {
-                let data = bytes.chunks_exact(RAW_PAGE).flat_map(|page| &page[..PAGE]).copied().collect();
+                let data =
+                    bytes.as_chunks::<RAW_PAGE>().0.iter().flat_map(|page| &page[..PAGE]).copied().collect();
                 return Ok((data, true));
             }
         }
