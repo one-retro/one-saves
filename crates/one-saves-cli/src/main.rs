@@ -266,13 +266,27 @@ fn convert(args: Convert) -> Fallible {
         println!("split a real-time-clock footer off the save, so its bytes hash the same over time");
     }
 
+    // A backup RAM is a flat save to this build, but saying "flat cartridge save" about one would
+    // be wrong twice over: the internal RAM is not a cartridge, and the cart is not a game. What
+    // the bundle says settles it rather than the bytes, so a volume the caller filed under another
+    // system with `--system` is described as what was written and not as what it looks like.
+    let backup_ram = raw::is_segacd_bram(&bytes)
+        && bundle.header.system.as_ref().is_some_and(|system| system.as_str() == "sega-cd");
+
+    // A console with two sockets is the case an absent role gets wrong: it means `primary`, which
+    // says this is the only place a save could have come from, and on a Sega CD it is not.
+    if args.role.is_none() && backup_ram {
+        eprintln!("note: a Sega CD carries internal backup RAM and a Backup RAM Cart at once; pass");
+        eprintln!("      --role internal or --role ram-cart to say which socket this came out of");
+    }
+
     let saves = bundle.parts.iter().filter(|p| p.kind == PartKind::Bundle).count();
     let what = if saves > 0 { format!("{saves} save(s)") } else { format!("{} part(s)", bundle.parts.len()) };
     println!(
         "{} -> {} ({}, {what}, {} bytes)",
         args.input.display(),
         output.display(),
-        format.label(),
+        if backup_ram { "Sega CD backup RAM" } else { format.label() },
         encoded.len()
     );
     Ok(())
@@ -363,7 +377,10 @@ fn extract(args: Extract) -> Fallible {
         // choice the caller makes rather than something the bundle records.
         card => card::write(card, &bundle)?,
     };
-    let suffix = target.extension();
+    // `Format::Raw` covers every flat save and names the commonest of them, so a backup RAM would
+    // otherwise go back out as `.srm`. The bundle knows better.
+    let is_backup_ram = bundle.header.system.as_ref().is_some_and(|s| s.as_str() == "sega-cd");
+    let suffix = if target == Format::Raw && is_backup_ram { "brm" } else { target.extension() };
 
     // A clock kept in its own file is written back to one, and left off the save: the two forms
     // are alternatives, and a save carrying both would have its clock read twice over.
@@ -384,7 +401,7 @@ fn extract(args: Extract) -> Fallible {
         "{} -> {} ({}, {} bytes)",
         args.input.display(),
         output.display(),
-        target.label(),
+        if target == Format::Raw && is_backup_ram { "Sega CD backup RAM" } else { target.label() },
         payload.len()
     );
     Ok(())

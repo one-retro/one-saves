@@ -8,12 +8,17 @@ real hardware.
 | Format | Extensions | Filesystem crate | Feature |
 | ------ | ---------- | ---------------- | ------- |
 | Flat cartridge saves | `.srm` `.sav` `.eep` `.fla` `.sa1` | — | always |
+| Sega CD backup RAM | `.brm` | — | always |
 | PS1 memory cards | `.mcr` `.mcd` `.gme` `.vgs` `.vmp` | [`ps1-memcard`](https://docs.rs/ps1-memcard) | `ps1` |
 | N64 Controller Paks | `.mpk` `.pak` | [`n64-cpak`](https://docs.rs/n64-cpak) | `n64` |
 | GameCube memory cards | `.raw` `.gcp` | [`gc-memcard`](https://docs.rs/gc-memcard) | `gc` |
 | Dreamcast VMU | `.bin` | [`dreamcast-vmu`](https://docs.rs/dreamcast-vmu) | `vmu` |
 | PS2 memory cards | `.ps2`, with or without ECC spare | [`ps2-memcard`](https://docs.rs/ps2-memcard) | `ps2` |
 | Neo Geo memory cards | `.neo`, bare or in a MiSTer save | [`neogeo-memcard`](https://docs.rs/neogeo-memcard) | `neogeo` |
+
+A backup RAM is wrapped whole: its volume footer is read as a signature, which settles `system`
+and nothing else, and its filesystem is not taken apart. That is why it sits with the flat saves
+and has no crate of its own.
 
 Every format reads and writes. No filesystem is implemented here: each lives in a crate of its own,
 because a memory card is a reusable format and nothing about reading one needs this container. What

@@ -83,6 +83,7 @@ Each crate's README has the detail.
 | Format | Extensions | Both directions |
 | ------ | ---------- | --------------- |
 | Flat cartridge saves | `.srm` `.sav` `.eep` `.fla` `.sa1` | yes |
+| Sega CD backup RAM | `.brm` | yes, whole |
 | PS1 memory cards | `.mcr` `.mcd` `.gme` `.vgs` `.vmp` | yes |
 | N64 Controller Paks | `.mpk` `.pak` | yes |
 | GameCube memory cards | `.raw` `.gcp` | yes |
@@ -93,6 +94,14 @@ Each crate's README has the detail.
 Detection reads the bytes before the extension, because the extension is the less reliable of the
 two: the same PS1 card ships as `.mcr`, `.mcd`, `.bin` and `.srm`, and that last one is also what
 most libretro cores call a flat cartridge save.
+
+A backup RAM is the one flat save that names itself. A volume ends in a 64-byte footer whose
+second half never varies — the volume name and the free-block and file counts are in the first
+half, and those move as saves come and go — so a dump converts with its `system` already filled in
+whatever the file is called — and a Sega CD dump under `.bin` is a file nothing else here would have recognised. What
+that does *not* do is read the volume's filesystem: the bundle holds the whole 8 KiB, or the whole
+Backup RAM Cart, as one part rather than one part per save. A console carries both sockets at once,
+so say which one a dump came out of with `--role internal` or `--role ram-cart`.
 
 A format this build cannot write declines rather than guessing. A consumer that does not know a
 card format cannot rebuild the card and **must not** attempt the write.

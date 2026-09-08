@@ -166,7 +166,10 @@ impl Format {
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "1saves" | "bundle" => Some(Format::Bundle),
-            "raw" | "srm" | "sav" => Some(Format::Raw),
+            // `brm` is a flat save like the rest: this build wraps a backup RAM whole. Naming it
+            // is what lets `--to brm` ask for one back, and `extract` writes that extension when
+            // the bundle says the volume is a Sega CD's.
+            "raw" | "srm" | "sav" | "brm" => Some(Format::Raw),
             "ps1" | "ps1-mc" | "psx" | "mcr" => Some(Format::Ps1Card),
             "n64" | "n64-cpak" | "cpak" | "mpk" => Some(Format::N64Pak),
             "gc" | "gc-mc" | "gamecube" => Some(Format::GcCard),
@@ -199,6 +202,14 @@ pub fn detect(bytes: &[u8], extension: &str) -> Result<Format> {
     // A signature beats a name every time.
     if is_bundle(bytes) {
         return Ok(Format::Bundle);
+    }
+    // A Sega CD backup RAM is a flat save this crate does not take apart, but it is one that
+    // carries an exact signature, which is what lets a dump under an ambiguous name still say
+    // which system it belongs to. It goes first because two of the card formats below have no
+    // magic to check — the Controller Pak weighs up an index table, a GameCube card a checksum —
+    // and the largest Backup RAM Cart is exactly the size of the smallest GameCube card.
+    if raw::is_segacd_bram(bytes) {
+        return Ok(Format::Raw);
     }
     #[cfg(feature = "ps1")]
     if ps1_memcard::detect(bytes) {
@@ -264,6 +275,40 @@ mod tests {
         assert_eq!(detect(&[1, 2, 3, 4], "srm").unwrap(), Format::Raw);
     }
 
+    /// A Sega CD backup RAM: blocks of 0x40 with the volume footer at the end of the last one.
+    fn backup_ram(size: usize) -> Vec<u8> {
+        let footer = b"SEGA_CD_ROM\0\x01\0\0\0RAM_CARTRIDGE___";
+        let mut bram = vec![0u8; size];
+        bram[size - footer.len()..].copy_from_slice(footer);
+        bram
+    }
+
+    #[test]
+    fn a_backup_ram_is_recognised_by_its_footer_whatever_it_is_called() {
+        // The console's internal 8 KiB, and a Backup RAM Cart, which is the same volume larger.
+        for size in [8192, 32_768, 524_288] {
+            let bram = backup_ram(size);
+            assert_eq!(detect(&bram, "brm").unwrap(), Format::Raw);
+            // `.bin` is not a flat save's extension, so without the signature this is Undetected.
+            assert_eq!(detect(&bram, "bin").unwrap(), Format::Raw, "{size} bytes");
+        }
+    }
+
+    #[test]
+    fn a_backup_ram_the_size_of_a_pak_is_not_taken_for_one() {
+        // A 32 KiB volume is exactly a Controller Pak's length, and the pak's test is a
+        // plausibility check rather than a magic number. The signature has to win.
+        assert_eq!(detect(&backup_ram(32_768), "").unwrap(), Format::Raw);
+    }
+
+    #[test]
+    fn a_brm_resolves_by_name_when_the_footer_is_not_there() {
+        // A volume an emulator has not formatted yet has no footer, and the name is all there is.
+        assert_eq!(detect(&[0u8; 8192], "brm").unwrap(), Format::Raw);
+        // Padded past the footer, which some producers write, it is still a flat save.
+        assert_eq!(detect(&[backup_ram(8192), vec![0xFF; 64]].concat(), "brm").unwrap(), Format::Raw);
+    }
+
     #[test]
     fn an_unknown_file_is_not_guessed_at() {
         assert!(matches!(detect(&[0u8; 7], "wat"), Err(Error::Undetected)));
@@ -273,6 +318,7 @@ mod tests {
     fn names_resolve_for_the_from_and_to_flags() {
         assert_eq!(Format::from_name("ps1"), Some(Format::Ps1Card));
         assert_eq!(Format::from_name("PS2"), Some(Format::Ps2Card));
+        assert_eq!(Format::from_name("brm"), Some(Format::Raw));
         assert_eq!(Format::from_name("nonsense"), None);
         assert_eq!(Format::Ps1Card.card_format(), Some("ps1-mc"));
         assert_eq!(Format::Raw.card_format(), None);
