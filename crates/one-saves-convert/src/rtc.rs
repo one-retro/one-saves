@@ -73,6 +73,7 @@
 
 use one_saves::dcbor::{CBOR, CBORCase, Map, Tag};
 use one_saves::{Extensions, ReverseDnsName};
+use one_saves_registry::ClockLayout;
 
 /// The extension key the portable reading is written under.
 pub const RTC_KEY: &str = "x.1sav.rtc";
@@ -486,19 +487,27 @@ pub enum ClockForm {
 /// The shape a bundle's producer writes, from what its `source` says.
 ///
 /// `source.app` names the software that wrote the bytes, so it is what says which of the shapes
-/// to expect. A bundle that names nobody gets the form most producers use.
+/// to expect. The layout each core writes is registry data — see [`ClockLayout`] — rather than
+/// anything this module reads out of the slug: a core is not obliged to spell its own name in a
+/// way that gives its clock away, and two that do spell it the same way need not agree.
+///
+/// A bundle naming nobody, or naming a core the registry records no clock for, gets the form most
+/// producers use.
 #[must_use]
 pub fn form_of(bundle: &one_saves::Bundle) -> ClockForm {
+    // Which chip wrote the state is the save's own business — a Seiko S-3511A is a Game Boy
+    // Advance part and an MBC3 a Game Boy one — so the key settles it before the producer is
+    // consulted at all. What the producer settles is the layout, which is the rest of this.
     if bundle.header.extensions.contains_key(&s3511a_key()) {
         return ClockForm::S3511a;
     }
     let app = bundle.header.source.as_ref().and_then(|source| source.app.as_ref());
-    match app.map(one_saves::Name::as_str) {
-        Some("gambatte") => ClockForm::Sidecar,
-        // The MiSTer core writes a whole SD block; its openFPGA ports write sixteen bytes.
-        Some(app) if app.ends_with("-mister") => ClockForm::Packed(PACKED_LEN_MISTER),
-        Some(app) if app.ends_with("-gb") || app.ends_with("-gbc") => ClockForm::Packed(PACKED_LEN_POCKET),
-        _ => ClockForm::Mbc3Appended,
+    // `source.app` carries the slug for a listed core, which is what the registry is keyed by.
+    let layout = app.map(one_saves::Name::as_str).and_then(one_saves_registry::core).and_then(|c| c.clock);
+    match layout {
+        Some(ClockLayout::Sidecar) => ClockForm::Sidecar,
+        Some(ClockLayout::Packed { reserved }) => ClockForm::Packed(reserved),
+        Some(ClockLayout::Appended) | None => ClockForm::Mbc3Appended,
     }
 }
 
@@ -1297,6 +1306,45 @@ mod tests {
                 }
                 _ => assert_eq!(footer_of(&bundle).map(|f| f.len()), Some(MBC3_LEN_64)),
             }
+        }
+    }
+
+    #[test]
+    fn the_layout_comes_from_the_registry_and_not_from_the_shape_of_the_slug() {
+        // This used to match `-mister` and `-gb` as suffixes, which got two things wrong. A core
+        // whose name ends some other way was read as an appended footer however it actually
+        // writes, and every MiSTer core was read as the Game Boy one however little it has to do
+        // with a clock. Both are registry questions, and the registry now answers them.
+        use one_saves::{Header, Name, Part, Source};
+        let clock = parse_packed(&POCKET_FIRST).expect("a clock");
+        let split = Split {
+            sram: Vec::new(),
+            footer: Vec::new(),
+            reading: Some(clock.reading()),
+            clock: Clock::Mbc3(clock),
+        };
+
+        for (app, want) in [
+            // An openFPGA Game Boy port whose slug does not end in `-gb`. The suffix rule read
+            // this as an appended footer and wrote 48 bytes where the core wants 16.
+            ("spiritualized-supergb", ClockForm::Packed(PACKED_LEN_POCKET)),
+            // MiSTer cores for systems with no MBC3 anywhere near them. The suffix rule gave each
+            // of these the Game Boy core's 512-byte block.
+            ("psx-mister", ClockForm::Mbc3Appended),
+            ("n64-mister", ClockForm::Mbc3Appended),
+            ("saturn-mister", ClockForm::Mbc3Appended),
+            // A producer the registry does not list still gets the common form.
+            ("pcsx2", ClockForm::Mbc3Appended),
+        ] {
+            let bundle = one_saves::Bundle {
+                header: Header {
+                    source: Some(Source { app: Name::parse(app).ok(), ..Source::default() }),
+                    extensions: split.extensions(),
+                    ..Header::default()
+                },
+                parts: vec![Part::new(0, *b"SAVE")],
+            };
+            assert_eq!(form_of(&bundle), want, "{app}");
         }
     }
 

@@ -1,9 +1,10 @@
 //! Turning the registry JSON into the static tables `one-saves-registry` ships.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crate::registry::Registries;
+use crate::registry::{Clocks, Registries};
 
 /// A Rust string literal.
 fn lit(text: &str) -> String {
@@ -25,6 +26,43 @@ fn table<T>(w: &mut String, doc: &str, name: &str, ty: &str, items: &[T], row: i
     writeln!(w, "];\n").unwrap();
 }
 
+/// The const name a slug takes in the `cores` and `systems` modules: upper snake case, and never
+/// leading with a digit, since `3do-mister` is a perfectly good slug and not a Rust identifier.
+fn const_name(slug: &str) -> String {
+    let body: String =
+        slug.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect();
+    if body.starts_with(|c: char| c.is_ascii_digit()) { format!("_{body}") } else { body }
+}
+
+/// The const names for a set of slugs, refusing any pair that collide.
+///
+/// Two slugs that differ only where `const_name` does not would emit the same const twice. rustc
+/// would catch it, but in generated code and with nothing pointing back at the slugs that caused it.
+fn const_names<'a>(slugs: impl Iterator<Item = &'a str>) -> Result<Vec<String>, String> {
+    let mut seen: BTreeMap<String, &str> = BTreeMap::new();
+    let mut out = Vec::new();
+    for slug in slugs {
+        let name = const_name(slug);
+        if let Some(first) = seen.insert(name.clone(), slug) {
+            return Err(format!("{first:?} and {slug:?} both want the const {name}"));
+        }
+        out.push(name);
+    }
+    Ok(out)
+}
+
+/// The `ClockLayout` expression for one core, or `None` where the file records nothing.
+fn clock(slug: &str, clocks: &Clocks) -> Result<String, String> {
+    let Some(entry) = clocks.cores.get(slug) else { return Ok("None".to_owned()) };
+    match (entry.layout.as_str(), entry.reserved) {
+        ("appended", None) => Ok("Some(ClockLayout::Appended)".to_owned()),
+        ("sidecar", None) => Ok("Some(ClockLayout::Sidecar)".to_owned()),
+        ("packed", Some(n)) => Ok(format!("Some(ClockLayout::Packed {{ reserved: {n} }})")),
+        ("packed", None) => Err(format!("clocks.json: {slug:?} is packed but sets no reserved length")),
+        (other, _) => Err(format!("clocks.json: {slug:?} has unknown layout {other:?}")),
+    }
+}
+
 fn core_kind(kind: &str) -> Result<&'static str, String> {
     match kind {
         "libretro" => Ok("Libretro"),
@@ -42,7 +80,15 @@ fn core_kind(kind: &str) -> Result<&'static str, String> {
 /// Long, but flat: seven independent emitters in a row, with no branching between them. Splitting
 /// it would put a seam somewhere the data does not have one.
 #[allow(clippy::too_many_lines)]
-pub fn write_rust(data: &Registries, path: &Path) -> Result<(), String> {
+pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(), String> {
+    // A clock layout naming a core that is not listed is a typo rather than a new core, and it
+    // would otherwise vanish silently: nothing downstream reads this file by any other route.
+    for slug in clocks.cores.keys() {
+        if !data.cores.iter().any(|c| &c.slug == slug) {
+            return Err(format!("clocks.json: {slug:?} is not a listed core"));
+        }
+    }
+
     // A core kind that is not one of the three is a registry change this generator has not been
     // taught, so it is checked before anything is written rather than producing a file that will
     // not compile.
@@ -56,38 +102,71 @@ pub fn write_rust(data: &Registries, path: &Path) -> Result<(), String> {
         .unwrap();
     writeln!(w, "// so a change starts there, lands in the JSON, and reaches this file last.").unwrap();
     writeln!(w).unwrap();
-    writeln!(
-        w,
-        "use crate::{{Binding, CardFormat, Core, CoreKind, DeviceKind, Role, RolePrefix, System, Vendor}};"
-    )
-    .unwrap();
+    writeln!(w, "use crate::{{Binding, CardFormat, Core, DeviceKind, Role, RolePrefix, System, Vendor}};")
+        .unwrap();
     writeln!(w).unwrap();
 
+    // One const per system, then the table built out of them, so the two cannot drift.
+    let system_names = const_names(data.systems.iter().map(|s| s.slug.as_str()))?;
+    writeln!(w, "/// A named const per listed system, for the consumers that know which one they mean.")
+        .unwrap();
+    writeln!(w, "pub mod systems {{").unwrap();
+    writeln!(w, "    use crate::System;\n").unwrap();
+    for (s, name) in data.systems.iter().zip(&system_names) {
+        if s.aliases.is_empty() {
+            writeln!(w, "    /// {}.", s.name).unwrap();
+        } else {
+            writeln!(w, "    /// {} — also seen as {}.", s.name, s.aliases.join(", ")).unwrap();
+        }
+        writeln!(
+            w,
+            "    pub const {name}: System = System {{ slug: {}, name: {}, aliases: {} }};",
+            lit(&s.slug),
+            lit(&s.name),
+            lits(&s.aliases),
+        )
+        .unwrap();
+    }
+    writeln!(w, "}}\n").unwrap();
+
+    let systems: Vec<_> = data.systems.iter().zip(&system_names).collect();
     table(
         w,
         "Every system slug, sorted by slug so lookups can binary-search.",
         "SYSTEMS",
         "System",
-        &data.systems,
-        |s| {
-            format!(
-                "System {{ slug: {}, name: {}, aliases: {} }}",
-                lit(&s.slug),
-                lit(&s.name),
-                lits(&s.aliases)
-            )
-        },
+        &systems,
+        |(_, name)| format!("systems::{name}"),
     );
 
-    let cores: Vec<_> = data.cores.iter().zip(kinds).collect();
-    table(w, "Every known emulator core, sorted by slug.", "CORES", "Core", &cores, |(c, kind)| {
-        format!(
-            "Core {{ slug: {}, name: {}, kind: CoreKind::{kind}, systems: {}, aliases: {} }}",
+    // The same shape as the systems above: a const each, then the table built out of them. It
+    // costs nothing — a const has no symbol of its own, so a consumer naming one materialises that
+    // core alone and leaves the table dead.
+    let core_names = const_names(data.cores.iter().map(|c| c.slug.as_str()))?;
+    let cores: Vec<_> = data.cores.iter().zip(kinds).zip(&core_names).collect();
+    writeln!(w, "/// A named const per listed core, so a producer that knows which core it is can say so")
+        .unwrap();
+    writeln!(w, "/// without a lookup — and without linking the whole table.").unwrap();
+    writeln!(w, "pub mod cores {{").unwrap();
+    writeln!(w, "    use crate::{{ClockLayout, Core, CoreKind}};\n").unwrap();
+    for ((c, kind), name) in &cores {
+        writeln!(w, "    /// {} — {}.", c.name, c.systems.join(", ")).unwrap();
+        writeln!(
+            w,
+            "    pub const {name}: Core = Core {{ slug: {}, name: {}, kind: CoreKind::{kind}, \
+             systems: {}, aliases: {}, clock: {} }};",
             lit(&c.slug),
             lit(&c.name),
             lits(&c.systems),
-            lits(&c.aliases)
+            lits(&c.aliases),
+            clock(&c.slug, clocks)?,
         )
+        .unwrap();
+    }
+    writeln!(w, "}}\n").unwrap();
+
+    table(w, "Every known emulator core, sorted by slug.", "CORES", "Core", &cores, |(_, name)| {
+        format!("cores::{name}")
     });
 
     table(

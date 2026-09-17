@@ -14,3 +14,10 @@ toml_edit = { workspace = true }
 
 [lints]
 workspace = true
+
+# Installs the hooks in `.cargo-husky/hooks/` into `.git/hooks` whenever this crate's tests are
+# built, which `just test` does. They keep the committed registry tables in step with the JSON:
+# a drift that reaches a release publishes tables that are not what the data says. `just hooks`
+# installs them without running the suite.
+[dev-dependencies]
+cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }

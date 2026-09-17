@@ -26,6 +26,24 @@
 //! assert_eq!(core_by_any_name("Genesis_MiSTer").unwrap().slug, "megadrive-mister");
 //! ```
 //!
+//! # Naming a core you already know
+//!
+//! A producer that knows which core it is does not need to search for itself. Each listed core
+//! has a const, and naming one links that core alone rather than the whole table.
+//!
+//! ```
+//! use one_saves_registry::{ClockLayout, cores, systems};
+//!
+//! // mGBA holds mgba.io and is listed, so `mgba` is the one spelling it writes.
+//! assert_eq!(cores::MGBA.slug, "mgba");
+//! // And the registry records how it lays a clock down, so a converter need not guess.
+//! assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended));
+//!
+//! // Systems the same way.
+//! assert_eq!(systems::GBA.name, "Game Boy Advance");
+//! assert!(cores::MGBA.systems.contains(&systems::GBA.slug));
+//! ```
+//!
 //! # Roles, and the one place a slug has structure
 //!
 //! A role ending in `-<n>` names the nth socket of the kind its prefix names, so a consumer that
@@ -33,6 +51,18 @@
 //! handles both arms; see [`RoleMatch`].
 
 mod generated;
+
+/// A named const per listed core: [`cores::MGBA`], [`cores::GAMBATTE`], and so on.
+///
+/// A producer that knows which core it is does not need a lookup, and naming a const links only
+/// that core rather than the whole 122-entry table. `cores()` still returns the table for the
+/// consumers that genuinely search.
+pub use generated::cores;
+/// A named const per listed system: [`systems::GBA`], [`systems::PSX`], and so on.
+///
+/// The counterpart to [`cores`], and the same bargain: a consumer that knows which system it
+/// means names it, and carries that one rather than all 49.
+pub use generated::systems;
 
 use generated::{BINDINGS, CARD_FORMATS, CORES, DEVICE_KINDS, ROLE_PREFIXES, ROLES, SYSTEMS, VENDORS};
 
@@ -59,6 +89,29 @@ pub enum CoreKind {
     OpenFpga,
 }
 
+/// How a core stores real-time-clock state alongside a save.
+///
+/// A cartridge with a clock chip holds state the save memory does not, and cores disagree about
+/// where to put it. Which *chip* the state came from follows from the system — an MBC3 is a Game
+/// Boy part, a Seiko S-3511A a Game Boy Advance one — but the *layout* is the core's own choice,
+/// and nothing in a save file says which was used. So it is recorded here, against the core that
+/// writes it, rather than guessed from the bytes.
+///
+/// Unlike the rest of this crate these are not drawn from the registry pages: the specifications
+/// do not describe clock layouts. They come from files real cores wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClockLayout {
+    /// Appended to the save, registers little-endian at their natural width. mGBA, SameBoy, VBA-M.
+    Appended,
+    /// Appended to the save, registers bit-packed and padded out to a reserved length.
+    Packed {
+        /// The length in bytes the footer is padded to.
+        reserved: usize,
+    },
+    /// Written to a separate file beside the save, not appended to it. Gambatte.
+    Sidecar,
+}
+
 /// An emulator core: the engine that runs the game, as distinct from the frontend hosting it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Core {
@@ -75,6 +128,13 @@ pub struct Core {
     pub systems: &'static [&'static str],
     /// Former names, SD-card folders and rebuilds that count as the same core. Never emitted.
     pub aliases: &'static [&'static str],
+    /// How it lays out clock state, for the cores that write any.
+    ///
+    /// `None` means this registry records no clock convention for the core — either because it
+    /// runs nothing with a clock chip, or because nobody has checked. A consumer meeting `None`
+    /// should fall back to whatever it does for an unlisted producer rather than assume there is
+    /// no clock.
+    pub clock: Option<ClockLayout>,
 }
 
 /// A save role: which socket a save came out of.
@@ -382,6 +442,64 @@ mod tests {
     fn a_renamed_core_still_resolves_through_its_old_name() {
         assert_eq!(core_by_any_name("Genesis_MiSTer").map(|c| c.slug), Some("megadrive-mister"));
         assert_eq!(core_by_any_name("Mednafen Saturn").map(|c| c.slug), Some("beetle-saturn"));
+    }
+
+    #[test]
+    fn the_consts_and_the_table_are_the_same_entries() {
+        // The table is generated *from* the consts, so this is a check that the generator still
+        // emits both from one source rather than a check on the data.
+        assert_eq!(core("mgba"), Some(&cores::MGBA));
+        assert_eq!(core("gambatte"), Some(&cores::GAMBATTE));
+        assert_eq!(core("3do-mister"), Some(&cores::_3DO_MISTER));
+        for entry in cores() {
+            assert_eq!(core(entry.slug), Some(entry));
+        }
+    }
+
+    #[test]
+    fn the_system_consts_and_the_table_are_the_same_entries() {
+        assert_eq!(system("gba"), Some(&systems::GBA));
+        assert_eq!(system("psx"), Some(&systems::PSX));
+        assert_eq!(system("3do"), Some(&systems::_3DO));
+        for entry in systems() {
+            assert_eq!(system(entry.slug), Some(entry));
+        }
+    }
+
+    #[test]
+    fn a_core_runs_the_systems_its_consts_name() {
+        // The two const modules are generated from one pair of tables, so a core's coverage can
+        // be checked against the system consts rather than against loose strings.
+        assert!(cores::MGBA.systems.contains(&systems::GBA.slug));
+        assert!(!cores::GAMBATTE.systems.contains(&systems::GBA.slug));
+    }
+
+    #[test]
+    fn a_clock_layout_is_recorded_only_where_there_is_a_clock_to_lay_out() {
+        // Every layout in `clocks.json` belongs to a core that runs a system with a clock chip.
+        // A slug typo'd into that file would otherwise sit there doing nothing in silence.
+        for entry in cores().iter().filter(|c| c.clock.is_some()) {
+            assert!(
+                entry.systems.iter().any(|s| matches!(*s, "gb" | "gbc" | "gba")),
+                "{} records a clock layout but runs no system with a clock chip",
+                entry.slug
+            );
+        }
+    }
+
+    #[test]
+    fn the_layouts_are_the_ones_real_cores_write() {
+        assert_eq!(cores::GAMBATTE.clock, Some(ClockLayout::Sidecar));
+        assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended));
+        assert_eq!(cores::SAMEBOY.clock, Some(ClockLayout::Appended));
+        // The MiSTer core writes a whole SD block; its openFPGA ports write sixteen bytes.
+        assert_eq!(cores::GAMEBOY_MISTER.clock, Some(ClockLayout::Packed { reserved: 512 }));
+        assert_eq!(cores::SPIRITUALIZED_GB.clock, Some(ClockLayout::Packed { reserved: 16 }));
+        // Named without the `-gb` ending the old suffix rule looked for, and packed all the same.
+        assert_eq!(cores::SPIRITUALIZED_SUPERGB.clock, Some(ClockLayout::Packed { reserved: 16 }));
+        // A MiSTer core for a system with no MBC3 in it records nothing, rather than inheriting
+        // the Game Boy core's layout because the two slugs end alike.
+        assert_eq!(cores::PSX_MISTER.clock, None);
     }
 
     #[test]

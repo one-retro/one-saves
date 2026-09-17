@@ -1,0 +1,50 @@
+{
+  "_note": [
+    "How each core lays out real-time-clock state. Unlike the other files here this one is NOT",
+    "synced from the registry pages: the specifications do not describe clock layouts. These come",
+    "from files real cores wrote, cross-checked against one-saves-convert's rtc module.",
+    "A core absent from this file records no clock convention. Layouts: appended | packed | sidecar."
+  ],
+  "cores": {
+    "budude2-gb": {
+      "layout": "packed",
+      "reserved": 16
+    },
+    "budude2-gbc": {
+      "layout": "packed",
+      "reserved": 16
+    },
+    "gambatte": {
+      "layout": "sidecar"
+    },
+    "gameboy-mister": {
+      "layout": "packed",
+      "reserved": 512
+    },
+    "mgba": {
+      "layout": "appended"
+    },
+    "sameboy": {
+      "layout": "appended"
+    },
+    "sgb-mister": {
+      "layout": "packed",
+      "reserved": 512
+    },
+    "spiritualized-gb": {
+      "layout": "packed",
+      "reserved": 16
+    },
+    "spiritualized-gbc": {
+      "layout": "packed",
+      "reserved": 16
+    },
+    "spiritualized-supergb": {
+      "layout": "packed",
+      "reserved": 16
+    },
+    "vba-m": {
+      "layout": "appended"
+    }
+  }
+}

@@ -80,7 +80,8 @@ fn registries(args: &[String]) -> Result<(), String> {
         None => registry::read_json(&data_dir)?,
     };
 
-    generate::write_rust(&data, &generated)?;
+    let clocks = registry::read_clocks(&data_dir)?;
+    generate::write_rust(&data, &clocks, &generated)?;
     println!(
         "wrote {} ({} systems, {} cores, {} roles, {} prefixes, {} card formats, {} device kinds, \
          {} bindings, {} vendors)",

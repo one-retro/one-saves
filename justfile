@@ -91,6 +91,15 @@ msrv:
     rustup toolchain install {{ msrv }} --profile minimal 2>/dev/null || true
     cargo +{{ msrv }} check --workspace --all-features
 
+# Install the git hooks from .cargo-husky/hooks (also installed by `just test`).
+#
+# cargo-husky installs from its own build script, which cargo caches, so an edit to a hook does
+# not reinstall on its own. Cleaning it first is what makes this recipe mean what it says.
+hooks:
+    -cargo clean -q -p cargo-husky
+    cargo build -q -p xtask --tests
+    @echo "installed:" && ls .git/hooks/pre-commit .git/hooks/pre-push
+
 # Rebuild the registry tables from the JSON already in the repository.
 registries:
     cargo xtask registries

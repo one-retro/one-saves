@@ -3,791 +3,1402 @@
 // The JSON under `data/` is itself synced from the registry pages at docs.1retro.com,
 // so a change starts there, lands in the JSON, and reaches this file last.
 
-use crate::{Binding, CardFormat, Core, CoreKind, DeviceKind, Role, RolePrefix, System, Vendor};
+use crate::{Binding, CardFormat, Core, DeviceKind, Role, RolePrefix, System, Vendor};
+
+/// A named const per listed system, for the consumers that know which one they mean.
+pub mod systems {
+    use crate::System;
+
+    /// 3DO — also seen as threedo.
+    pub const _3DO: System = System { slug: "3do", name: "3DO", aliases: &["threedo"] };
+    /// Nintendo 3DS.
+    pub const _3DS: System = System { slug: "3ds", name: "Nintendo 3DS", aliases: &[] };
+    /// Atari 2600 — also seen as 2600.
+    pub const ATARI_2600: System = System { slug: "atari-2600", name: "Atari 2600", aliases: &["2600"] };
+    /// Atari 5200 — also seen as 5200.
+    pub const ATARI_5200: System = System { slug: "atari-5200", name: "Atari 5200", aliases: &["5200"] };
+    /// Atari 7800 — also seen as 7800.
+    pub const ATARI_7800: System = System { slug: "atari-7800", name: "Atari 7800", aliases: &["7800"] };
+    /// Atari Jaguar — also seen as jaguar.
+    pub const ATARI_JAGUAR: System =
+        System { slug: "atari-jaguar", name: "Atari Jaguar", aliases: &["jaguar"] };
+    /// Atari Jaguar CD.
+    pub const ATARI_JAGUAR_CD: System =
+        System { slug: "atari-jaguar-cd", name: "Atari Jaguar CD", aliases: &[] };
+    /// Atari Lynx — also seen as lynx.
+    pub const ATARI_LYNX: System = System { slug: "atari-lynx", name: "Atari Lynx", aliases: &["lynx"] };
+    /// Commodore 64 — also seen as commodore64.
+    pub const C64: System = System { slug: "c64", name: "Commodore 64", aliases: &["commodore64"] };
+    /// ColecoVision — also seen as coleco.
+    pub const COLECOVISION: System =
+        System { slug: "colecovision", name: "ColecoVision", aliases: &["coleco"] };
+    /// Dreamcast — also seen as dc.
+    pub const DREAMCAST: System = System { slug: "dreamcast", name: "Dreamcast", aliases: &["dc"] };
+    /// Famicom Disk System — also seen as famicomdisk.
+    pub const FDS: System = System { slug: "fds", name: "Famicom Disk System", aliases: &["famicomdisk"] };
+    /// Game Boy — also seen as gameboy.
+    pub const GB: System = System { slug: "gb", name: "Game Boy", aliases: &["gameboy"] };
+    /// Game Boy Advance — also seen as gameboyadvance.
+    pub const GBA: System = System { slug: "gba", name: "Game Boy Advance", aliases: &["gameboyadvance"] };
+    /// Game Boy Color — also seen as gameboycolor.
+    pub const GBC: System = System { slug: "gbc", name: "Game Boy Color", aliases: &["gameboycolor"] };
+    /// GameCube — also seen as gamecube, ngc.
+    pub const GC: System = System { slug: "gc", name: "GameCube", aliases: &["gamecube", "ngc"] };
+    /// Sega Genesis — also seen as megadrive, md.
+    pub const GENESIS: System =
+        System { slug: "genesis", name: "Sega Genesis", aliases: &["megadrive", "md"] };
+    /// Intellivision — also seen as intv.
+    pub const INTELLIVISION: System =
+        System { slug: "intellivision", name: "Intellivision", aliases: &["intv"] };
+    /// Arcade — also seen as arcade.
+    pub const MAME: System = System { slug: "mame", name: "Arcade", aliases: &["arcade"] };
+    /// Master System — also seen as sms.
+    pub const MASTERSYSTEM: System =
+        System { slug: "mastersystem", name: "Master System", aliases: &["sms"] };
+    /// MSX.
+    pub const MSX: System = System { slug: "msx", name: "MSX", aliases: &[] };
+    /// MSX2.
+    pub const MSX2: System = System { slug: "msx2", name: "MSX2", aliases: &[] };
+    /// Nintendo 64.
+    pub const N64: System = System { slug: "n64", name: "Nintendo 64", aliases: &[] };
+    /// Nintendo DS.
+    pub const NDS: System = System { slug: "nds", name: "Nintendo DS", aliases: &[] };
+    /// Neo Geo.
+    pub const NEOGEO: System = System { slug: "neogeo", name: "Neo Geo", aliases: &[] };
+    /// NES.
+    pub const NES: System = System { slug: "nes", name: "NES", aliases: &[] };
+    /// Neo Geo Pocket — also seen as neogeopocket.
+    pub const NGP: System = System { slug: "ngp", name: "Neo Geo Pocket", aliases: &["neogeopocket"] };
+    /// Neo Geo Pocket Color — also seen as neogeopocketcolor.
+    pub const NGPC: System =
+        System { slug: "ngpc", name: "Neo Geo Pocket Color", aliases: &["neogeopocketcolor"] };
+    /// Odyssey 2.
+    pub const ODYSSEY2: System = System { slug: "odyssey2", name: "Odyssey 2", aliases: &[] };
+    /// TurboGrafx-16 — also seen as pce.
+    pub const PCENGINE: System = System { slug: "pcengine", name: "TurboGrafx-16", aliases: &["pce"] };
+    /// TurboGrafx-CD — also seen as pcecd.
+    pub const PCENGINECD: System = System { slug: "pcenginecd", name: "TurboGrafx-CD", aliases: &["pcecd"] };
+    /// PC-FX.
+    pub const PCFX: System = System { slug: "pcfx", name: "PC-FX", aliases: &[] };
+    /// PlayStation 2 — also seen as playstation2.
+    pub const PS2: System = System { slug: "ps2", name: "PlayStation 2", aliases: &["playstation2"] };
+    /// PlayStation 3 — also seen as playstation3.
+    pub const PS3: System = System { slug: "ps3", name: "PlayStation 3", aliases: &["playstation3"] };
+    /// PlayStation Portable.
+    pub const PSP: System = System { slug: "psp", name: "PlayStation Portable", aliases: &[] };
+    /// PlayStation Vita — also seen as vita, psv.
+    pub const PSVITA: System = System { slug: "psvita", name: "PlayStation Vita", aliases: &["vita", "psv"] };
+    /// PlayStation — also seen as playstation, ps1.
+    pub const PSX: System = System { slug: "psx", name: "PlayStation", aliases: &["playstation", "ps1"] };
+    /// Sega Saturn.
+    pub const SATURN: System = System { slug: "saturn", name: "Sega Saturn", aliases: &[] };
+    /// Sega 32X — also seen as 32x.
+    pub const SEGA_32X: System = System { slug: "sega-32x", name: "Sega 32X", aliases: &["32x"] };
+    /// Sega CD — also seen as segacd, scd.
+    pub const SEGA_CD: System = System { slug: "sega-cd", name: "Sega CD", aliases: &["segacd", "scd"] };
+    /// Game Gear — also seen as gamegear, gg.
+    pub const SEGA_GG: System = System { slug: "sega-gg", name: "Game Gear", aliases: &["gamegear", "gg"] };
+    /// SG-1000 — also seen as sg.
+    pub const SG_1000: System = System { slug: "sg-1000", name: "SG-1000", aliases: &["sg"] };
+    /// Super Nintendo.
+    pub const SNES: System = System { slug: "snes", name: "Super Nintendo", aliases: &[] };
+    /// SuperGrafx — also seen as sgx.
+    pub const SUPERGRAFX: System = System { slug: "supergrafx", name: "SuperGrafx", aliases: &["sgx"] };
+    /// Vectrex.
+    pub const VECTREX: System = System { slug: "vectrex", name: "Vectrex", aliases: &[] };
+    /// Virtual Boy — also seen as vb.
+    pub const VIRTUALBOY: System = System { slug: "virtualboy", name: "Virtual Boy", aliases: &["vb"] };
+    /// Wii.
+    pub const WII: System = System { slug: "wii", name: "Wii", aliases: &[] };
+    /// WonderSwan — also seen as ws.
+    pub const WONDERSWAN: System = System { slug: "wonderswan", name: "WonderSwan", aliases: &["ws"] };
+    /// WonderSwan Color — also seen as wsc.
+    pub const WONDERSWAN_COLOR: System =
+        System { slug: "wonderswan-color", name: "WonderSwan Color", aliases: &["wsc"] };
+}
 
 /// Every system slug, sorted by slug so lookups can binary-search.
 pub(crate) static SYSTEMS: [System; 49] = [
-    System { slug: "3do", name: "3DO", aliases: &["threedo"] },
-    System { slug: "3ds", name: "Nintendo 3DS", aliases: &[] },
-    System { slug: "atari-2600", name: "Atari 2600", aliases: &["2600"] },
-    System { slug: "atari-5200", name: "Atari 5200", aliases: &["5200"] },
-    System { slug: "atari-7800", name: "Atari 7800", aliases: &["7800"] },
-    System { slug: "atari-jaguar", name: "Atari Jaguar", aliases: &["jaguar"] },
-    System { slug: "atari-jaguar-cd", name: "Atari Jaguar CD", aliases: &[] },
-    System { slug: "atari-lynx", name: "Atari Lynx", aliases: &["lynx"] },
-    System { slug: "c64", name: "Commodore 64", aliases: &["commodore64"] },
-    System { slug: "colecovision", name: "ColecoVision", aliases: &["coleco"] },
-    System { slug: "dreamcast", name: "Dreamcast", aliases: &["dc"] },
-    System { slug: "fds", name: "Famicom Disk System", aliases: &["famicomdisk"] },
-    System { slug: "gb", name: "Game Boy", aliases: &["gameboy"] },
-    System { slug: "gba", name: "Game Boy Advance", aliases: &["gameboyadvance"] },
-    System { slug: "gbc", name: "Game Boy Color", aliases: &["gameboycolor"] },
-    System { slug: "gc", name: "GameCube", aliases: &["gamecube", "ngc"] },
-    System { slug: "genesis", name: "Sega Genesis", aliases: &["megadrive", "md"] },
-    System { slug: "intellivision", name: "Intellivision", aliases: &["intv"] },
-    System { slug: "mame", name: "Arcade", aliases: &["arcade"] },
-    System { slug: "mastersystem", name: "Master System", aliases: &["sms"] },
-    System { slug: "msx", name: "MSX", aliases: &[] },
-    System { slug: "msx2", name: "MSX2", aliases: &[] },
-    System { slug: "n64", name: "Nintendo 64", aliases: &[] },
-    System { slug: "nds", name: "Nintendo DS", aliases: &[] },
-    System { slug: "neogeo", name: "Neo Geo", aliases: &[] },
-    System { slug: "nes", name: "NES", aliases: &[] },
-    System { slug: "ngp", name: "Neo Geo Pocket", aliases: &["neogeopocket"] },
-    System { slug: "ngpc", name: "Neo Geo Pocket Color", aliases: &["neogeopocketcolor"] },
-    System { slug: "odyssey2", name: "Odyssey 2", aliases: &[] },
-    System { slug: "pcengine", name: "TurboGrafx-16", aliases: &["pce"] },
-    System { slug: "pcenginecd", name: "TurboGrafx-CD", aliases: &["pcecd"] },
-    System { slug: "pcfx", name: "PC-FX", aliases: &[] },
-    System { slug: "ps2", name: "PlayStation 2", aliases: &["playstation2"] },
-    System { slug: "ps3", name: "PlayStation 3", aliases: &["playstation3"] },
-    System { slug: "psp", name: "PlayStation Portable", aliases: &[] },
-    System { slug: "psvita", name: "PlayStation Vita", aliases: &["vita", "psv"] },
-    System { slug: "psx", name: "PlayStation", aliases: &["playstation", "ps1"] },
-    System { slug: "saturn", name: "Sega Saturn", aliases: &[] },
-    System { slug: "sega-32x", name: "Sega 32X", aliases: &["32x"] },
-    System { slug: "sega-cd", name: "Sega CD", aliases: &["segacd", "scd"] },
-    System { slug: "sega-gg", name: "Game Gear", aliases: &["gamegear", "gg"] },
-    System { slug: "sg-1000", name: "SG-1000", aliases: &["sg"] },
-    System { slug: "snes", name: "Super Nintendo", aliases: &[] },
-    System { slug: "supergrafx", name: "SuperGrafx", aliases: &["sgx"] },
-    System { slug: "vectrex", name: "Vectrex", aliases: &[] },
-    System { slug: "virtualboy", name: "Virtual Boy", aliases: &["vb"] },
-    System { slug: "wii", name: "Wii", aliases: &[] },
-    System { slug: "wonderswan", name: "WonderSwan", aliases: &["ws"] },
-    System { slug: "wonderswan-color", name: "WonderSwan Color", aliases: &["wsc"] },
+    systems::_3DO,
+    systems::_3DS,
+    systems::ATARI_2600,
+    systems::ATARI_5200,
+    systems::ATARI_7800,
+    systems::ATARI_JAGUAR,
+    systems::ATARI_JAGUAR_CD,
+    systems::ATARI_LYNX,
+    systems::C64,
+    systems::COLECOVISION,
+    systems::DREAMCAST,
+    systems::FDS,
+    systems::GB,
+    systems::GBA,
+    systems::GBC,
+    systems::GC,
+    systems::GENESIS,
+    systems::INTELLIVISION,
+    systems::MAME,
+    systems::MASTERSYSTEM,
+    systems::MSX,
+    systems::MSX2,
+    systems::N64,
+    systems::NDS,
+    systems::NEOGEO,
+    systems::NES,
+    systems::NGP,
+    systems::NGPC,
+    systems::ODYSSEY2,
+    systems::PCENGINE,
+    systems::PCENGINECD,
+    systems::PCFX,
+    systems::PS2,
+    systems::PS3,
+    systems::PSP,
+    systems::PSVITA,
+    systems::PSX,
+    systems::SATURN,
+    systems::SEGA_32X,
+    systems::SEGA_CD,
+    systems::SEGA_GG,
+    systems::SG_1000,
+    systems::SNES,
+    systems::SUPERGRAFX,
+    systems::VECTREX,
+    systems::VIRTUALBOY,
+    systems::WII,
+    systems::WONDERSWAN,
+    systems::WONDERSWAN_COLOR,
 ];
 
-/// Every known emulator core, sorted by slug.
-pub(crate) static CORES: [Core; 122] = [
-    Core {
+/// A named const per listed core, so a producer that knows which core it is can say so
+/// without a lookup — and without linking the whole table.
+pub mod cores {
+    use crate::{ClockLayout, Core, CoreKind};
+
+    /// 3DO_MiSTer — 3do.
+    pub const _3DO_MISTER: Core = Core {
         slug: "3do-mister",
         name: "3DO_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["3do"],
         aliases: &["3DO"],
-    },
-    Core {
+        clock: None,
+    };
+    /// agg23.NES — nes.
+    pub const AGG23_NES: Core = Core {
         slug: "agg23-nes",
         name: "agg23.NES",
         kind: CoreKind::OpenFpga,
         systems: &["nes"],
         aliases: &["RndMnkIII.NES_Analogizer"],
-    },
-    Core {
+        clock: None,
+    };
+    /// agg23.PC Engine — pcengine, supergrafx.
+    pub const AGG23_PC_ENGINE: Core = Core {
         slug: "agg23-pc-engine",
         name: "agg23.PC Engine",
         kind: CoreKind::OpenFpga,
         systems: &["pcengine", "supergrafx"],
         aliases: &["agg23.PC Engine_Analogizer"],
-    },
-    Core {
+        clock: None,
+    };
+    /// agg23.SNES — snes.
+    pub const AGG23_SNES: Core = Core {
         slug: "agg23-snes",
         name: "agg23.SNES",
         kind: CoreKind::OpenFpga,
         systems: &["snes"],
         aliases: &["agg23.SNES_Analogizer"],
-    },
-    Core {
+        clock: None,
+    };
+    /// agg23.WonderSwan — wonderswan, wonderswan-color.
+    pub const AGG23_WONDERSWAN: Core = Core {
         slug: "agg23-wonderswan",
         name: "agg23.WonderSwan",
         kind: CoreKind::OpenFpga,
         systems: &["wonderswan", "wonderswan-color"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Atari7800_MiSTer — atari-7800, atari-2600.
+    pub const ATARI7800_MISTER: Core = Core {
         slug: "atari7800-mister",
         name: "Atari7800_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["atari-7800", "atari-2600"],
         aliases: &["ATARI7800"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Atari800 — atari-5200.
+    pub const ATARI800: Core = Core {
         slug: "atari800",
         name: "Atari800",
         kind: CoreKind::Libretro,
         systems: &["atari-5200"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Atari800_MiSTer — atari-5200.
+    pub const ATARI800_MISTER: Core = Core {
         slug: "atari800-mister",
         name: "Atari800_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["atari-5200"],
         aliases: &["ATARI5200"],
-    },
-    Core {
+        clock: None,
+    };
+    /// AtariLynx_MiSTer — atari-lynx.
+    pub const ATARILYNX_MISTER: Core = Core {
         slug: "atarilynx-mister",
         name: "AtariLynx_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["atari-lynx"],
         aliases: &["AtariLynx"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle GBA — gba.
+    pub const BEETLE_GBA: Core = Core {
         slug: "beetle-gba",
         name: "Beetle GBA",
         kind: CoreKind::Libretro,
         systems: &["gba"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle Lynx — atari-lynx.
+    pub const BEETLE_LYNX: Core = Core {
         slug: "beetle-lynx",
         name: "Beetle Lynx",
         kind: CoreKind::Libretro,
         systems: &["atari-lynx"],
         aliases: &["Mednafen Lynx"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle NeoPop — ngp, ngpc.
+    pub const BEETLE_NEOPOP: Core = Core {
         slug: "beetle-neopop",
         name: "Beetle NeoPop",
         kind: CoreKind::Libretro,
         systems: &["ngp", "ngpc"],
         aliases: &["Mednafen NeoPop"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle PCE — pcengine, pcenginecd.
+    pub const BEETLE_PCE: Core = Core {
         slug: "beetle-pce",
         name: "Beetle PCE",
         kind: CoreKind::Libretro,
         systems: &["pcengine", "pcenginecd"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle PCE Fast — pcengine, pcenginecd.
+    pub const BEETLE_PCE_FAST: Core = Core {
         slug: "beetle-pce-fast",
         name: "Beetle PCE Fast",
         kind: CoreKind::Libretro,
         systems: &["pcengine", "pcenginecd"],
         aliases: &["Mednafen PCE Fast"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle PSX — psx.
+    pub const BEETLE_PSX: Core = Core {
         slug: "beetle-psx",
         name: "Beetle PSX",
         kind: CoreKind::Libretro,
         systems: &["psx"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle PSX HW — psx.
+    pub const BEETLE_PSX_HW: Core = Core {
         slug: "beetle-psx-hw",
         name: "Beetle PSX HW",
         kind: CoreKind::Libretro,
         systems: &["psx"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle Saturn — saturn.
+    pub const BEETLE_SATURN: Core = Core {
         slug: "beetle-saturn",
         name: "Beetle Saturn",
         kind: CoreKind::Libretro,
         systems: &["saturn"],
         aliases: &["Mednafen Saturn"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle SuperGrafx — supergrafx, pcengine.
+    pub const BEETLE_SUPERGRAFX: Core = Core {
         slug: "beetle-supergrafx",
         name: "Beetle SuperGrafx",
         kind: CoreKind::Libretro,
         systems: &["supergrafx", "pcengine"],
         aliases: &["Mednafen SuperGrafx"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle VB — virtualboy.
+    pub const BEETLE_VB: Core = Core {
         slug: "beetle-vb",
         name: "Beetle VB",
         kind: CoreKind::Libretro,
         systems: &["virtualboy"],
         aliases: &["Mednafen VB"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Beetle WonderSwan — wonderswan, wonderswan-color.
+    pub const BEETLE_WONDERSWAN: Core = Core {
         slug: "beetle-wonderswan",
         name: "Beetle WonderSwan",
         kind: CoreKind::Libretro,
         systems: &["wonderswan", "wonderswan-color"],
         aliases: &["Mednafen WonderSwan"],
-    },
-    Core { slug: "blastem", name: "BlastEm", kind: CoreKind::Libretro, systems: &["genesis"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// BlastEm — genesis.
+    pub const BLASTEM: Core = Core {
+        slug: "blastem",
+        name: "BlastEm",
+        kind: CoreKind::Libretro,
+        systems: &["genesis"],
+        aliases: &[],
+        clock: None,
+    };
+    /// blueMSX — msx, msx2, colecovision, sg-1000.
+    pub const BLUEMSX: Core = Core {
         slug: "bluemsx",
         name: "blueMSX",
         kind: CoreKind::Libretro,
         systems: &["msx", "msx2", "colecovision", "sg-1000"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// boogermann.msx — msx.
+    pub const BOOGERMANN_MSX: Core = Core {
         slug: "boogermann-msx",
         name: "boogermann.msx",
         kind: CoreKind::OpenFpga,
         systems: &["msx"],
         aliases: &[],
-    },
-    Core { slug: "bsnes", name: "bsnes", kind: CoreKind::Libretro, systems: &["snes"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// bsnes — snes.
+    pub const BSNES: Core = Core {
+        slug: "bsnes",
+        name: "bsnes",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// bsnes-hd beta — snes.
+    pub const BSNES_HD_BETA: Core = Core {
         slug: "bsnes-hd-beta",
         name: "bsnes-hd beta",
         kind: CoreKind::Libretro,
         systems: &["snes"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// bsnes-mercury Accuracy — snes.
+    pub const BSNES_MERCURY_ACCURACY: Core = Core {
         slug: "bsnes-mercury-accuracy",
         name: "bsnes-mercury Accuracy",
         kind: CoreKind::Libretro,
         systems: &["snes"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// budude2.GB — gb.
+    pub const BUDUDE2_GB: Core = Core {
         slug: "budude2-gb",
         name: "budude2.GB",
         kind: CoreKind::OpenFpga,
         systems: &["gb"],
         aliases: &["budude2.GB_Analogizer"],
-    },
-    Core {
+        clock: Some(ClockLayout::Packed { reserved: 16 }),
+    };
+    /// budude2.GBC — gbc.
+    pub const BUDUDE2_GBC: Core = Core {
         slug: "budude2-gbc",
         name: "budude2.GBC",
         kind: CoreKind::OpenFpga,
         systems: &["gbc"],
         aliases: &["budude2.GBC_Analogizer"],
-    },
-    Core {
+        clock: Some(ClockLayout::Packed { reserved: 16 }),
+    };
+    /// budude2.Lynx — atari-lynx.
+    pub const BUDUDE2_LYNX: Core = Core {
         slug: "budude2-lynx",
         name: "budude2.Lynx",
         kind: CoreKind::OpenFpga,
         systems: &["atari-lynx"],
         aliases: &["budude2.Lynx_Analogizer"],
-    },
-    Core {
+        clock: None,
+    };
+    /// C64_MiSTer — c64.
+    pub const C64_MISTER: Core = Core {
         slug: "c64-mister",
         name: "C64_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["c64"],
         aliases: &["C64"],
-    },
-    Core {
+        clock: None,
+    };
+    /// ColecoVision_MiSTer — colecovision, sg-1000.
+    pub const COLECOVISION_MISTER: Core = Core {
         slug: "colecovision-mister",
         name: "ColecoVision_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["colecovision", "sg-1000"],
         aliases: &["Coleco"],
-    },
-    Core { slug: "desmume", name: "DeSmuME", kind: CoreKind::Libretro, systems: &["nds"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// DeSmuME — nds.
+    pub const DESMUME: Core = Core {
+        slug: "desmume",
+        name: "DeSmuME",
+        kind: CoreKind::Libretro,
+        systems: &["nds"],
+        aliases: &[],
+        clock: None,
+    };
+    /// DeSmuME 2015 — nds.
+    pub const DESMUME_2015: Core = Core {
         slug: "desmume-2015",
         name: "DeSmuME 2015",
         kind: CoreKind::Libretro,
         systems: &["nds"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// drizzt.GG — sega-gg.
+    pub const DRIZZT_GG: Core = Core {
         slug: "drizzt-gg",
         name: "drizzt.GG",
         kind: CoreKind::OpenFpga,
         systems: &["sega-gg"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// drizzt.MegaDrive — genesis.
+    pub const DRIZZT_MEGADRIVE: Core = Core {
         slug: "drizzt-megadrive",
         name: "drizzt.MegaDrive",
         kind: CoreKind::OpenFpga,
         systems: &["genesis"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// drizzt.SG-1000 — sg-1000.
+    pub const DRIZZT_SG_1000: Core = Core {
         slug: "drizzt-sg-1000",
         name: "drizzt.SG-1000",
         kind: CoreKind::OpenFpga,
         systems: &["sg-1000"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// drizzt.SMS — mastersystem.
+    pub const DRIZZT_SMS: Core = Core {
         slug: "drizzt-sms",
         name: "drizzt.SMS",
         kind: CoreKind::OpenFpga,
         systems: &["mastersystem"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// DuckStation — psx.
+    pub const DUCKSTATION: Core = Core {
         slug: "duckstation",
         name: "DuckStation",
         kind: CoreKind::Libretro,
         systems: &["psx"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// ericlewis.Genesis — genesis.
+    pub const ERICLEWIS_GENESIS: Core = Core {
         slug: "ericlewis-genesis",
         name: "ericlewis.Genesis",
         kind: CoreKind::OpenFpga,
         systems: &["genesis"],
         aliases: &["ericlewis.Genesis_Analogizer"],
-    },
-    Core {
+        clock: None,
+    };
+    /// FB Alpha — neogeo, mame.
+    pub const FB_ALPHA: Core = Core {
         slug: "fb-alpha",
         name: "FB Alpha",
         kind: CoreKind::Libretro,
         systems: &["neogeo", "mame"],
         aliases: &[],
-    },
-    Core { slug: "fceumm", name: "FCEUmm", kind: CoreKind::Libretro, systems: &["nes"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// FCEUmm — nes.
+    pub const FCEUMM: Core = Core {
+        slug: "fceumm",
+        name: "FCEUmm",
+        kind: CoreKind::Libretro,
+        systems: &["nes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// FinalBurn Neo — neogeo, mame.
+    pub const FINALBURN_NEO: Core = Core {
         slug: "finalburn-neo",
         name: "FinalBurn Neo",
         kind: CoreKind::Libretro,
         systems: &["neogeo", "mame"],
         aliases: &[],
-    },
-    Core { slug: "fmsx", name: "fMSX", kind: CoreKind::Libretro, systems: &["msx", "msx2"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// fMSX — msx, msx2.
+    pub const FMSX: Core = Core {
+        slug: "fmsx",
+        name: "fMSX",
+        kind: CoreKind::Libretro,
+        systems: &["msx", "msx2"],
+        aliases: &[],
+        clock: None,
+    };
+    /// FreeIntv — intellivision.
+    pub const FREEINTV: Core = Core {
         slug: "freeintv",
         name: "FreeIntv",
         kind: CoreKind::Libretro,
         systems: &["intellivision"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Gambatte — gb, gbc.
+    pub const GAMBATTE: Core = Core {
         slug: "gambatte",
         name: "Gambatte",
         kind: CoreKind::Libretro,
         systems: &["gb", "gbc"],
         aliases: &[],
-    },
-    Core {
+        clock: Some(ClockLayout::Sidecar),
+    };
+    /// Gameboy_MiSTer — gb, gbc.
+    pub const GAMEBOY_MISTER: Core = Core {
         slug: "gameboy-mister",
         name: "Gameboy_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["gb", "gbc"],
         aliases: &["GAMEBOY", "GAMEBOY2P", "GBC"],
-    },
-    Core {
+        clock: Some(ClockLayout::Packed { reserved: 512 }),
+    };
+    /// GBA_MiSTer — gba.
+    pub const GBA_MISTER: Core = Core {
         slug: "gba-mister",
         name: "GBA_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["gba"],
         aliases: &["GBA", "GBA2P"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Genesis Plus GX — genesis, mastersystem, sega-gg, sg-1000, sega-cd.
+    pub const GENESIS_PLUS_GX: Core = Core {
         slug: "genesis-plus-gx",
         name: "Genesis Plus GX",
         kind: CoreKind::Libretro,
         systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Genesis Plus GX Wide — genesis, mastersystem, sega-gg, sg-1000, sega-cd.
+    pub const GENESIS_PLUS_GX_WIDE: Core = Core {
         slug: "genesis-plus-gx-wide",
         name: "Genesis Plus GX Wide",
         kind: CoreKind::Libretro,
         systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd"],
         aliases: &[],
-    },
-    Core { slug: "gpsp", name: "gpSP", kind: CoreKind::Libretro, systems: &["gba"], aliases: &[] },
-    Core { slug: "handy", name: "Handy", kind: CoreKind::Libretro, systems: &["atari-lynx"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// gpSP — gba.
+    pub const GPSP: Core = Core {
+        slug: "gpsp",
+        name: "gpSP",
+        kind: CoreKind::Libretro,
+        systems: &["gba"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Handy — atari-lynx.
+    pub const HANDY: Core = Core {
+        slug: "handy",
+        name: "Handy",
+        kind: CoreKind::Libretro,
+        systems: &["atari-lynx"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Intv_MiSTer — intellivision.
+    pub const INTV_MISTER: Core = Core {
         slug: "intv-mister",
         name: "Intv_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["intellivision"],
         aliases: &["Intellivision"],
-    },
-    Core {
+        clock: None,
+    };
+    /// jeremy.MegaCD — sega-cd.
+    pub const JEREMY_MEGACD: Core = Core {
         slug: "jeremy-megacd",
         name: "jeremy.MegaCD",
         kind: CoreKind::OpenFpga,
         systems: &["sega-cd"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// jotego.jtngp — ngp.
+    pub const JOTEGO_JTNGP: Core = Core {
         slug: "jotego-jtngp",
         name: "jotego.jtngp",
         kind: CoreKind::OpenFpga,
         systems: &["ngp"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// jotego.jtngpc — ngpc.
+    pub const JOTEGO_JTNGPC: Core = Core {
         slug: "jotego-jtngpc",
         name: "jotego.jtngpc",
         kind: CoreKind::OpenFpga,
         systems: &["ngpc"],
         aliases: &[],
-    },
-    Core { slug: "kronos", name: "Kronos", kind: CoreKind::Libretro, systems: &["saturn"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// Kronos — saturn.
+    pub const KRONOS: Core = Core {
+        slug: "kronos",
+        name: "Kronos",
+        kind: CoreKind::Libretro,
+        systems: &["saturn"],
+        aliases: &[],
+        clock: None,
+    };
+    /// markus-zzz.MyC64 — c64.
+    pub const MARKUS_ZZZ_MYC64: Core = Core {
         slug: "markus-zzz-myc64",
         name: "markus-zzz.MyC64",
         kind: CoreKind::OpenFpga,
         systems: &["c64"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Mazamars312.NeoGeo — neogeo.
+    pub const MAZAMARS312_NEOGEO: Core = Core {
         slug: "mazamars312-neogeo",
         name: "Mazamars312.NeoGeo",
         kind: CoreKind::OpenFpga,
         systems: &["neogeo"],
         aliases: &["Mazamars312.NeoGeo_Analogizer"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Mazamars312.PC Engine CD — pcenginecd.
+    pub const MAZAMARS312_PC_ENGINE_CD: Core = Core {
         slug: "mazamars312-pc-engine-cd",
         name: "Mazamars312.PC Engine CD",
         kind: CoreKind::OpenFpga,
         systems: &["pcenginecd"],
         aliases: &["Mazamars312.PC Engine CD_Analogizer"],
-    },
-    Core {
+        clock: None,
+    };
+    /// MegaCD_MiSTer — sega-cd.
+    pub const MEGACD_MISTER: Core = Core {
         slug: "megacd-mister",
         name: "MegaCD_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["sega-cd"],
         aliases: &["MegaCD"],
-    },
-    Core {
+        clock: None,
+    };
+    /// MegaDrive_MiSTer — genesis, mastersystem.
+    pub const MEGADRIVE_MISTER: Core = Core {
         slug: "megadrive-mister",
         name: "MegaDrive_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["genesis", "mastersystem"],
         aliases: &["Genesis_MiSTer", "MegaDrive", "Genesis"],
-    },
-    Core { slug: "melonds", name: "melonDS", kind: CoreKind::Libretro, systems: &["nds"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// melonDS — nds.
+    pub const MELONDS: Core = Core {
+        slug: "melonds",
+        name: "melonDS",
+        kind: CoreKind::Libretro,
+        systems: &["nds"],
+        aliases: &[],
+        clock: None,
+    };
+    /// melonDS DS — nds.
+    pub const MELONDS_DS: Core = Core {
         slug: "melonds-ds",
         name: "melonDS DS",
         kind: CoreKind::Libretro,
         systems: &["nds"],
         aliases: &[],
-    },
-    Core { slug: "mesen", name: "Mesen", kind: CoreKind::Libretro, systems: &["nes"], aliases: &[] },
-    Core { slug: "mesen-s", name: "Mesen-S", kind: CoreKind::Libretro, systems: &["snes"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// Mesen — nes.
+    pub const MESEN: Core = Core {
+        slug: "mesen",
+        name: "Mesen",
+        kind: CoreKind::Libretro,
+        systems: &["nes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Mesen-S — snes.
+    pub const MESEN_S: Core = Core {
+        slug: "mesen-s",
+        name: "Mesen-S",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// mGBA — gba, gbc, gb.
+    pub const MGBA: Core = Core {
         slug: "mgba",
         name: "mGBA",
         kind: CoreKind::Libretro,
         systems: &["gba", "gbc", "gb"],
         aliases: &[],
-    },
-    Core {
+        clock: Some(ClockLayout::Appended),
+    };
+    /// mincer_ray.GBA — gba.
+    pub const MINCER_RAY_GBA: Core = Core {
         slug: "mincer-ray-gba",
         name: "mincer_ray.GBA",
         kind: CoreKind::OpenFpga,
         systems: &["gba"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// MSX_MiSTer — msx, msx2.
+    pub const MSX_MISTER: Core = Core {
         slug: "msx-mister",
         name: "MSX_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["msx", "msx2"],
         aliases: &["MSX"],
-    },
-    Core {
+        clock: None,
+    };
+    /// MSX1_MiSTer — msx.
+    pub const MSX1_MISTER: Core = Core {
         slug: "msx1-mister",
         name: "MSX1_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["msx"],
         aliases: &["MSX1"],
-    },
-    Core {
+        clock: None,
+    };
+    /// Mupen64Plus-Next — n64.
+    pub const MUPEN64PLUS_NEXT: Core = Core {
         slug: "mupen64plus-next",
         name: "Mupen64Plus-Next",
         kind: CoreKind::Libretro,
         systems: &["n64"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// N64_MiSTer — n64.
+    pub const N64_MISTER: Core = Core {
         slug: "n64-mister",
         name: "N64_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["n64"],
         aliases: &["N64"],
-    },
-    Core {
+        clock: None,
+    };
+    /// NeoGeo_MiSTer — neogeo.
+    pub const NEOGEO_MISTER: Core = Core {
         slug: "neogeo-mister",
         name: "NeoGeo_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["neogeo"],
         aliases: &["NEOGEO"],
-    },
-    Core {
+        clock: None,
+    };
+    /// NES_MiSTer — nes, fds.
+    pub const NES_MISTER: Core = Core {
         slug: "nes-mister",
         name: "NES_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["nes", "fds"],
         aliases: &["NES"],
-    },
-    Core { slug: "nestopia", name: "Nestopia", kind: CoreKind::Libretro, systems: &["nes"], aliases: &[] },
-    Core { slug: "nside", name: "nSide", kind: CoreKind::Libretro, systems: &["snes"], aliases: &[] },
-    Core { slug: "o2em", name: "O2EM", kind: CoreKind::Libretro, systems: &["odyssey2"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// Nestopia — nes.
+    pub const NESTOPIA: Core = Core {
+        slug: "nestopia",
+        name: "Nestopia",
+        kind: CoreKind::Libretro,
+        systems: &["nes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// nSide — snes.
+    pub const NSIDE: Core = Core {
+        slug: "nside",
+        name: "nSide",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// O2EM — odyssey2.
+    pub const O2EM: Core = Core {
+        slug: "o2em",
+        name: "O2EM",
+        kind: CoreKind::Libretro,
+        systems: &["odyssey2"],
+        aliases: &[],
+        clock: None,
+    };
+    /// obsidian.Vectrex — vectrex.
+    pub const OBSIDIAN_VECTREX: Core = Core {
         slug: "obsidian-vectrex",
         name: "obsidian.Vectrex",
         kind: CoreKind::OpenFpga,
         systems: &["vectrex"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Odyssey2_MiSTer — odyssey2.
+    pub const ODYSSEY2_MISTER: Core = Core {
         slug: "odyssey2-mister",
         name: "Odyssey2_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["odyssey2"],
         aliases: &["ODYSSEY2"],
-    },
-    Core { slug: "opera", name: "Opera", kind: CoreKind::Libretro, systems: &["3do"], aliases: &["4DO"] },
-    Core {
+        clock: None,
+    };
+    /// Opera — 3do.
+    pub const OPERA: Core = Core {
+        slug: "opera",
+        name: "Opera",
+        kind: CoreKind::Libretro,
+        systems: &["3do"],
+        aliases: &["4DO"],
+        clock: None,
+    };
+    /// ParaLLEl N64 — n64.
+    pub const PARALLEL_N64: Core = Core {
         slug: "parallel-n64",
         name: "ParaLLEl N64",
         kind: CoreKind::Libretro,
         systems: &["n64"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// PCSX-ReARMed — psx.
+    pub const PCSX_REARMED: Core = Core {
         slug: "pcsx-rearmed",
         name: "PCSX-ReARMed",
         kind: CoreKind::Libretro,
         systems: &["psx"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// PicoDrive — genesis, sega-32x, sega-cd, mastersystem.
+    pub const PICODRIVE: Core = Core {
         slug: "picodrive",
         name: "PicoDrive",
         kind: CoreKind::Libretro,
         systems: &["genesis", "sega-32x", "sega-cd", "mastersystem"],
         aliases: &[],
-    },
-    Core { slug: "ppsspp", name: "PPSSPP", kind: CoreKind::Libretro, systems: &["psp"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// PPSSPP — psp.
+    pub const PPSSPP: Core = Core {
+        slug: "ppsspp",
+        name: "PPSSPP",
+        kind: CoreKind::Libretro,
+        systems: &["psp"],
+        aliases: &[],
+        clock: None,
+    };
+    /// ProSystem — atari-7800.
+    pub const PROSYSTEM: Core = Core {
         slug: "prosystem",
         name: "ProSystem",
         kind: CoreKind::Libretro,
         systems: &["atari-7800"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// PSX_MiSTer — psx.
+    pub const PSX_MISTER: Core = Core {
         slug: "psx-mister",
         name: "PSX_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["psx"],
         aliases: &["PSX"],
-    },
-    Core { slug: "quicknes", name: "QuickNES", kind: CoreKind::Libretro, systems: &["nes"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// QuickNES — nes.
+    pub const QUICKNES: Core = Core {
+        slug: "quicknes",
+        name: "QuickNES",
+        kind: CoreKind::Libretro,
+        systems: &["nes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// S32X_MiSTer — sega-32x.
+    pub const S32X_MISTER: Core = Core {
         slug: "s32x-mister",
         name: "S32X_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["sega-32x"],
         aliases: &["S32X"],
-    },
-    Core {
+        clock: None,
+    };
+    /// SameBoy — gb, gbc.
+    pub const SAMEBOY: Core = Core {
         slug: "sameboy",
         name: "SameBoy",
         kind: CoreKind::Libretro,
         systems: &["gb", "gbc"],
         aliases: &[],
-    },
-    Core {
+        clock: Some(ClockLayout::Appended),
+    };
+    /// Saturn_MiSTer — saturn.
+    pub const SATURN_MISTER: Core = Core {
         slug: "saturn-mister",
         name: "Saturn_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["saturn"],
         aliases: &["Saturn"],
-    },
-    Core {
+        clock: None,
+    };
+    /// SGB_MiSTer — gb.
+    pub const SGB_MISTER: Core = Core {
         slug: "sgb-mister",
         name: "SGB_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["gb"],
         aliases: &["SGB"],
-    },
-    Core {
+        clock: Some(ClockLayout::Packed { reserved: 512 }),
+    };
+    /// SMS_MiSTer — mastersystem, sega-gg, sg-1000.
+    pub const SMS_MISTER: Core = Core {
         slug: "sms-mister",
         name: "SMS_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["mastersystem", "sega-gg", "sg-1000"],
         aliases: &["SMS"],
-    },
-    Core {
+        clock: None,
+    };
+    /// SNES_MiSTer — snes.
+    pub const SNES_MISTER: Core = Core {
         slug: "snes-mister",
         name: "SNES_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["snes"],
         aliases: &["SNES"],
-    },
-    Core { slug: "snes9x", name: "Snes9x", kind: CoreKind::Libretro, systems: &["snes"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// Snes9x — snes.
+    pub const SNES9X: Core = Core {
+        slug: "snes9x",
+        name: "Snes9x",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Snes9x 2002 — snes.
+    pub const SNES9X_2002: Core = Core {
         slug: "snes9x-2002",
         name: "Snes9x 2002",
         kind: CoreKind::Libretro,
         systems: &["snes"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Snes9x 2005 — snes.
+    pub const SNES9X_2005: Core = Core {
         slug: "snes9x-2005",
         name: "Snes9x 2005",
         kind: CoreKind::Libretro,
         systems: &["snes"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Snes9x 2010 — snes.
+    pub const SNES9X_2010: Core = Core {
         slug: "snes9x-2010",
         name: "Snes9x 2010",
         kind: CoreKind::Libretro,
         systems: &["snes"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.2600 — atari-2600.
+    pub const SPIRITUALIZED_2600: Core = Core {
         slug: "spiritualized-2600",
         name: "Spiritualized.2600",
         kind: CoreKind::OpenFpga,
         systems: &["atari-2600"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.7800 — atari-7800.
+    pub const SPIRITUALIZED_7800: Core = Core {
         slug: "spiritualized-7800",
         name: "Spiritualized.7800",
         kind: CoreKind::OpenFpga,
         systems: &["atari-7800"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.Coleco — colecovision.
+    pub const SPIRITUALIZED_COLECO: Core = Core {
         slug: "spiritualized-coleco",
         name: "Spiritualized.Coleco",
         kind: CoreKind::OpenFpga,
         systems: &["colecovision"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.GB — gb.
+    pub const SPIRITUALIZED_GB: Core = Core {
         slug: "spiritualized-gb",
         name: "Spiritualized.GB",
         kind: CoreKind::OpenFpga,
         systems: &["gb"],
         aliases: &[],
-    },
-    Core {
+        clock: Some(ClockLayout::Packed { reserved: 16 }),
+    };
+    /// Spiritualized.GBA — gba.
+    pub const SPIRITUALIZED_GBA: Core = Core {
         slug: "spiritualized-gba",
         name: "Spiritualized.GBA",
         kind: CoreKind::OpenFpga,
         systems: &["gba"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.GBC — gbc.
+    pub const SPIRITUALIZED_GBC: Core = Core {
         slug: "spiritualized-gbc",
         name: "Spiritualized.GBC",
         kind: CoreKind::OpenFpga,
         systems: &["gbc"],
         aliases: &[],
-    },
-    Core {
+        clock: Some(ClockLayout::Packed { reserved: 16 }),
+    };
+    /// Spiritualized.Genesis — genesis.
+    pub const SPIRITUALIZED_GENESIS: Core = Core {
         slug: "spiritualized-genesis",
         name: "Spiritualized.Genesis",
         kind: CoreKind::OpenFpga,
         systems: &["genesis"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.GG — sega-gg.
+    pub const SPIRITUALIZED_GG: Core = Core {
         slug: "spiritualized-gg",
         name: "Spiritualized.GG",
         kind: CoreKind::OpenFpga,
         systems: &["sega-gg"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.Intv — intellivision.
+    pub const SPIRITUALIZED_INTV: Core = Core {
         slug: "spiritualized-intv",
         name: "Spiritualized.Intv",
         kind: CoreKind::OpenFpga,
         systems: &["intellivision"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.NES — nes, fds.
+    pub const SPIRITUALIZED_NES: Core = Core {
         slug: "spiritualized-nes",
         name: "Spiritualized.NES",
         kind: CoreKind::OpenFpga,
         systems: &["nes", "fds"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.Odyssey2 — odyssey2.
+    pub const SPIRITUALIZED_ODYSSEY2: Core = Core {
         slug: "spiritualized-odyssey2",
         name: "Spiritualized.Odyssey2",
         kind: CoreKind::OpenFpga,
         systems: &["odyssey2"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.SG-1000 — sg-1000.
+    pub const SPIRITUALIZED_SG_1000: Core = Core {
         slug: "spiritualized-sg-1000",
         name: "Spiritualized.SG-1000",
         kind: CoreKind::OpenFpga,
         systems: &["sg-1000"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.SMS — mastersystem.
+    pub const SPIRITUALIZED_SMS: Core = Core {
         slug: "spiritualized-sms",
         name: "Spiritualized.SMS",
         kind: CoreKind::OpenFpga,
         systems: &["mastersystem"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// Spiritualized.SuperGB — gb.
+    pub const SPIRITUALIZED_SUPERGB: Core = Core {
         slug: "spiritualized-supergb",
         name: "Spiritualized.SuperGB",
         kind: CoreKind::OpenFpga,
         systems: &["gb"],
         aliases: &[],
-    },
-    Core { slug: "stella", name: "Stella", kind: CoreKind::Libretro, systems: &["atari-2600"], aliases: &[] },
-    Core {
+        clock: Some(ClockLayout::Packed { reserved: 16 }),
+    };
+    /// Stella — atari-2600.
+    pub const STELLA: Core = Core {
+        slug: "stella",
+        name: "Stella",
+        kind: CoreKind::Libretro,
+        systems: &["atari-2600"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Stella 2014 — atari-2600.
+    pub const STELLA_2014: Core = Core {
         slug: "stella-2014",
         name: "Stella 2014",
         kind: CoreKind::Libretro,
         systems: &["atari-2600"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// SwanStation — psx.
+    pub const SWANSTATION: Core = Core {
         slug: "swanstation",
         name: "SwanStation",
         kind: CoreKind::Libretro,
         systems: &["psx"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// timboettiger.Pro Action Replay — snes.
+    pub const TIMBOETTIGER_PRO_ACTION_REPLAY: Core = Core {
         slug: "timboettiger-pro-action-replay",
         name: "timboettiger.Pro Action Replay",
         kind: CoreKind::OpenFpga,
         systems: &["snes"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// TurboGrafx16_MiSTer — pcengine, supergrafx, pcenginecd.
+    pub const TURBOGRAFX16_MISTER: Core = Core {
         slug: "turbografx16-mister",
         name: "TurboGrafx16_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["pcengine", "supergrafx", "pcenginecd"],
         aliases: &["TGFX16", "TGFX16-CD"],
-    },
-    Core {
+        clock: None,
+    };
+    /// VBA-M — gba, gbc, gb.
+    pub const VBA_M: Core = Core {
         slug: "vba-m",
         name: "VBA-M",
         kind: CoreKind::Libretro,
         systems: &["gba", "gbc", "gb"],
         aliases: &[],
-    },
-    Core { slug: "vba-next", name: "VBA Next", kind: CoreKind::Libretro, systems: &["gba"], aliases: &[] },
-    Core {
+        clock: Some(ClockLayout::Appended),
+    };
+    /// VBA Next — gba.
+    pub const VBA_NEXT: Core = Core {
+        slug: "vba-next",
+        name: "VBA Next",
+        kind: CoreKind::Libretro,
+        systems: &["gba"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Vectrex_MiSTer — vectrex.
+    pub const VECTREX_MISTER: Core = Core {
         slug: "vectrex-mister",
         name: "Vectrex_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["vectrex"],
         aliases: &["VECTREX"],
-    },
-    Core { slug: "vecx", name: "vecx", kind: CoreKind::Libretro, systems: &["vectrex"], aliases: &[] },
-    Core {
+        clock: None,
+    };
+    /// vecx — vectrex.
+    pub const VECX: Core = Core {
+        slug: "vecx",
+        name: "vecx",
+        kind: CoreKind::Libretro,
+        systems: &["vectrex"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Virtual Jaguar — atari-jaguar.
+    pub const VIRTUAL_JAGUAR: Core = Core {
         slug: "virtual-jaguar",
         name: "Virtual Jaguar",
         kind: CoreKind::Libretro,
         systems: &["atari-jaguar"],
         aliases: &[],
-    },
-    Core {
+        clock: None,
+    };
+    /// WonderSwan_MiSTer — wonderswan, wonderswan-color.
+    pub const WONDERSWAN_MISTER: Core = Core {
         slug: "wonderswan-mister",
         name: "WonderSwan_MiSTer",
         kind: CoreKind::MiSTer,
         systems: &["wonderswan", "wonderswan-color"],
         aliases: &["WonderSwan"],
-    },
-    Core {
+        clock: None,
+    };
+    /// YabaSanshiro — saturn.
+    pub const YABASANSHIRO: Core = Core {
         slug: "yabasanshiro",
         name: "YabaSanshiro",
         kind: CoreKind::Libretro,
         systems: &["saturn"],
         aliases: &[],
-    },
+        clock: None,
+    };
+}
+
+/// Every known emulator core, sorted by slug.
+pub(crate) static CORES: [Core; 122] = [
+    cores::_3DO_MISTER,
+    cores::AGG23_NES,
+    cores::AGG23_PC_ENGINE,
+    cores::AGG23_SNES,
+    cores::AGG23_WONDERSWAN,
+    cores::ATARI7800_MISTER,
+    cores::ATARI800,
+    cores::ATARI800_MISTER,
+    cores::ATARILYNX_MISTER,
+    cores::BEETLE_GBA,
+    cores::BEETLE_LYNX,
+    cores::BEETLE_NEOPOP,
+    cores::BEETLE_PCE,
+    cores::BEETLE_PCE_FAST,
+    cores::BEETLE_PSX,
+    cores::BEETLE_PSX_HW,
+    cores::BEETLE_SATURN,
+    cores::BEETLE_SUPERGRAFX,
+    cores::BEETLE_VB,
+    cores::BEETLE_WONDERSWAN,
+    cores::BLASTEM,
+    cores::BLUEMSX,
+    cores::BOOGERMANN_MSX,
+    cores::BSNES,
+    cores::BSNES_HD_BETA,
+    cores::BSNES_MERCURY_ACCURACY,
+    cores::BUDUDE2_GB,
+    cores::BUDUDE2_GBC,
+    cores::BUDUDE2_LYNX,
+    cores::C64_MISTER,
+    cores::COLECOVISION_MISTER,
+    cores::DESMUME,
+    cores::DESMUME_2015,
+    cores::DRIZZT_GG,
+    cores::DRIZZT_MEGADRIVE,
+    cores::DRIZZT_SG_1000,
+    cores::DRIZZT_SMS,
+    cores::DUCKSTATION,
+    cores::ERICLEWIS_GENESIS,
+    cores::FB_ALPHA,
+    cores::FCEUMM,
+    cores::FINALBURN_NEO,
+    cores::FMSX,
+    cores::FREEINTV,
+    cores::GAMBATTE,
+    cores::GAMEBOY_MISTER,
+    cores::GBA_MISTER,
+    cores::GENESIS_PLUS_GX,
+    cores::GENESIS_PLUS_GX_WIDE,
+    cores::GPSP,
+    cores::HANDY,
+    cores::INTV_MISTER,
+    cores::JEREMY_MEGACD,
+    cores::JOTEGO_JTNGP,
+    cores::JOTEGO_JTNGPC,
+    cores::KRONOS,
+    cores::MARKUS_ZZZ_MYC64,
+    cores::MAZAMARS312_NEOGEO,
+    cores::MAZAMARS312_PC_ENGINE_CD,
+    cores::MEGACD_MISTER,
+    cores::MEGADRIVE_MISTER,
+    cores::MELONDS,
+    cores::MELONDS_DS,
+    cores::MESEN,
+    cores::MESEN_S,
+    cores::MGBA,
+    cores::MINCER_RAY_GBA,
+    cores::MSX_MISTER,
+    cores::MSX1_MISTER,
+    cores::MUPEN64PLUS_NEXT,
+    cores::N64_MISTER,
+    cores::NEOGEO_MISTER,
+    cores::NES_MISTER,
+    cores::NESTOPIA,
+    cores::NSIDE,
+    cores::O2EM,
+    cores::OBSIDIAN_VECTREX,
+    cores::ODYSSEY2_MISTER,
+    cores::OPERA,
+    cores::PARALLEL_N64,
+    cores::PCSX_REARMED,
+    cores::PICODRIVE,
+    cores::PPSSPP,
+    cores::PROSYSTEM,
+    cores::PSX_MISTER,
+    cores::QUICKNES,
+    cores::S32X_MISTER,
+    cores::SAMEBOY,
+    cores::SATURN_MISTER,
+    cores::SGB_MISTER,
+    cores::SMS_MISTER,
+    cores::SNES_MISTER,
+    cores::SNES9X,
+    cores::SNES9X_2002,
+    cores::SNES9X_2005,
+    cores::SNES9X_2010,
+    cores::SPIRITUALIZED_2600,
+    cores::SPIRITUALIZED_7800,
+    cores::SPIRITUALIZED_COLECO,
+    cores::SPIRITUALIZED_GB,
+    cores::SPIRITUALIZED_GBA,
+    cores::SPIRITUALIZED_GBC,
+    cores::SPIRITUALIZED_GENESIS,
+    cores::SPIRITUALIZED_GG,
+    cores::SPIRITUALIZED_INTV,
+    cores::SPIRITUALIZED_NES,
+    cores::SPIRITUALIZED_ODYSSEY2,
+    cores::SPIRITUALIZED_SG_1000,
+    cores::SPIRITUALIZED_SMS,
+    cores::SPIRITUALIZED_SUPERGB,
+    cores::STELLA,
+    cores::STELLA_2014,
+    cores::SWANSTATION,
+    cores::TIMBOETTIGER_PRO_ACTION_REPLAY,
+    cores::TURBOGRAFX16_MISTER,
+    cores::VBA_M,
+    cores::VBA_NEXT,
+    cores::VECTREX_MISTER,
+    cores::VECX,
+    cores::VIRTUAL_JAGUAR,
+    cores::WONDERSWAN_MISTER,
+    cores::YABASANSHIRO,
 ];
 
 /// Registered save roles that are compared whole, sorted by name.

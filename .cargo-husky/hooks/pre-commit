@@ -1,0 +1,43 @@
+#!/bin/sh
+#
+# The registry tables are generated from `crates/one-saves-registry/data/*.json` and committed next
+# to the source, so the two can disagree. CI catches that, but only after a push, and a release cut
+# from a tree where they disagree publishes tables that are not what the data says.
+#
+# The check is that regenerating changes nothing: the generator is deterministic, so a file that
+# moves when it runs was not generated from the data currently on disk. That is the drift
+# condition itself, rather than a diff against some commit, so work in progress does not trip it.
+#
+# Installed by cargo-husky from `.cargo-husky/hooks/`. Edit it there, not in `.git/hooks`, which is
+# overwritten. `just hooks` reinstalls; `git commit --no-verify` skips.
+
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+tables="crates/one-saves-registry/src/generated.rs"
+
+# Nothing to check when the commit touches neither the data nor the tables.
+if ! git diff --cached --name-only | grep -qE '^crates/one-saves-registry/(data/|src/generated\.rs)'; then
+    exit 0
+fi
+
+before=$(git hash-object "$tables")
+if ! cargo xtask registries >/dev/null; then
+    echo "pre-commit: could not rebuild the registry tables" >&2
+    exit 1
+fi
+after=$(git hash-object "$tables")
+
+if [ "$before" != "$after" ]; then
+    cat >&2 <<'MSG'
+pre-commit: the registry tables were not generated from the JSON they come from.
+
+The generator has just rewritten them, so the fix is to include the result:
+
+    git add crates/one-saves-registry/src/generated.rs
+
+MSG
+    exit 1
+fi

@@ -92,6 +92,26 @@ pub struct Binding {
     pub bound_to: String,
 }
 
+/// How one core lays out clock state, as `clocks.json` records it.
+#[derive(Serialize, Deserialize)]
+pub struct Clock {
+    pub layout: String,
+    #[serde(default)]
+    pub reserved: Option<usize>,
+}
+
+/// `clocks.json`: clock layouts, keyed by core slug.
+///
+/// Deliberately not part of [`Registries`], and deliberately not written by [`write_json`]. The
+/// specification pages do not describe clock layouts, so this file is this repository's own and a
+/// `--docs` sync must leave it alone.
+#[derive(Serialize, Deserialize)]
+pub struct Clocks {
+    #[serde(rename = "_note", default)]
+    pub note: Vec<String>,
+    pub cores: BTreeMap<String, Clock>,
+}
+
 /// Everything the registries hold.
 pub struct Registries {
     pub systems: Vec<System>,
@@ -306,6 +326,11 @@ pub fn write_json(data: &Registries, dir: &Path) -> Fallible<()> {
 fn load<T: for<'de> Deserialize<'de>>(dir: &Path, name: &str) -> Fallible<T> {
     let text = read(&dir.join(format!("{name}.json")))?;
     serde_json::from_str(&text).map_err(|e| format!("{name}.json: {e}"))
+}
+
+/// Reads the clock layouts, which are this repository's rather than the specification's.
+pub fn read_clocks(dir: &Path) -> Fallible<Clocks> {
+    load(dir, "clocks")
 }
 
 /// Reads the JSON back, which is all generating the Rust tables needs.

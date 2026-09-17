@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# The same check as pre-commit, run unconditionally: this is the last point before the tables leave
+# the machine, and a release is cut from what is pushed. A commit made with --no-verify, or a
+# rebase that dropped the regenerated half, is caught here rather than in CI.
+#
+# Installed by cargo-husky from `.cargo-husky/hooks/`. `git push --no-verify` skips.
+
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+tables="crates/one-saves-registry/src/generated.rs"
+
+before=$(git hash-object "$tables")
+if ! cargo xtask registries >/dev/null; then
+    echo "pre-push: could not rebuild the registry tables" >&2
+    exit 1
+fi
+after=$(git hash-object "$tables")
+
+if [ "$before" != "$after" ]; then
+    cat >&2 <<'MSG'
+pre-push: the registry tables were not generated from the JSON they come from.
+
+The generator has just rewritten them. Commit the result before pushing:
+
+    git add crates/one-saves-registry/src/generated.rs
+    git commit --amend --no-edit    # or a commit of its own
+
+MSG
+    exit 1
+fi
