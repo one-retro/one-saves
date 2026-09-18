@@ -40,7 +40,9 @@ the filesystem — keep a `card-image` part if you need that.
 
 ## Features
 
-Everything optional is a feature, and all of them are on by default except `multithread`.
+Everything optional is a feature. `icon`, `archive` and `multithread` are off by default; the rest
+are on. The three that are off are the three that would make a consumer compile something it may
+have no use for — two compression libraries and a set of atomic refcounts.
 
 | Feature | What it is | What it brings |
 | ------- | ---------- | -------------- |
@@ -49,7 +51,10 @@ Everything optional is a feature, and all of them are on by default except `mult
 | `dat` | The `dat` module: resolving a digest through a DAT catalog | `datary`, and the XML reader, derive macro and proc-macro chain under it |
 | `dat-cmpro` | The ClrMamePro syntax as well as Logiqx XML | `winnow` |
 | `rom` | The `rom` module: ROM headers and digests | `crc32fast`, `md-5`, `sha1`, `sha2` |
+| `shift-jis` | Titles a console stored in Shift-JIS | `encoding_rs` |
 | `zstd` | Forwarded to `one-saves` | `zstd`, and the C library it compiles |
+| `icon` (off) | Decoding a console's icon to PNG for `x.1sav.icon` | `png`, and a deflate encoder |
+| `archive` (off) | The `archive` module: reading a card, or the loose saves off one, out of a `.zip` | `zip`, and a deflate decoder |
 | `multithread` (off) | Forwarded to `one-saves`: `Arc` rather than `Rc` under `dcbor` | nothing — it makes what this crate returns `Send` and `Sync` |
 
 Flat saves, detection, profiles and clock handling are always present: they are what this crate is,

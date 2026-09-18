@@ -26,6 +26,7 @@ ps1-memcard = { workspace = true, optional = true }
 ps2-memcard = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
 encoding_rs = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
 crc32fast = { workspace = true, optional = true }
 md-5 = { workspace = true, optional = true }
 sha1 = { workspace = true, optional = true }
@@ -61,6 +62,10 @@ shift-jis = ["dep:encoding_rs"]
 # that pulls a compression library of its own, and a producer that carries no icons pays nothing.
 # A card still reads and writes without it; the key is simply absent.
 icon = ["dep:png"]
+# Reading a card, or the loose saves off one, out of a zip archive. This is how saves are shared,
+# so it is what saves a caller a round trip through a temporary directory. Reading only: an archive
+# is a way a save arrived and not a format this crate writes back.
+archive = ["dep:zip"]
 # Forwarded to one-saves, whose `zstd` compiles a C library. Off, a part whose payload carries
 # `encoding: "zstd"` still round-trips; its payload just cannot be inflated.
 zstd = ["one-saves/zstd"]
@@ -80,3 +85,6 @@ workspace = true
 # The icon tests hash decoded pixels, so a change of PNG encoder is not a change of picture.
 [dev-dependencies]
 sha2 = { workspace = true }
+# The archive tests build their archives rather than vendoring them, so what is in one is stated
+# in the test that reads it.
+zip = { workspace = true }

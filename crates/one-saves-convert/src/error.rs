@@ -50,6 +50,8 @@ pub enum Error {
     NotConvertible(String),
     /// The bundle itself is malformed.
     Bundle(one_saves::Error),
+    /// An archive held nothing this could read, or more than one thing it could.
+    Archive(String),
     /// Reading or writing a file failed.
     Io(std::io::Error),
 }
@@ -63,6 +65,7 @@ impl fmt::Display for Error {
             Error::NotThisFormat { format, why } => write!(f, "not a {format}: {why}"),
             Error::Corrupt { format, why } => write!(f, "this {format} is corrupt: {why}"),
             Error::Undetected => f.write_str("could not tell what this file is; name the format with --from"),
+            Error::Archive(why) => write!(f, "this archive {why}"),
             Error::CannotWrite(format) => write!(
                 f,
                 "this build cannot write a {format}, and writing a card format it does not know \

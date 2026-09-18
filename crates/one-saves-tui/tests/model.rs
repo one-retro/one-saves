@@ -170,3 +170,59 @@ fn a_save_with_no_title_is_named_by_its_serial() {
     assert_eq!(titles, vec!["METAL SLUG", "NGH-0047"]);
 }
 
+/// An archive of the given members, uncompressed so the test needs no encoder.
+fn zip(members: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, bytes) in members {
+        writer.start_file(*name, options).expect("a member");
+        writer.write_all(bytes).expect("writes");
+    }
+    writer.finish().expect("finishes").into_inner()
+}
+
+/// Writes an archive to a temporary file and opens it.
+fn open_archive(name: &str, members: &[(&str, Vec<u8>)]) -> Card {
+    let path = std::env::temp_dir().join(name);
+    std::fs::write(&path, zip(members)).expect("writes the archive");
+    Card::open(&path).expect("opens")
+}
+
+/// Saves are shared as an archive of themselves, so opening one has to give a card.
+#[test]
+fn an_archive_of_loose_saves_opens_as_a_card() {
+    let save = |rest: &str| std::fs::read(fixture(rest)).expect("a vendored save");
+    let card = open_archive(
+        "1cards-loose.zip",
+        &[
+            ("BASLUS-01360464634.PSV", save("PS1/Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV")),
+            ("BISLPM-87053.PSV", save("PS1/Capcom vs SNK Millennium Fight 2000 Pro/PS3/BISLPM-87053.PSV")),
+        ],
+    );
+
+    let entries = card.entries();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].title, "ＦＦ４　３１０７／３１０７　　　４５：２０");
+    assert_eq!(entries[1].title, "ＣＡＰＣＯＭ　ＶＳ．　ＳＮＫ　ＰＲＯ");
+    // Two blocks for the first, one for the second, as they occupy on a real card.
+    assert_eq!(entries[0].blocks, 2);
+    assert_eq!(entries[1].blocks, 1);
+}
+
+/// An archive is where a card came from, never where one is written back to.
+///
+/// The file on disk is the archive. Writing a bare card over it would destroy every other thing it
+/// held, so this refuses before it rebuilds anything and says where the saves can go instead.
+#[test]
+fn a_card_out_of_an_archive_is_not_written_back_into_it() {
+    let save = std::fs::read(fixture("PS1/Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV"))
+        .expect("a vendored save");
+    let mut card = open_archive("1cards-readonly.zip", &[("BASLUS-01360464634.PSV", save)]);
+
+    let before = std::fs::read(&card.path).expect("the archive");
+    let error = card.save().expect_err("refuses").to_string();
+    assert!(error.contains("archive is not written back into"), "{error}");
+    assert_eq!(std::fs::read(&card.path).expect("the archive"), before, "and left it alone");
+}

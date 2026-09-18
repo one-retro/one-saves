@@ -429,10 +429,13 @@ impl App {
             let focused = index == self.focus;
             // The marker leads, because a long title is cut from the right and whether a card has
             // unwritten changes is the last thing that should disappear.
+            // A card out of an archive cannot be written back, and finding that out at the point
+            // of writing is finding out too late, so it is said in the header from the start.
             let title = format!(
-                " {}{}{} · {}/{} free ",
+                " {}{}{}{} · {}/{} free ",
                 if focused { "▶ " } else { "  " },
                 if card.dirty() { "● " } else { "" },
+                if card.archived.is_some() { "[ro] " } else { "" },
                 card.path.file_name().unwrap_or_default().to_string_lossy(),
                 card.free_blocks(),
                 card.blocks(),

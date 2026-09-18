@@ -60,6 +60,8 @@
 // modules below. Nothing else sets it, so a stable build never sees the nightly attribute.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "archive")]
+pub mod archive;
 pub mod card;
 #[cfg(feature = "dat")]
 #[cfg_attr(docsrs, doc(cfg(feature = "dat")))]

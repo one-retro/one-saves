@@ -24,6 +24,8 @@ pub enum Error {
     Convert(one_saves_convert::Error),
     /// A save cannot go on this card, and why.
     Refused(String),
+    /// The card was read out of an archive, which this does not write back into.
+    ReadOnly(String),
 }
 
 impl std::fmt::Display for Error {
@@ -33,6 +35,11 @@ impl std::fmt::Display for Error {
             Error::NotACard(what) => write!(f, "not a memory card this tool reads: {what}"),
             Error::Convert(e) => write!(f, "{e}"),
             Error::Refused(why) => write!(f, "{why}"),
+            Error::ReadOnly(what) => write!(
+                f,
+                "this card was read out of {what}, and an archive is not written back into; \
+                 copy the saves onto a card and write that"
+            ),
         }
     }
 }
@@ -70,6 +77,11 @@ pub struct IconFrame {
 pub struct Card {
     /// Where it came from, and where saving writes back to.
     pub path: PathBuf,
+    /// What inside an archive this came from, when it came out of one.
+    ///
+    /// A card opened this way is read-only. The file on disk is the archive, and writing a bare
+    /// card over it would destroy everything else it held.
+    pub archived: Option<String>,
     /// Which layout it is, which decides how it is written back.
     pub format: Format,
     /// The card as a bundle: parts are saves.
@@ -83,10 +95,27 @@ impl Card {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let bytes = std::fs::read(&path).map_err(Error::Io)?;
-        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
-        let format = detect(&bytes, extension).map_err(|_| Error::NotACard(path.display().to_string()))?;
+
+        // An archive is unwrapped first, so what follows sees a card either way. Either it held
+        // one, or it held loose saves and one was built to carry them.
+        let (bytes, extension, archived) = if one_saves_convert::archive::is_archive(&bytes) {
+            let unpacked = one_saves_convert::archive::unpack(&bytes).map_err(Error::Convert)?;
+            // An assembled card never existed before now, so it is named for the archive rather
+            // than for a member of it; one found whole is named for the member it was.
+            let what = if unpacked.assembled {
+                format!("the saves in {}", path.display())
+            } else {
+                format!("{} in {}", unpacked.source, path.display())
+            };
+            (unpacked.bytes, unpacked.extension, Some(what))
+        } else {
+            let extension = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_owned();
+            (bytes, extension, None)
+        };
+
+        let format = detect(&bytes, &extension).map_err(|_| Error::NotACard(path.display().to_string()))?;
         let bundle = card::read(format, &bytes, &CardOptions::default()).map_err(Error::Convert)?;
-        Ok(Self { path, format, bundle, dirty: false })
+        Ok(Self { path, archived, format, bundle, dirty: false })
     }
 
     /// Whether the card has been edited since it was opened or last written.
@@ -211,6 +240,10 @@ impl Card {
 
     /// Rebuilds the card and writes it back, leaving the original in place until it succeeds.
     pub fn save(&mut self) -> Result<()> {
+        // Before anything is rebuilt: there is nowhere for this to go.
+        if let Some(what) = &self.archived {
+            return Err(Error::ReadOnly(what.clone()));
+        }
         let bytes = card::write(self.format, &self.bundle).map_err(Error::Convert)?;
 
         // Read the rebuilt card before it replaces anything. This catches a card that came out

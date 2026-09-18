@@ -22,6 +22,10 @@ const USAGE: &str = "\
 
 Opens one memory card, or two so saves can be moved between them. Any format
 one-saves-convert reads: PS1, PS2, GameCube, Nintendo 64, Neo Geo, Dreamcast.
+
+A card may be inside a .zip, and so may loose PlayStation saves — a card is
+built to hold those. Either way the archive is read-only, marked [ro]: copy
+the saves onto a card of your own and write that.
 ";
 
 fn main() -> ExitCode {

@@ -555,3 +555,30 @@ fn a_large_card_scales_its_map_rather_than_giving_up_on_it() {
     let row = before.trim_matches(|c| c != '█' && c != '▓' && c != '·');
     assert!(row.chars().all(|c| matches!(c, '█' | '▓' | '·')), "{row}");
 }
+
+/// A card that cannot be written says so in its header, not at the point of writing.
+#[test]
+fn an_archived_card_is_marked_read_only() {
+    use std::io::Write;
+
+    let save = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../data/saves/PS1/Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV"),
+    )
+    .expect("a vendored save");
+
+    let archive = {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("BASLUS-01360464634.PSV", options).expect("a member");
+        writer.write_all(&save).expect("writes");
+        writer.finish().expect("finishes").into_inner()
+    };
+    let path = std::env::temp_dir().join("1cards-render-ro.zip");
+    std::fs::write(&path, archive).expect("writes the archive");
+
+    let mut app = App::new(vec![Card::open(&path).expect("opens")], picker());
+    let drawn = screen(&mut app, 100, 24);
+    assert!(drawn.contains("[ro]"), "{drawn}");
+}

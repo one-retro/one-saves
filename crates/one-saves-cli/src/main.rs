@@ -18,6 +18,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Wrap a save or memory card into a .1saves bundle.
+    ///
+    /// The input may be a .zip holding a card, or holding loose PlayStation saves, in which
+    /// case a card is built to carry them.
     Convert(Convert),
     /// Write a bundle back out in the format it came from.
     Extract(Extract),
@@ -165,13 +168,29 @@ fn write_out(path: &Path, bytes: &[u8], force: bool) -> Fallible {
 fn convert(args: Convert) -> Fallible {
     let bytes = std::fs::read(&args.input)?;
 
+    // A card shared as an archive is read out of it rather than through a temporary directory.
+    // An archive of loose saves comes back as a card built to carry them, which is a card that
+    // never existed before now — so it is said out loud rather than passed off as what was read.
+    #[cfg(feature = "archive")]
+    let (bytes, extension) = if one_saves_convert::archive::is_archive(&bytes) {
+        let unpacked = one_saves_convert::archive::unpack(&bytes)?;
+        if unpacked.assembled {
+            eprintln!("{}: built a card from {}", args.input.display(), unpacked.source);
+        }
+        (unpacked.bytes, unpacked.extension)
+    } else {
+        (bytes, extension_of(&args.input))
+    };
+    #[cfg(not(feature = "archive"))]
+    let (bytes, extension) = (bytes, extension_of(&args.input));
+
     // `--from` names either a producer (mgba, duckstation) or a format (ps1, raw). A producer
     // says who wrote the bytes; the format is still detected from the bytes themselves.
     let profile = args.from.as_deref().and_then(one_saves_convert::profile);
     let named_format = args.from.as_deref().and_then(Format::from_name);
     let format = match named_format {
         Some(format) => format,
-        None => detect::detect(&bytes, &extension_of(&args.input))?,
+        None => detect::detect(&bytes, &extension)?,
     };
 
     if format == Format::Bundle {

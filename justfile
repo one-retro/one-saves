@@ -48,6 +48,10 @@ test-features:
     # feature-off arm that carries behaviour rather than just an absence.
     cargo test -p one-saves-convert --no-default-features --features dat
     cargo test -p one-saves-convert --no-default-features --features rom
+    # `archive` on its own: an archive of loose saves can only be assembled by a format whose
+    # single saves this reads, so without `ps1` the assembling arm is a different one.
+    cargo test -p one-saves-convert --no-default-features --features archive
+    cargo test -p one-saves-convert --no-default-features --features archive,ps1
     # One card format at a time. PS2 is the odd one — its saves are directories, so it is the only
     # format that does not use the shared save-to-part helper — and a lone `ps1` is the smallest
     # build that still has a card in it.
