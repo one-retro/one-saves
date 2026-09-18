@@ -242,15 +242,25 @@ impl App {
                 .icon
                 .first()
                 .and_then(|png| image::load_from_memory(png).ok())
-                .map(|image| (self.focus, index, self.picker.new_resize_protocol(image)));
+                .map(|small| (self.focus, index, self.picker.new_resize_protocol(blow_up(&small))));
         }
-        let picture = if self.icon.is_some() { 8 } else { 0 };
+        // A console icon is 16x16 or 32x32, which at one cell per pixel is a smudge. The area is
+        // sized in cells to come out near `ICON_PIXELS` on a side, and `Resize::Fit` scales into
+        // it with a nearest-neighbour filter, keeping the proportions and the hard pixel edges.
+        let (cell_width, cell_height) = self.picker.font_size();
+        let wanted = Rect {
+            width: ICON_PIXELS.div_ceil(cell_width.max(1)).min(inner.width),
+            height: ICON_PIXELS.div_ceil(cell_height.max(1)).min(inner.height.saturating_sub(4)),
+            ..inner
+        };
+        let picture = if self.icon.is_some() { wanted.height } else { 0 };
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(picture), Constraint::Min(0)])
             .split(inner);
         if let Some((_, _, protocol)) = self.icon.as_mut() {
-            frame.render_stateful_widget(StatefulImage::default(), rows[0], protocol);
+            let area = Rect { width: wanted.width, ..rows[0] };
+            frame.render_stateful_widget(StatefulImage::default(), area, protocol);
         }
 
         let mut lines = vec![Line::from(entry.title.clone())];
@@ -285,6 +295,31 @@ impl App {
         );
     }
 }
+
+/// Scales a console icon up to something a person can see, by a whole number of pixels.
+///
+/// A whole number matters: at 8x every source pixel is an 8x8 square, where at 7.5x some are eight
+/// wide and some seven, and a 16x16 picture drawn that way looks subtly wrong in a way that reads
+/// as a bad decoder rather than as a scaled image. Nearest-neighbour for the same reason — these
+/// are hard-edged pixels and smoothing them would invent colours the card does not hold.
+fn blow_up(image: &image::DynamicImage) -> image::DynamicImage {
+    use image::GenericImageView as _;
+
+    let (width, height) = image.dimensions();
+    let longest = width.max(height).max(1);
+    let scale = (u32::from(ICON_PIXELS) / longest).max(1);
+    if scale == 1 {
+        return image.clone();
+    }
+    image.resize_exact(width * scale, height * scale, image::imageops::FilterType::Nearest)
+}
+
+/// How large a save's picture is drawn, on its longest side in pixels.
+///
+/// Blowing it up is a display choice and not a change to the picture. What `x.1sav.icon` carries
+/// is what the card holds, at the size the console stored it; this is only how large it is shown,
+/// the way a console shows a 16x16 icon at a size a person can see.
+const ICON_PIXELS: u16 = 128;
 
 /// What the block count column takes, which the name gets what is left of.
 const BLOCK_COLUMN: usize = 8;

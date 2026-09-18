@@ -10,9 +10,14 @@ use one_saves_tui::app::{App, Mode};
 use one_saves_tui::model::Card;
 
 const PS2: &str = "PS2/Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2";
+const PS1: &str = "PS1/Gran Turismo/DuckStation/shared_card_1.mcd";
 
 fn card() -> Card {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(PS2);
+    open(PS2)
+}
+
+fn open(rest: &str) -> Card {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(rest);
     Card::open(path).expect("opens")
 }
 
@@ -115,4 +120,22 @@ fn a_narrow_terminal_keeps_the_numbers_and_cuts_the_names() {
     assert!(drawn.lines().all(|line| line.chars().count() == 40), "no line overflows");
     assert!(drawn.contains("blk"), "the size column survives a narrow pane:\n{drawn}");
     assert!(drawn.contains('…'), "and a name too long for it reads as cut:\n{drawn}");
+}
+
+/// A console icon is drawn at a size a person can see, by a whole number of pixels.
+#[test]
+fn an_icon_is_blown_up_to_something_visible() {
+    use ratatui_image::picker::ProtocolType;
+
+    let mut picker = Picker::from_fontsize((8, 16));
+    // A graphics protocol, because with half blocks a cell *is* a pixel or two and there is no
+    // scaling to observe — the terminal's own cells are the limit.
+    picker.set_protocol_type(ProtocolType::Iterm2);
+    let mut app = App::new(vec![open(PS1)], picker);
+
+    let drawn = screen(&mut app, 70, 18);
+    // The protocol carries the size it was handed. A 16x16 icon scaled by eight is 128, and an
+    // unscaled one would say 16 — which is what this caught before the scaling went in.
+    assert!(drawn.contains("width=128px"), "the icon is blown up:\n{drawn}");
+    assert!(drawn.contains("height=128px"), "and keeps its proportions");
 }
