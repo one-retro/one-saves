@@ -33,6 +33,16 @@ pub struct Confirm {
     pub warning: Option<String>,
     /// What happens on yes.
     pub pending: Pending,
+    /// Which button is under the cursor. Yes leads: the question is only asked because a key was
+    /// pressed asking for the thing, so the answer it opens on is the one that was just asked for.
+    pub yes: bool,
+}
+
+impl Confirm {
+    /// A question, waiting on its answer with Yes under the cursor.
+    fn new(question: String, warning: Option<String>, pending: Pending) -> Self {
+        Self { question, warning, pending, yes: true }
+    }
 }
 
 /// An action held back until it is confirmed.
@@ -184,14 +194,11 @@ impl App {
         let Some(index) = self.selected() else { return };
         let entries = self.card().entries();
         let Some(entry) = entries.get(index) else { return };
-        self.mode = Mode::Confirming(Confirm {
-            question: format!("Delete {}?", entry.title),
-            warning: Some(format!(
-                "{} blocks are freed. Nothing is written until you press w.",
-                entry.blocks
-            )),
-            pending: Pending::Delete,
-        });
+        self.mode = Mode::Confirming(Confirm::new(
+            format!("Delete {}?", entry.title),
+            Some(format!("{} blocks are freed. Nothing is written until you press w.", entry.blocks)),
+            Pending::Delete,
+        ));
     }
 
     /// Asks before writing, since writing is what makes an edit real.
@@ -200,11 +207,11 @@ impl App {
             self.status = Some("nothing to write".into());
             return;
         }
-        self.mode = Mode::Confirming(Confirm {
-            question: format!("Write over {}?", self.card().path.display()),
-            warning: Some("The file is replaced by what is listed here.".into()),
-            pending: Pending::Write,
-        });
+        self.mode = Mode::Confirming(Confirm::new(
+            format!("Write over {}?", self.card().path.display()),
+            Some("The file is replaced by what is listed here.".into()),
+            Pending::Write,
+        ));
     }
 
     /// Asks before leaving with work in hand.
@@ -219,11 +226,11 @@ impl App {
             .filter(|card| card.dirty())
             .map(|card| card.path.file_name().unwrap_or_default().to_string_lossy().into_owned())
             .collect();
-        self.mode = Mode::Confirming(Confirm {
-            question: "Quit without writing?".into(),
-            warning: Some(format!("{} has changes that will be lost.", cards.join(", "))),
-            pending: Pending::Quit,
-        });
+        self.mode = Mode::Confirming(Confirm::new(
+            "Quit without writing?".into(),
+            Some(format!("{} has changes that will be lost.", cards.join(", "))),
+            Pending::Quit,
+        ));
     }
 
     /// Copies the selected save onto the other card.
@@ -242,11 +249,11 @@ impl App {
         let other = (self.focus + 1) % self.cards.len();
         if self.cards[other].entries().iter().any(|there| there.title == entry.title) {
             let title = entry.title.clone();
-            self.mode = Mode::Confirming(Confirm {
-                question: format!("{title} is already on the other card. Copy anyway?"),
-                warning: Some("You will have two saves under one name.".into()),
-                pending: Pending::CopyOver,
-            });
+            self.mode = Mode::Confirming(Confirm::new(
+                format!("{title} is already on the other card. Copy anyway?"),
+                Some("You will have two saves under one name.".into()),
+                Pending::CopyOver,
+            ));
             return;
         }
         self.do_copy();
@@ -263,6 +270,37 @@ impl App {
             Ok(()) => "copied; press w to write".into(),
             Err(error) => error.to_string(),
         });
+    }
+
+    /// Moves between the buttons.
+    pub fn toggle(&mut self) {
+        if let Mode::Confirming(confirm) = &mut self.mode {
+            confirm.yes = !confirm.yes;
+        }
+    }
+
+    /// Puts the cursor on one button outright, which is what y and n do.
+    pub fn point_at(&mut self, yes: bool) {
+        if let Mode::Confirming(confirm) = &mut self.mode {
+            confirm.yes = yes;
+        }
+    }
+
+    /// Answers with whichever button the cursor is on.
+    pub fn answer(&mut self) {
+        let Mode::Confirming(confirm) = &self.mode else { return };
+        let (yes, pending) = (confirm.yes, confirm.pending);
+        if yes {
+            self.confirm(pending);
+        } else {
+            self.dismiss();
+        }
+    }
+
+    /// Puts a question away without doing what it asked.
+    pub fn dismiss(&mut self) {
+        self.mode = Mode::Browsing;
+        self.status = None;
     }
 
     /// Carries out what was confirmed.
@@ -502,7 +540,7 @@ impl App {
         let Mode::Confirming(confirm) = &self.mode else { return };
 
         let width = area.width.saturating_sub(8).clamp(20, 64);
-        let height = if confirm.warning.is_some() { 7 } else { 5 };
+        let height = if confirm.warning.is_some() { 7 } else { 6 };
         let box_area = Rect {
             x: area.x + (area.width.saturating_sub(width)) / 2,
             y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -515,7 +553,11 @@ impl App {
             lines.push(Line::styled(warning.clone(), Style::default().fg(Color::Yellow)));
         }
         lines.push(Line::from(""));
-        lines.push(Line::styled("y / n", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)));
+        lines.push(Line::from(vec![
+            button(" Yes ", confirm.yes),
+            Span::raw("   "),
+            button(" No ", !confirm.yes),
+        ]));
 
         frame.render_widget(Clear, box_area);
         frame.render_widget(
@@ -541,6 +583,16 @@ const BLOCK_COLUMN: usize = 8;
 
 /// How long a frame shows where the format keeps no timing of its own.
 const DEFAULT_HOLD_MS: u64 = 250;
+
+/// One of the modal's buttons, filled in where the cursor is on it.
+fn button(label: &str, under_cursor: bool) -> Span<'_> {
+    let style = if under_cursor {
+        Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    Span::styled(label, style)
+}
 
 /// The colour a save is drawn in, so its name and its blocks are recognisably the same save.
 fn hue(index: usize) -> Color {

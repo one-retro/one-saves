@@ -91,13 +91,17 @@ fn loop_over<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: 
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        // A question takes yes or no and nothing else, so a stray key cannot delete anything.
-        if let Mode::Confirming(confirm) = std::mem::replace(&mut app.mode, Mode::Browsing) {
+        // A question is answered by pressing a button, and nothing else reaches past it. The
+        // letters move the cursor rather than answering outright, so the thing that commits is
+        // always the same key, whichever way you got to the button.
+        if matches!(app.mode, Mode::Confirming(_)) {
             match key.code {
-                KeyCode::Char('y' | 'Y') => app.confirm(confirm.pending),
-                KeyCode::Char('n' | 'N') | KeyCode::Esc => app.status = None,
-                // Anything else leaves the question standing rather than answering it.
-                _ => app.mode = Mode::Confirming(confirm),
+                KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => app.toggle(),
+                KeyCode::Char('y' | 'Y') => app.point_at(true),
+                KeyCode::Char('n' | 'N') => app.point_at(false),
+                KeyCode::Enter | KeyCode::Char(' ') => app.answer(),
+                KeyCode::Esc => app.dismiss(),
+                _ => {}
             }
             continue;
         }

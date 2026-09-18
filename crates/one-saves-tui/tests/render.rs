@@ -75,7 +75,8 @@ fn deleting_asks_first_and_names_what_it_would_delete() {
 
     assert!(content.contains("Delete"), "it asks:\n{drawn}");
     assert!(content.contains("ＴＥＫＫＥＮ"), "and names the save as the console does");
-    assert!(content.contains("y/n"), "and says what answers it takes");
+    assert!(content.contains("Yes"), "and offers buttons rather than naming keys");
+    assert!(content.contains("No"));
     // Over the top of everything, because it is the only thing that takes a key.
     assert!(drawn.contains('╔'), "asked in a box rather than on the status line:\n{drawn}");
     assert!(!app.cards[0].dirty(), "asking is not doing");
@@ -305,4 +306,72 @@ fn a_status_message_does_not_swallow_the_next_key() {
     app.status = None;
     app.step(1);
     assert_eq!(app.status, None, "and the key did its own job");
+}
+
+/// The dialog is answered by pressing a button, and Yes is the one under the cursor.
+#[test]
+fn a_question_opens_on_yes_and_is_answered_by_the_button_under_the_cursor() {
+    use ratatui::style::Modifier;
+
+    // Where the cursor is, read off the cells rather than off the state, so this checks what a
+    // person can actually see.
+    fn on_yes(app: &mut App) -> bool {
+        let mut terminal = Terminal::new(TestBackend::new(86, 20)).expect("a test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draws");
+        let buffer = terminal.backend().buffer().clone();
+        let (mut yes_at, mut marked) = (None, None);
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                if cell.symbol() == "Y" {
+                    yes_at = Some(x);
+                }
+                if cell.modifier.contains(Modifier::BOLD) && cell.symbol() == "Y" {
+                    marked = Some(x);
+                }
+            }
+        }
+        yes_at.is_some() && yes_at == marked
+    }
+
+    let mut app = App::new(vec![card()], picker());
+    app.ask_delete();
+    assert!(on_yes(&mut app), "a question opens with Yes under the cursor");
+
+    // Moving puts it on No, and answering there does nothing but put the question away.
+    app.toggle();
+    assert!(!on_yes(&mut app));
+    app.answer();
+    assert!(matches!(app.mode, Mode::Browsing), "answered");
+    assert!(!app.cards[0].dirty(), "and No did not delete anything");
+
+    // Answering on Yes does the thing.
+    app.ask_delete();
+    let before = app.cards[0].entries().len();
+    app.answer();
+    assert!(matches!(app.mode, Mode::Browsing));
+    assert_eq!(app.cards[0].entries().len(), before - 1, "Yes deleted it");
+    assert!(app.cards[0].dirty());
+}
+
+/// The letters move the cursor rather than answering outright.
+#[test]
+fn y_and_n_point_at_a_button_without_committing() {
+    let mut app = App::new(vec![card()], picker());
+    let before = app.cards[0].entries().len();
+
+    app.ask_delete();
+    app.point_at(true);
+    assert!(matches!(app.mode, Mode::Confirming(_)), "y points, it does not press");
+    assert_eq!(app.cards[0].entries().len(), before, "and nothing has happened yet");
+
+    app.point_at(false);
+    app.answer();
+    assert_eq!(app.cards[0].entries().len(), before, "answering on No changed nothing");
+
+    // Escape puts the question away the same way No does.
+    app.ask_delete();
+    app.dismiss();
+    assert!(matches!(app.mode, Mode::Browsing));
+    assert_eq!(app.cards[0].entries().len(), before);
 }
