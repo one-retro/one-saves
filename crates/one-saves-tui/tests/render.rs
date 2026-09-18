@@ -139,3 +139,38 @@ fn an_icon_is_blown_up_to_something_visible() {
     assert!(drawn.contains("width=128px"), "the icon is blown up:\n{drawn}");
     assert!(drawn.contains("height=128px"), "and keeps its proportions");
 }
+
+/// An animated icon advances on its own; a still one gives the loop nothing to wait for.
+#[test]
+fn an_animated_icon_advances_and_a_still_one_does_not() {
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    let mut app = App::new(vec![open(PS1)], picker());
+
+    // Gran Turismo keeps one frame. Nothing can change the screen but a key, so the event loop is
+    // told to block rather than spin: that is what `None` means here.
+    assert_eq!(app.next_frame_in(), None, "a still icon asks for no wakeup");
+    app.tick();
+
+    // Crash Bandicoot 2 keeps three.
+    app.step(1);
+    let wait = app.next_frame_in().expect("an animated icon asks to be woken");
+    assert!(wait <= Duration::from_millis(250), "and within the frame's hold, not later");
+
+    // A tick before the hold is up changes nothing; one after it moves to the next frame.
+    let first = screen(&mut app, 60, 16);
+    app.tick();
+    assert_eq!(screen(&mut app, 60, 16), first, "the frame holds for its time");
+
+    sleep(wait + Duration::from_millis(20));
+    app.tick();
+    // Frames 0 and 1 of this icon are the same picture, so the screen is expected to match; what
+    // is being checked is that the wait restarted, which it only does on an advance.
+    let again = app.next_frame_in().expect("still animating");
+    assert!(again > wait.saturating_sub(Duration::from_millis(20)), "the hold started over");
+
+    // And moving the selection puts the animation back to its first frame.
+    app.step(-1);
+    assert_eq!(app.next_frame_in(), None, "back on the still icon");
+}

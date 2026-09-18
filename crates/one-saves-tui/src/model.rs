@@ -51,8 +51,19 @@ pub struct Entry {
     pub detail: Option<String>,
     /// How many of the card's blocks it occupies.
     pub blocks: u64,
-    /// The save's icon, as PNG frames in display order.
-    pub icon: Vec<Vec<u8>>,
+    /// The save's icon, in display order. A still icon is one frame.
+    pub icon: Vec<IconFrame>,
+}
+
+/// One frame of a save's icon.
+pub struct IconFrame {
+    /// The frame, as the PNG `x.1sav.icon` carries.
+    pub png: Vec<u8>,
+    /// How long it shows before the next, where the format says.
+    ///
+    /// A GameCube varies this per frame; a PlayStation keeps no timing of its own and leaves the
+    /// rate to the console, which is why this is optional rather than defaulted at the source.
+    pub hold_ms: Option<u64>,
 }
 
 /// A card, open and possibly edited.
@@ -236,7 +247,7 @@ fn read_label(save: &Bundle) -> Option<(String, Option<String>)> {
 }
 
 /// The save's icon frames, from `x.1sav.icon`, in display order.
-fn read_icon(save: &Bundle) -> Vec<Vec<u8>> {
+fn read_icon(save: &Bundle) -> Vec<IconFrame> {
     let Ok(key) = ReverseDnsName::parse("x.1sav.icon") else { return Vec::new() };
     let Some(map) = save.header.extensions.get(&key).and_then(|value| value.as_map()) else {
         return Vec::new();
@@ -247,7 +258,10 @@ fn read_icon(save: &Bundle) -> Vec<Vec<u8>> {
         .iter()
         .filter_map(|frame| {
             let frame = frame.as_array()?;
-            Some(frame.first()?.as_byte_string()?.to_vec())
+            Some(IconFrame {
+                png: frame.first()?.as_byte_string()?.to_vec(),
+                hold_ms: frame.get(1).and_then(|hold| u64::try_from(hold.clone()).ok()),
+            })
         })
         .collect()
 }

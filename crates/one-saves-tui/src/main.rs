@@ -77,6 +77,16 @@ fn loop_over<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: 
     while !app.done {
         terminal.draw(|frame| app.draw(frame))?;
 
+        // An animated icon has to redraw without anything being pressed, so the wait is however
+        // long the showing frame has left. A still icon has nothing to wait for, and blocking on
+        // the key is what keeps an idle card from spinning the CPU.
+        if let Some(left) = app.next_frame_in()
+            && !event::poll(left)?
+        {
+            app.tick();
+            continue;
+        }
+
         let Event::Key(key) = event::read()? else { continue };
         if key.kind != KeyEventKind::Press {
             continue;

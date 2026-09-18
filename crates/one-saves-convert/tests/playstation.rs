@@ -1,4 +1,7 @@
-//! A PlayStation card DuckStation wrote: what its save is called, and what it looks like.
+//! A PlayStation card DuckStation wrote: what its saves are called, and what they look like.
+//!
+//! Two saves, which between them cover what a PS1 icon can be: Gran Turismo keeps a still one, and
+//! Crash Bandicoot 2 animates over three frames.
 
 #![cfg(feature = "ps1")]
 
@@ -8,69 +11,116 @@ use one_saves_convert::{CardOptions, Format};
 
 const CARD: &str = "data/saves/PS1/Gran Turismo/DuckStation/shared_card_1.mcd";
 
-fn save() -> Bundle {
+fn card() -> Bundle {
     let bytes =
         std::fs::read(format!("{}/../../{CARD}", env!("CARGO_MANIFEST_DIR"))).expect("the vendored card");
-    let card = one_saves_convert::card::read(Format::Ps1Card, &bytes, &CardOptions::default())
-        .expect("reads the card");
-    assert_eq!(card.parts.len(), 1, "the card holds one save");
-    Bundle::from_slice(&card.parts[0].bytes().expect("nested")).expect("a save")
+    one_saves_convert::card::read(Format::Ps1Card, &bytes, &CardOptions::default()).expect("reads the card")
+}
+
+/// The saves, in the order the directory lists them: Gran Turismo, then Crash 2.
+fn saves() -> Vec<Bundle> {
+    card()
+        .parts
+        .iter()
+        .map(|part| Bundle::from_slice(&part.bytes().expect("nested")).expect("a save"))
+        .collect()
+}
+
+fn label_of(save: &Bundle) -> String {
+    let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
+    let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");
+    map.get::<u64, CBOR>(0).expect("a title").as_text().expect("text").to_owned()
+}
+
+/// The frames of a save's icon, each as the PNG and whatever hold it states.
+#[cfg(feature = "icon")]
+fn frames(save: &Bundle) -> Vec<(Vec<u8>, Option<i64>)> {
+    let key = ReverseDnsName::parse("x.1sav.icon").expect("well-formed");
+    let map = save.header.extensions.get(&key).expect("an icon").as_map().expect("a map");
+    let frames = map.get::<u64, CBOR>(0).expect("frames");
+    frames
+        .as_array()
+        .expect("an array")
+        .iter()
+        .map(|frame| {
+            let frame = frame.as_array().expect("a frame");
+            let png = frame[0].as_byte_string().expect("a PNG").to_vec();
+            (png, frame.get(1).and_then(|hold| i64::try_from(hold.clone()).ok()))
+        })
+        .collect()
+}
+
+/// A short digest of what a PNG decodes to, so a change of encoder is not a change of picture.
+#[cfg(feature = "icon")]
+fn digest(png: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    use sha2::{Digest, Sha256};
+
+    let decoder = png::Decoder::new(std::io::Cursor::new(png));
+    let mut reader = decoder.read_info().expect("a PNG");
+    let mut pixels = vec![0; reader.output_buffer_size().expect("bounded")];
+    let info = reader.next_frame(&mut pixels).expect("one frame");
+    pixels.truncate(info.buffer_size());
+    assert_eq!((info.width, info.height), (16, 16), "a PS1 icon is 16x16");
+
+    Sha256::digest(&pixels).iter().take(8).fold(String::new(), |mut out, byte| {
+        write!(out, "{byte:02x}").expect("writing to a String");
+        out
+    })
 }
 
 #[cfg(feature = "shift-jis")]
 #[test]
 fn a_playstation_save_is_labelled_by_the_title_in_its_first_block() {
-    let save = save();
-    let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
-    let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");
-
     // Full width, as the card holds it. The format asks for NFC, which does not fold these to
     // ASCII, and folding them would be writing a title the save does not say.
-    assert_eq!(map.get::<u64, CBOR>(0).unwrap().as_text().unwrap(), "ＧＴ　ｇａｍｅ　ｄａｔａ");
-    // A PS1 title is one line; there is no second for a detail.
+    assert_eq!(label_of(&saves()[0]), "ＧＴ　ｇａｍｅ　ｄａｔａ");
+    assert_eq!(label_of(&saves()[1]), "Ｃｒａｓｈ　Ｂａｎｄｉｃｏｏｔ　２");
+}
+
+#[cfg(feature = "icon")]
+#[test]
+fn a_still_icon_is_one_frame() {
+    let frames = frames(&saves()[0]);
+    assert_eq!(frames.len(), 1);
+    // Four bits a pixel with the *high* nibble on the left. Reading it the other way round is the
+    // mistake that still produces a picture: every pair of pixels swaps, which combs each solid
+    // shape into stripes a pixel wide.
+    assert_eq!(digest(&frames[0].0), "64a85b8fc2f84831");
+    // A PlayStation keeps no timing of its own; the console runs the frames at its own rate.
+    assert_eq!(frames[0].1, None);
+
+    // No banner either, which is a GameCube thing.
+    let saves = saves();
+    let key = ReverseDnsName::parse("x.1sav.icon").expect("well-formed");
+    let map = saves[0].header.extensions.get(&key).unwrap().as_map().unwrap();
     assert!(map.get::<u64, CBOR>(1).is_none());
 }
 
 #[cfg(feature = "icon")]
 #[test]
-fn a_playstation_save_carries_its_icon_as_png() {
-    use std::fmt::Write as _;
+fn an_animated_icon_keeps_every_frame_in_display_order() {
+    let frames = frames(&saves()[1]);
+    assert_eq!(frames.len(), 3, "the header asks for three");
 
-    use sha2::{Digest, Sha256};
+    let digests: Vec<String> = frames.iter().map(|(png, _)| digest(png)).collect();
+    // Two of them are the same picture, which is the save's doing rather than the decoder's: those
+    // frames are byte-identical in the payload. A stride of zero would make all three alike, so
+    // the third differing is what says the frames are being walked rather than re-read.
+    assert_eq!(digests[0], "018cac3b7d7df4f5");
+    assert_eq!(digests[1], digests[0], "the first two frames really are one picture");
+    assert_eq!(digests[2], "ed0574e23eb443f9", "and the third is another");
 
-    let save = save();
+    assert!(frames.iter().all(|(_, hold)| hold.is_none()), "a PS1 states no hold");
+}
+
+#[cfg(feature = "icon")]
+#[test]
+fn an_icon_belongs_to_the_save_rather_than_to_the_card() {
+    // It has to survive the save being sliced out, so it is in the save's own header.
     let key = ReverseDnsName::parse("x.1sav.icon").expect("well-formed");
-    let map = save.header.extensions.get(&key).expect("an icon").as_map().expect("a map");
-
-    let frames = map.get::<u64, CBOR>(0).expect("frames");
-    let frames = frames.as_array().expect("an array");
-    assert_eq!(frames.len(), 1, "this save animates over one frame");
-    // A PS1 keeps no timing of its own: the console runs the frames at its own rate.
-    assert_eq!(frames[0].as_array().expect("a frame").len(), 1, "a reading and no hold");
-    // Nor a banner, which is a GameCube thing.
-    assert!(map.get::<u64, CBOR>(1).is_none());
-
-    let png = frames[0].as_array().unwrap()[0].as_byte_string().expect("a PNG");
-    let decoder = png::Decoder::new(std::io::Cursor::new(png));
-    let mut reader = decoder.read_info().expect("a PNG");
-    let mut buf = vec![0; reader.output_buffer_size().expect("bounded")];
-    let info = reader.next_frame(&mut buf).expect("one frame");
-    buf.truncate(info.buffer_size());
-
-    assert_eq!((info.width, info.height), (16, 16));
-    // Four bits a pixel with the *high* nibble on the left. Reading it the other way round is the
-    // mistake that still produces a picture: every pair of pixels swaps, which combs each solid
-    // shape into stripes a pixel wide. The digest is over pixels, so a change of PNG encoder is
-    // not a change of picture.
-    let digest = Sha256::digest(&buf).iter().take(8).fold(String::new(), |mut out, byte| {
-        write!(out, "{byte:02x}").expect("writing to a String");
-        out
-    });
-    assert_eq!(digest, "64a85b8fc2f84831");
-
-    // And it belongs to the save, so it is not on the card's part.
-    let bytes = std::fs::read(format!("{}/../../{CARD}", env!("CARGO_MANIFEST_DIR"))).unwrap();
-    let card =
-        one_saves_convert::card::read(Format::Ps1Card, &bytes, &CardOptions::default()).expect("reads");
-    assert!(!card.parts[0].extensions.contains_key(&key));
+    for part in &card().parts {
+        assert!(!part.extensions.contains_key(&key));
+    }
 }

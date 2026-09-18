@@ -4,6 +4,8 @@
 //! the one question worth asking twice, so that the rules can be tested without a terminal and the
 //! drawing can be read without the rules in the way.
 
+use std::time::{Duration, Instant};
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -48,8 +50,13 @@ pub struct App {
     pub done: bool,
     /// How the terminal draws pictures, decided once at startup.
     picker: Picker,
-    /// The decoded icon for what is selected, kept because encoding it is not free.
-    icon: Option<(usize, usize, StatefulProtocol)>,
+    /// The decoded icon for what is showing, kept because encoding it is not free. Keyed by the
+    /// card, the save and the frame, so any of the three changing redraws it.
+    icon: Option<(usize, usize, usize, StatefulProtocol)>,
+    /// Which frame of the selected save's icon is showing.
+    frame: usize,
+    /// When it started showing, which is what the next one waits on.
+    shown_at: Instant,
 }
 
 impl App {
@@ -66,7 +73,17 @@ impl App {
                 state
             })
             .collect();
-        Self { cards, focus: 0, selection, mode: Mode::Browsing, done: false, picker, icon: None }
+        Self {
+            cards,
+            focus: 0,
+            selection,
+            mode: Mode::Browsing,
+            done: false,
+            picker,
+            icon: None,
+            frame: 0,
+            shown_at: Instant::now(),
+        }
     }
 
     /// The card the keys act on.
@@ -89,15 +106,58 @@ impl App {
         let state = &mut self.selection[self.focus];
         let at = state.selected().unwrap_or(0).saturating_add_signed(delta);
         state.select(Some(at.min(count - 1)));
-        self.icon = None;
+        self.rewind();
     }
 
     /// Moves focus to the other card, where there is one.
     pub fn switch(&mut self) {
         if self.cards.len() > 1 {
             self.focus = (self.focus + 1) % self.cards.len();
-            self.icon = None;
+            self.rewind();
         }
+    }
+
+    /// Starts the selected save's icon again from its first frame.
+    fn rewind(&mut self) {
+        self.icon = None;
+        self.frame = 0;
+        self.shown_at = Instant::now();
+    }
+
+    /// How long the showing frame has left, or `None` where nothing is animating.
+    ///
+    /// This is what the event loop waits on: with one frame there is nothing to wait for and a
+    /// key is the only thing that can change the screen, so it blocks instead of spinning.
+    #[must_use]
+    pub fn next_frame_in(&self) -> Option<Duration> {
+        let frames = self.showing()?;
+        if frames.len() < 2 {
+            return None;
+        }
+        let hold =
+            Duration::from_millis(frames[self.frame % frames.len()].hold_ms.unwrap_or(DEFAULT_HOLD_MS));
+        Some(hold.saturating_sub(self.shown_at.elapsed()))
+    }
+
+    /// Advances the icon if the showing frame has had its time.
+    pub fn tick(&mut self) {
+        let Some(frames) = self.showing() else { return };
+        if frames.len() < 2 {
+            return;
+        }
+        let hold =
+            Duration::from_millis(frames[self.frame % frames.len()].hold_ms.unwrap_or(DEFAULT_HOLD_MS));
+        if self.shown_at.elapsed() >= hold {
+            self.frame = (self.frame + 1) % frames.len();
+            self.shown_at = Instant::now();
+        }
+    }
+
+    /// The frames of the selected save's icon.
+    fn showing(&self) -> Option<Vec<crate::model::IconFrame>> {
+        let index = self.selection[self.focus].selected()?;
+        let mut entries = self.cards[self.focus].entries();
+        (index < entries.len()).then(|| std::mem::take(&mut entries[index].icon))
     }
 
     /// Asks before deleting, because nothing here is undoable once written.
@@ -237,12 +297,14 @@ impl App {
         // The icon arrives already decoded to PNG, so nothing here knows what RGB5A3 is. A save
         // that carries none — every PS2 save, whose icons are parts of their own — gets the room
         // back rather than a gap where a picture would have been.
-        if self.icon.as_ref().map(|(card, save, _)| (*card, *save)) != Some((self.focus, index)) {
-            self.icon = entry
-                .icon
-                .first()
-                .and_then(|png| image::load_from_memory(png).ok())
-                .map(|small| (self.focus, index, self.picker.new_resize_protocol(blow_up(&small))));
+        let showing = if entry.icon.is_empty() { 0 } else { self.frame % entry.icon.len() };
+        if self.icon.as_ref().map(|(card, save, at, _)| (*card, *save, *at))
+            != Some((self.focus, index, showing))
+        {
+            self.icon =
+                entry.icon.get(showing).and_then(|icon| image::load_from_memory(&icon.png).ok()).map(
+                    |small| (self.focus, index, showing, self.picker.new_resize_protocol(blow_up(&small))),
+                );
         }
         // A console icon is 16x16 or 32x32, which at one cell per pixel is a smudge. The area is
         // sized in cells to come out near `ICON_PIXELS` on a side, and `Resize::Fit` scales into
@@ -258,7 +320,7 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(picture), Constraint::Min(0)])
             .split(inner);
-        if let Some((_, _, protocol)) = self.icon.as_mut() {
+        if let Some((_, _, _, protocol)) = self.icon.as_mut() {
             let area = Rect { width: wanted.width, ..rows[0] };
             frame.render_stateful_widget(StatefulImage::default(), area, protocol);
         }
@@ -295,6 +357,13 @@ impl App {
         );
     }
 }
+
+/// How long a frame shows where the format keeps no timing of its own.
+///
+/// A PlayStation leaves the rate to the console rather than writing one per frame, so a reader has
+/// to pick something; this is about what the hardware runs at, and what a GameCube asks for in
+/// both of the cards under `data/saves`.
+const DEFAULT_HOLD_MS: u64 = 250;
 
 /// Scales a console icon up to something a person can see, by a whole number of pixels.
 ///
