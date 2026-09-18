@@ -312,9 +312,9 @@ pub fn nested_saves(bundle: &Bundle) -> Result<Vec<NestedSave>> {
             inner,
         });
     }
-    if saves.is_empty() {
-        return Err(Error::NotConvertible("this bundle holds no `bundle` parts, so it is not a card".into()));
-    }
+    // No saves is a card with nothing on it, which is a card. Whether this bundle is one at all is
+    // the `shape` field's question since 0.2, and it was answered before anything got here; what
+    // used to be refused here was a person deleting their last save.
     Ok(saves)
 }
 

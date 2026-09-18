@@ -504,3 +504,30 @@ fn a_question_that_wraps_still_shows_its_buttons() {
         assert!(buttons < bottom, "buttons are inside the box at {width}x{height}");
     }
 }
+
+/// The block map takes as many rows as its blocks need, rather than one line and a shrug.
+#[test]
+fn the_block_map_wraps_onto_as_many_rows_as_it_needs() {
+    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
+    let mut app = App::new(
+        vec![Card::open(ps1.join("Gran Turismo/DuckStation/shared_card_1.mcd")).expect("opens")],
+        picker(),
+    );
+
+    // Wide enough for all sixteen blocks side by side.
+    let drawn = screen(&mut app, 100, 24);
+    let cells = |row: &str| row.matches('█').count() + row.matches('▓').count() + row.matches('·').count();
+    assert_eq!(cells(&map_row(&drawn)), 16, "one line holds them all when there is room");
+
+    // Narrow enough that they cannot be, where they wrap instead of being dropped. The panel's
+    // own title is cut at this width, so the map is found by its first cell rather than by text.
+    let drawn = screen(&mut app, 34, 24);
+    let at = drawn.lines().position(|line| line.contains('█')).expect("the selected save's blocks");
+    let rows: Vec<&str> = drawn.lines().skip(at).take_while(|line| cells(line) > 0).collect();
+    assert!(rows.len() >= 2, "the blocks run over more than one row:\n{drawn}");
+    assert_eq!(
+        rows.iter().map(|row| cells(row)).sum::<usize>(),
+        16,
+        "and every one of them is drawn:\n{drawn}"
+    );
+}

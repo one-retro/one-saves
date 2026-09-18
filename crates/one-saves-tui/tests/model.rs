@@ -95,3 +95,39 @@ fn writing_a_card_back_keeps_what_is_on_it() {
     let got: Vec<String> = again.entries().iter().map(|e| e.title.clone()).collect();
     assert_eq!(got, expected);
 }
+
+const PS2_EMPTY: &str = "PS2/Formatted empty card/PCSX2/Mcd002.ps2";
+
+/// A card with nothing on it carries an image of itself, and gaining a save makes that untrue.
+///
+/// The image is the card's bytes as they were. Keeping it once a save is added would carry a
+/// picture of a card that no longer exists, and rebuilding from it would undo the edit — which is
+/// how writing a copy onto an empty card used to fail, reporting a save it had never lost.
+#[test]
+fn copying_onto_an_empty_card_drops_the_image_it_was_carrying() {
+    let source = Card::open(fixture(PS2)).expect("opens");
+    let mut target = open_copy(PS2_EMPTY, "1cards-onto-empty.ps2");
+    assert_eq!(target.entries().len(), 0, "an empty card lists no saves");
+
+    target.copy_from(&source, 0).expect("copies");
+    assert_eq!(target.entries().len(), 1);
+
+    target.save().expect("writes, rather than claiming it lost a save");
+    let again = Card::open(&target.path).expect("reopens what it wrote");
+    assert_eq!(again.entries().len(), 1, "and the save is on it");
+    assert_eq!(again.entries()[0].title, source.entries()[0].title);
+}
+
+/// The same holds the other way: emptying a card leaves no stale picture behind either.
+#[test]
+fn deleting_the_last_save_leaves_a_card_that_reads_back_empty() {
+    let mut card = open_copy(PS2, "1cards-empty-out.ps2");
+    while !card.entries().is_empty() {
+        card.remove(0).expect("removes");
+    }
+    card.save().expect("writes");
+
+    let again = Card::open(&card.path).expect("reopens");
+    assert_eq!(again.entries().len(), 0);
+    assert_eq!(again.used_blocks(), 0, "and nothing is left occupying it");
+}

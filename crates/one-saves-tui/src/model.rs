@@ -164,9 +164,20 @@ impl Card {
             return Err(Error::Refused("no such save".into()));
         }
         self.bundle.parts.remove(index);
+        self.edited();
+        Ok(())
+    }
+
+    /// Marks the card changed, and drops anything the change made untrue.
+    ///
+    /// A `card-image` part is the card's bytes as they were — what an empty one carries instead of
+    /// saves, and what a producer may keep beside them. The moment a save is added or taken away
+    /// that picture is of a card that no longer exists, so carrying it on would be carrying a
+    /// lie, and rebuilding from it would undo the edit.
+    fn edited(&mut self) {
+        self.bundle.parts.retain(|part| part.kind != PartKind::CardImage);
         self.renumber();
         self.dirty = true;
-        Ok(())
     }
 
     /// Copies a save from another card onto this one.
@@ -189,8 +200,7 @@ impl Card {
         }
 
         self.bundle.parts.push(part.clone());
-        self.renumber();
-        self.dirty = true;
+        self.edited();
         Ok(())
     }
 
@@ -203,8 +213,16 @@ impl Card {
         // the vendored cards in the test suite are for.
         let check = card::read(self.format, &bytes, &CardOptions::default())
             .map_err(|e| Error::Refused(format!("the rebuilt card does not read back: {e}")))?;
-        if check.parts.len() != self.bundle.parts.len() {
-            return Err(Error::Refused("the rebuilt card lost a save".into()));
+        // Saves, not parts: a card may carry an image of itself beside them, and whether the
+        // writer reproduces one is its business rather than evidence that a save went missing.
+        let saves =
+            |bundle: &Bundle| bundle.parts.iter().filter(|part| part.kind == PartKind::Bundle).count();
+        if saves(&check) != saves(&self.bundle) {
+            return Err(Error::Refused(format!(
+                "the rebuilt card holds {} of {} saves",
+                saves(&check),
+                saves(&self.bundle)
+            )));
         }
 
         let temporary = self.path.with_extension("1cards-new");

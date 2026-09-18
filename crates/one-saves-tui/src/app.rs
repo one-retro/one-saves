@@ -475,9 +475,20 @@ impl App {
     }
 
     fn draw_side(&mut self, frame: &mut Frame, area: Rect) {
+        // The map takes the rows its blocks need rather than a fixed few: a PlayStation card has
+        // sixteen and fits on one line, an N64 pak has a hundred and twenty-three and does not.
+        // Capped so it cannot crowd out the save it is describing.
+        let across = usize::from(area.width.saturating_sub(2)).max(1);
+        let blocks = usize::try_from(self.card().blocks()).unwrap_or(usize::MAX);
+        let wanted = u16::try_from(blocks.div_ceil(across)).unwrap_or(u16::MAX).saturating_add(2);
+        let cap = area.height.saturating_sub(MAP_LEAVES).max(3);
+        // A card whose blocks will not fit in the room going is drawn as a bar instead, and a bar
+        // is one line however many blocks it stands for.
+        let map = if wanted <= cap { wanted.max(3) } else { 3 };
+
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(4), Constraint::Min(0)])
+            .constraints([Constraint::Length(map), Constraint::Min(0)])
             .split(area);
         self.draw_map(frame, rows[0]);
         self.draw_detail(frame, rows[1]);
@@ -713,6 +724,9 @@ fn wrap(text: &str, columns: usize) -> Vec<String> {
 /// Blowing it up is a display choice and not a change to the picture. What `x.1sav.icon` carries
 /// is what the card holds, at the size the console stored it; this is only how large it is shown.
 const ICON_PIXELS: u16 = 128;
+
+/// How much room the map leaves for the save it is describing, whatever it would rather take.
+const MAP_LEAVES: u16 = 8;
 
 /// What the block count column takes, which the name gets what is left of.
 const BLOCK_COLUMN: usize = 8;
