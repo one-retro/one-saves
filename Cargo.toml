@@ -50,6 +50,10 @@ sha2 = "0.11"
 md-5 = "0.11"
 crc32fast = "1.4"
 zstd = "0.13"
+# Encoding only, and only for `x.1sav.icon`: a console icon is decoded to pixels here and a
+# consumer should need no decoder of its own. Optional, because a converter that does not carry
+# icons should not compile a deflate implementation to do it.
+png = "0.18"
 clap = { version = "4.5", features = ["derive"] }
 # DAT catalogs, in both the Logiqx XML and ClrMamePro syntaxes. `index` and `verify` stay off:
 # one-saves-convert keeps its own digest index, keyed by `one_saves::HashValue`, and hashing is

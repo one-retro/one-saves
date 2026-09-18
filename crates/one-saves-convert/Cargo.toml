@@ -24,6 +24,7 @@ n64-cpak = { workspace = true, optional = true }
 neogeo-memcard = { workspace = true, optional = true }
 ps1-memcard = { workspace = true, optional = true }
 ps2-memcard = { workspace = true, optional = true }
+png = { workspace = true, optional = true }
 crc32fast = { workspace = true, optional = true }
 md-5 = { workspace = true, optional = true }
 sha1 = { workspace = true, optional = true }
@@ -51,6 +52,10 @@ dat-cmpro = ["dat", "datary/cmpro"]
 # Reading a ROM's header and computing the digests a catalog is keyed on. This is what the four
 # hash crates are for; nothing else in the crate hashes anything.
 rom = ["dep:crc32fast", "dep:md-5", "dep:sha1", "dep:sha2"]
+# Decoding a console's icon to PNG, for `x.1sav.icon`. Off by default: it is the only thing here
+# that pulls a compression library of its own, and a producer that carries no icons pays nothing.
+# A card still reads and writes without it; the key is simply absent.
+icon = ["dep:png"]
 # Forwarded to one-saves, whose `zstd` compiles a C library. Off, a part whose payload carries
 # `encoding: "zstd"` still round-trips; its payload just cannot be inflated.
 zstd = ["one-saves/zstd"]
@@ -66,3 +71,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
+
+# The icon tests hash decoded pixels, so a change of PNG encoder is not a change of picture.
+[dev-dependencies]
+sha2 = { workspace = true }

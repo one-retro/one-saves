@@ -237,12 +237,28 @@ pub(crate) fn save_part(
     game: Option<one_saves::Game>,
     options: &CardOptions,
 ) -> Result<Part> {
+    save_part_with(format, id, payload, game, options, one_saves::Extensions::new())
+}
+
+/// The same, with keys that belong to the save rather than to the card's record of it.
+///
+/// A picture and a name travel with the save when it is sliced out, so they go in the header of
+/// the bundle that *is* the save. A directory's times do not, and ride on the part instead.
+pub(crate) fn save_part_with(
+    format: Format,
+    id: usize,
+    payload: Vec<u8>,
+    game: Option<one_saves::Game>,
+    options: &CardOptions,
+    extensions: one_saves::Extensions,
+) -> Result<Part> {
     let system = format.system().map(slug);
     let inner = Bundle {
         header: one_saves::Header {
             shape: one_saves::Shape::Save,
             system: system.clone(),
             game: game.clone(),
+            extensions,
             ..one_saves::Header::default()
         },
         parts: vec![Part::new(0, payload)],

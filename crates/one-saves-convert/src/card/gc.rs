@@ -12,7 +12,7 @@ use one_saves::{Bundle, Game};
 
 use crate::CardOptions;
 use crate::card::{
-    card_header, card_image_part, dirent_key, image_only, modified_only, nested_saves, save_part,
+    card_header, card_image_part, dirent_key, image_only, modified_only, nested_saves, save_part_with,
 };
 use crate::detect::Format;
 use crate::error::{Error, Result};
@@ -36,6 +36,101 @@ pub const SYSTEM: &str = match Format::GcCard.system() {
 #[must_use]
 pub fn detect(bytes: &[u8]) -> bool {
     gc_memcard::detect(bytes)
+}
+
+/// Where the entry points at the pictures, and what shape it says they are.
+///
+/// `image_offset` is where the banner and the icon frames sit inside the save's own payload;
+/// `banner_flags` and `icon_format` say which of the two pixel formats each is in, two bits per
+/// picture; `anim_speed` says how long each frame shows, again two bits each.
+#[cfg(feature = "icon")]
+mod image {
+    /// The entry's `banner_flags`, whose low two bits are the banner's format.
+    pub(super) const BANNER_FLAGS: usize = 0x07;
+    /// Where the pictures start, as an offset into the save's payload.
+    pub(super) const IMAGE_OFFSET: usize = 0x2c;
+    /// Two bits per icon frame.
+    pub(super) const ICON_FORMAT: usize = 0x30;
+    /// Two bits per icon frame, in twelfths of a second.
+    pub(super) const ANIM_SPEED: usize = 0x32;
+
+    /// A banner is 96x32 and an icon frame 32x32, both fixed by the console.
+    pub(super) const BANNER: (usize, usize) = (96, 32);
+    pub(super) const ICON: (usize, usize) = (32, 32);
+
+    /// Two bits saying how a picture is stored: a palette index, a colour, or nothing at all,
+    /// which is every other value and so needs no name.
+    pub(super) const CI8: u16 = 1;
+    pub(super) const RGB5A3: u16 = 2;
+    /// The number of entries in the palette a CI8 picture indexes into.
+    pub(super) const PALETTE: usize = 256;
+}
+
+/// Decodes the pictures a GameCube save carries, as `x.1sav.icon` wants them.
+///
+/// The frames come out at 32x32 and the banner at 96x32, in the console's own order and colours.
+/// A CI8 picture indexes a 256-entry RGB5A3 palette that follows the last frame using it; an
+/// RGB5A3 picture carries its colours inline. Both are tiled, and the geometry follows the pixel
+/// size: 4x4 for two bytes a pixel, 8x4 for one.
+#[cfg(feature = "icon")]
+fn pictures(dirent: &[u8], data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
+    use crate::icon::{Frame, Rgba, be16, rgb5a3, value};
+    use image as gc;
+
+    let at = usize::try_from(u32::from_be_bytes(
+        dirent.get(gc::IMAGE_OFFSET..gc::IMAGE_OFFSET + 4)?.try_into().ok()?,
+    ))
+    .ok()?;
+    let formats = u16::from_be_bytes(dirent.get(gc::ICON_FORMAT..gc::ICON_FORMAT + 2)?.try_into().ok()?);
+    let speeds = u16::from_be_bytes(dirent.get(gc::ANIM_SPEED..gc::ANIM_SPEED + 2)?.try_into().ok()?);
+
+    // The banner comes first where there is one, and the frames follow it.
+    let mut cursor = at;
+    let banner = match u16::from(*dirent.get(gc::BANNER_FLAGS)?) & 3 {
+        gc::RGB5A3 => {
+            let (w, h) = gc::BANNER;
+            let bytes = data.get(cursor..cursor + w * h * 2)?;
+            cursor += w * h * 2;
+            Rgba::from_tiles(w, h, (4, 4), |i| rgb5a3(be16(bytes, i))).to_png()
+        }
+        gc::CI8 => {
+            let (w, h) = gc::BANNER;
+            let bytes = data.get(cursor..cursor + w * h)?.to_vec();
+            cursor += w * h;
+            let palette = data.get(cursor..cursor + gc::PALETTE * 2)?;
+            cursor += gc::PALETTE * 2;
+            Rgba::from_tiles(w, h, (8, 4), |i| rgb5a3(be16(palette, usize::from(bytes[i])))).to_png()
+        }
+        _ => None,
+    };
+
+    // Each frame reads its own two bits. A frame set to nothing ends the animation.
+    let (w, h) = gc::ICON;
+    let mut frames = Vec::new();
+    for slot in 0..8 {
+        // Twelfths of a second, which is the unit the console counts an icon's hold in.
+        let hold = u64::from((speeds >> (2 * slot)) & 3) * 1000 / 12;
+        match (formats >> (2 * slot)) & 3 {
+            gc::RGB5A3 => {
+                let bytes = data.get(cursor..cursor + w * h * 2)?;
+                cursor += w * h * 2;
+                let png = Rgba::from_tiles(w, h, (4, 4), |i| rgb5a3(be16(bytes, i))).to_png()?;
+                frames.push(Frame { png, hold_ms: (hold > 0).then_some(hold) });
+            }
+            gc::CI8 => {
+                let bytes = data.get(cursor..cursor + w * h)?.to_vec();
+                cursor += w * h;
+                // The palette follows the run of frames that share it, so it is read from where
+                // the last of them ended rather than from after this one.
+                let palette = data.get(cursor..cursor + gc::PALETTE * 2)?;
+                let png = Rgba::from_tiles(w, h, (8, 4), |i| rgb5a3(be16(palette, usize::from(bytes[i]))))
+                    .to_png()?;
+                frames.push(Frame { png, hold_ms: (hold > 0).then_some(hold) });
+            }
+            _ => break,
+        }
+    }
+    value(frames, banner)
 }
 
 /// Where a GameCube directory entry keeps the time the console last wrote the save.
@@ -75,7 +170,15 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             ..Game::default()
         });
 
-        let mut part = save_part(Format::GcCard, parts.len(), save.data.clone(), game, options)?;
+        // The picture travels with the save, so it goes in the header of the bundle that *is* the
+        // save rather than on the card's part naming it.
+        #[allow(unused_mut)]
+        let mut inner = one_saves::Extensions::new();
+        #[cfg(feature = "icon")]
+        if let Some(icon) = pictures(&save.dirent, &save.data) {
+            inner.insert(crate::icon::icon_key(), icon);
+        }
+        let mut part = save_part_with(Format::GcCard, parts.len(), save.data.clone(), game, options, inner)?;
         part.path = Some(save.filename.clone());
         part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
         part.dirent = Some(save.dirent.clone());

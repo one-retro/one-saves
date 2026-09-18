@@ -66,6 +66,8 @@ pub mod card;
 pub mod dat;
 pub mod detect;
 pub mod error;
+#[cfg(feature = "icon")]
+mod icon;
 pub mod profile;
 pub mod raw;
 #[cfg(feature = "rom")]
