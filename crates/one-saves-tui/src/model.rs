@@ -189,7 +189,7 @@ impl Card {
 
         if self.format.system() != source.format.system() {
             return Err(Error::Refused(format!(
-                "a {} save does not go on a {} card",
+                "a {} save does not go on a {}",
                 source.format.label(),
                 self.format.label()
             )));
