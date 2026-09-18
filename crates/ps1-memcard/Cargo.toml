@@ -10,6 +10,9 @@ authors.workspace = true
 categories = ["encoding", "filesystem", "parser-implementations"]
 keywords = ["playstation", "psx", "memcard", "emulation", "savegame"]
 readme = "README.md"
+# The integration tests read cards and saves from the workspace's `data/saves`, which is not part of
+# this crate. They stay behind rather than shipping a copy of a card per fixture.
+exclude = ["tests"]
 
 [dependencies]
 

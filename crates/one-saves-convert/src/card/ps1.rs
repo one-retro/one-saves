@@ -46,19 +46,27 @@ pub fn detect(bytes: &[u8]) -> bool {
 mod header {
     /// What a save block starts with, so a block that is not one is not read as one.
     pub(super) const MAGIC: &[u8] = b"SC";
-    /// How many icon frames the save carries, in the low nibble.
-    pub(super) const FRAMES: usize = 0x02;
     /// The title, in Shift-JIS, padded to its full width.
     pub(super) const TITLE: usize = 0x04;
     pub(super) const TITLE_LEN: usize = 64;
-    /// Sixteen colours, each a little-endian BGR555.
-    pub(super) const CLUT: usize = 0x60;
-    /// Where the frames start, each 16x16 at four bits a pixel.
-    pub(super) const ICON: usize = 0x80;
-    pub(super) const FRAME_LEN: usize = 128;
-    pub(super) const SIDE: usize = 16;
-    /// The most a save may carry, which is what the frame count is masked against.
-    pub(super) const MAX_FRAMES: u8 = 3;
+
+    // The rest of the block describes the icon, so without `icon` nothing reads it.
+    #[cfg(feature = "icon")]
+    pub(super) use icon::*;
+
+    #[cfg(feature = "icon")]
+    mod icon {
+        /// How many icon frames the save carries, in the low nibble.
+        pub(crate) const FRAMES: usize = 0x02;
+        /// Sixteen colours, each a little-endian BGR555.
+        pub(crate) const CLUT: usize = 0x60;
+        /// Where the frames start, each 16x16 at four bits a pixel.
+        pub(crate) const ICON: usize = 0x80;
+        pub(crate) const FRAME_LEN: usize = 128;
+        pub(crate) const SIDE: usize = 16;
+        /// The most a save may carry, which is what the frame count is masked against.
+        pub(crate) const MAX_FRAMES: u8 = 3;
+    }
 }
 
 /// The title the console lists a save under.

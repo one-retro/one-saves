@@ -57,6 +57,11 @@ test-features:
     cargo clippy -p one-saves-convert --all-targets --no-default-features --features gc
     cargo clippy -p one-saves-convert --all-targets --no-default-features --features vmu
     cargo test -p one-saves-convert --no-default-features --features neogeo
+    # The default build, which `lint` does not reach: it runs --all-features, and what a user gets
+    # by installing this is neither that nor --no-default-features. `icon` is the one off by
+    # default that other code reads around, so this is the arm where an unread constant shows up.
+    cargo clippy -p one-saves-convert --all-targets
+    cargo clippy -p one-saves-cli --all-targets
     # The CLI has no tests; what these check is that the flag-free and card-free arms compile clean.
     cargo clippy -p one-saves-cli --all-targets --no-default-features
     cargo clippy -p one-saves-cli --all-targets --no-default-features --features rom
