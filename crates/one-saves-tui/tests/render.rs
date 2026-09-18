@@ -6,6 +6,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui_image::picker::Picker;
 
+use crossterm::event::KeyCode;
 use one_saves_tui::app::{App, Mode, Pending};
 use one_saves_tui::model::Card;
 
@@ -118,7 +119,9 @@ fn a_copy_only_asks_when_a_save_of_that_name_is_already_there() {
     assert!(app.status.as_ref().is_some_and(|said| said.contains("copied")));
     assert!(app.cards[1].dirty());
 
-    // The same one again would be a second save under one name, which is worth asking about.
+    // Back to where the save came from, and send the same one again: that would be a second save
+    // under one name on the far card, which is worth asking about.
+    app.switch();
     app.copy();
     match &app.mode {
         Mode::Confirming(confirm) => {
@@ -374,4 +377,97 @@ fn y_and_n_point_at_a_button_without_committing() {
     app.dismiss();
     assert!(matches!(app.mode, Mode::Browsing));
     assert_eq!(app.cards[0].entries().len(), before);
+}
+
+/// Two cards, opened on copies so a test that writes never touches what is vendored.
+fn two_cards(tag: &str) -> App {
+    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
+    let mut cards = Vec::new();
+    for (name, from) in [
+        ("a", "Gran Turismo/DuckStation/shared_card_1.mcd"),
+        ("b", "Castlevania Symphony of the Night/DuckStation/shared_card_2.mcd"),
+    ] {
+        let to = std::env::temp_dir().join(format!("1cards-{tag}-{name}.mcd"));
+        std::fs::copy(ps1.join(from), &to).expect("copies the fixture");
+        cards.push(Card::open(&to).expect("opens"));
+    }
+    App::new(cards, picker())
+}
+
+/// A copy lands on the other card, so that is the card the keys then act on.
+///
+/// Leaving the focus behind is how `w` ends up writing the card that did not change and reporting
+/// that there was nothing to write — which is what this is here to stop happening again.
+#[test]
+fn a_copy_takes_the_focus_with_it_so_the_next_write_is_the_right_card() {
+    let mut app = two_cards("focus");
+    assert_eq!(app.focus, 0);
+
+    app.on_key(KeyCode::Char('c'));
+    assert_eq!(app.focus, 1, "the focus follows the save to where it landed");
+    assert!(app.cards[1].dirty(), "and that is the card with something to write");
+
+    app.on_key(KeyCode::Char('w'));
+    assert!(matches!(app.mode, Mode::Confirming(_)), "so w asks about writing it");
+    app.on_key(KeyCode::Enter);
+    assert_eq!(app.status.as_deref(), Some("written"));
+    assert!(!app.cards[1].dirty());
+}
+
+/// Asking to write a card with nothing to write says where the changes actually are.
+#[test]
+fn writing_the_wrong_card_says_which_one_has_the_changes() {
+    let mut app = two_cards("elsewhere");
+    app.on_key(KeyCode::Char('c'));
+    // Back to the card that did not change.
+    app.on_key(KeyCode::Tab);
+    app.on_key(KeyCode::Char('w'));
+
+    let said = app.status.as_deref().expect("it says something");
+    assert!(said.contains("nothing to write here"), "{said}");
+    assert!(said.contains(".mcd"), "and names the card that does have changes: {said}");
+    assert!(matches!(app.mode, Mode::Browsing), "without asking about anything");
+}
+
+/// Quitting with work in hand opens on No, unlike every other question.
+#[test]
+fn the_quit_question_opens_on_no() {
+    let mut app = two_cards("quit");
+    app.on_key(KeyCode::Char('c'));
+
+    app.on_key(KeyCode::Char('q'));
+    match &app.mode {
+        Mode::Confirming(confirm) => {
+            assert_eq!(confirm.pending, Pending::Quit);
+            assert!(!confirm.yes, "the safe answer is the one under the cursor here");
+        }
+        Mode::Browsing => panic!("it should have asked"),
+    }
+    // So Enter without looking keeps the work rather than dropping it.
+    app.on_key(KeyCode::Enter);
+    assert!(!app.done, "answering without moving does not quit");
+    assert!(app.cards[1].dirty(), "and the work is still there");
+
+    // Escape is the No button too.
+    app.on_key(KeyCode::Char('q'));
+    app.on_key(KeyCode::Esc);
+    assert!(!app.done);
+    assert!(matches!(app.mode, Mode::Browsing), "and the question is put away");
+}
+
+/// Every other question opens on Yes, since the thing asked about is the thing just asked for.
+#[test]
+fn the_other_questions_open_on_yes() {
+    let mut app = two_cards("yes");
+    for key in ['d', 'w'] {
+        if key == 'w' {
+            app.cards[app.focus].remove(0).expect("something to write");
+        }
+        app.on_key(KeyCode::Char(key));
+        match &app.mode {
+            Mode::Confirming(confirm) => assert!(confirm.yes, "{key} opens on Yes"),
+            Mode::Browsing => panic!("{key} should have asked"),
+        }
+        app.on_key(KeyCode::Esc);
+    }
 }

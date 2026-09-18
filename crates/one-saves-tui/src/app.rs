@@ -6,6 +6,7 @@
 
 use std::time::{Duration, Instant};
 
+use crossterm::event::KeyCode;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -42,6 +43,14 @@ impl Confirm {
     /// A question, waiting on its answer with Yes under the cursor.
     fn new(question: String, warning: Option<String>, pending: Pending) -> Self {
         Self { question, warning, pending, yes: true }
+    }
+
+    /// The same, opening on No.
+    ///
+    /// For the one question whose default answer is not its safe one: everywhere else the thing
+    /// being asked about is the thing just asked for, and losing unwritten work is not that.
+    fn cautious(question: String, warning: Option<String>, pending: Pending) -> Self {
+        Self { yes: false, ..Self::new(question, warning, pending) }
     }
 }
 
@@ -204,7 +213,18 @@ impl App {
     /// Asks before writing, since writing is what makes an edit real.
     pub fn ask_write(&mut self) {
         if !self.card().dirty() {
-            self.status = Some("nothing to write".into());
+            let elsewhere: Vec<String> = self
+                .cards
+                .iter()
+                .enumerate()
+                .filter(|(at, card)| *at != self.focus && card.dirty())
+                .map(|(_, card)| card.path.file_name().unwrap_or_default().to_string_lossy().into_owned())
+                .collect();
+            self.status = Some(if elsewhere.is_empty() {
+                "nothing to write".into()
+            } else {
+                format!("nothing to write here — {} has the changes", elsewhere.join(", "))
+            });
             return;
         }
         self.mode = Mode::Confirming(Confirm::new(
@@ -226,7 +246,7 @@ impl App {
             .filter(|card| card.dirty())
             .map(|card| card.path.file_name().unwrap_or_default().to_string_lossy().into_owned())
             .collect();
-        self.mode = Mode::Confirming(Confirm::new(
+        self.mode = Mode::Confirming(Confirm::cautious(
             "Quit without writing?".into(),
             Some(format!("{} has changes that will be lost.", cards.join(", "))),
             Pending::Quit,
@@ -266,10 +286,56 @@ impl App {
         let (left, right) = self.cards.split_at_mut(from.max(to));
         let (source, target) =
             if from < to { (&left[from], &mut right[0]) } else { (&right[0], &mut left[to]) };
-        self.status = Some(match target.copy_from(source, index) {
-            Ok(()) => "copied; press w to write".into(),
-            Err(error) => error.to_string(),
-        });
+        match target.copy_from(source, index) {
+            Ok(()) => {
+                // Follow the save to where it landed. Leaving the focus behind is how `w` ends up
+                // writing the card that did not change, and reporting that there was nothing to.
+                self.focus = to;
+                self.rewind();
+                self.step(0);
+                self.status = Some("copied; press w to write it".into());
+            }
+            Err(error) => self.status = Some(error.to_string()),
+        }
+    }
+
+    /// What a key does, which is all of it, so the loop around this is only a pump.
+    ///
+    /// Keeping it here rather than in the event loop is what lets a test press keys: the bug that
+    /// prompted the move was one no test could reach, because the only thing that knew what Enter
+    /// meant was a `match` inside a function that needed a terminal.
+    pub fn on_key(&mut self, key: KeyCode) {
+        // A question is answered by pressing a button, and nothing else reaches past it.
+        if matches!(self.mode, Mode::Confirming(_)) {
+            match key {
+                KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => self.toggle(),
+                // The letters move the cursor rather than answering outright, so the key that
+                // commits is the same one however you got to the button.
+                KeyCode::Char('y' | 'Y') => self.point_at(true),
+                KeyCode::Char('n' | 'N') => self.point_at(false),
+                KeyCode::Enter | KeyCode::Char(' ') => self.answer(),
+                // Escape is the No button, not a third answer.
+                KeyCode::Esc => self.dismiss(),
+                _ => {}
+            }
+            return;
+        }
+
+        // What was said last stops being news the moment anything else happens, but it never
+        // swallows the key that happened: a report is something to read, not something to dismiss.
+        self.status = None;
+        match key {
+            KeyCode::Char('q' | 'Q') | KeyCode::Esc => self.ask_quit(),
+            KeyCode::Up | KeyCode::Char('k') => self.step(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.step(1),
+            // Both directions do the same thing with two cards, and a person reaching for
+            // shift-tab is asking for the other one either way.
+            KeyCode::Tab | KeyCode::BackTab => self.switch(),
+            KeyCode::Char('c') => self.copy(),
+            KeyCode::Char('d') => self.ask_delete(),
+            KeyCode::Char('w') => self.ask_write(),
+            _ => {}
+        }
     }
 
     /// Moves between the buttons.

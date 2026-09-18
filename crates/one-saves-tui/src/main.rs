@@ -7,14 +7,14 @@
 use std::io::stdout;
 use std::process::ExitCode;
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui_image::picker::Picker;
 
-use one_saves_tui::app::{App, Mode};
+use one_saves_tui::app::App;
 use one_saves_tui::model::Card;
 
 const USAGE: &str = "\
@@ -91,36 +91,7 @@ fn loop_over<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: 
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        // A question is answered by pressing a button, and nothing else reaches past it. The
-        // letters move the cursor rather than answering outright, so the thing that commits is
-        // always the same key, whichever way you got to the button.
-        if matches!(app.mode, Mode::Confirming(_)) {
-            match key.code {
-                KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => app.toggle(),
-                KeyCode::Char('y' | 'Y') => app.point_at(true),
-                KeyCode::Char('n' | 'N') => app.point_at(false),
-                KeyCode::Enter | KeyCode::Char(' ') => app.answer(),
-                KeyCode::Esc => app.dismiss(),
-                _ => {}
-            }
-            continue;
-        }
-
-        // What was said last stops being news the moment anything else happens, but it never
-        // swallows the key that happened: a report is something to read, not something to dismiss.
-        app.status = None;
-        match key.code {
-            KeyCode::Char('q' | 'Q') | KeyCode::Esc => app.ask_quit(),
-            KeyCode::Up | KeyCode::Char('k') => app.step(-1),
-            KeyCode::Down | KeyCode::Char('j') => app.step(1),
-            // Both directions do the same thing with two cards, and a person reaching for
-            // shift-tab is asking for the other one either way.
-            KeyCode::Tab | KeyCode::BackTab => app.switch(),
-            KeyCode::Char('c') => app.copy(),
-            KeyCode::Char('d') => app.ask_delete(),
-            KeyCode::Char('w') => app.ask_write(),
-            _ => {}
-        }
+        app.on_key(key.code);
     }
     Ok(())
 }
