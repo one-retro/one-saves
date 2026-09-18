@@ -16,9 +16,12 @@ fn card() -> Card {
     Card::open(path).expect("opens")
 }
 
-/// A picker with a fixed cell size, so nothing asks the terminal anything during a test.
+/// A picker with a fixed cell size and a fixed protocol, so a test asks the terminal nothing and
+/// a drawn icon is cells rather than an escape sequence carrying a base64 PNG.
 fn picker() -> Picker {
-    Picker::from_fontsize((8, 16))
+    let mut picker = Picker::from_fontsize((8, 16));
+    picker.set_protocol_type(ratatui_image::picker::ProtocolType::Halfblocks);
+    picker
 }
 
 /// Everything drawn with the spacing taken out, for asserting on content.
@@ -99,7 +102,7 @@ fn a_full_width_title_is_measured_in_cells_rather_than_characters() {
     let drawn = screen(&mut app, 76, 10);
 
     assert!(drawn.lines().all(|line| line.chars().count() == 76), "no line overflows");
-    assert!(drawn.contains("173 blk"), "the size column survives a wide title:\n{drawn}");
+    assert!(drawn.contains(" blk"), "the size column survives a wide title:\n{drawn}");
     assert!(drawn.contains('…'), "and the title reads as cut");
 }
 

@@ -16,9 +16,10 @@ use one_saves::{Bundle, Game};
 use ps1_memcard::{CardBuilder, MemoryCard, Save};
 
 use crate::CardOptions;
-use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part};
+use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with};
 use crate::detect::Format;
 use crate::error::{Error, Result};
+use crate::label::{label_key, shift_jis_field, value as label};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::Ps1Card.label();
@@ -41,6 +42,77 @@ pub fn detect(bytes: &[u8]) -> bool {
     ps1_memcard::detect(bytes)
 }
 
+/// Where a PS1 save keeps what the console shows for it, all of it in the save's first block.
+mod header {
+    /// What a save block starts with, so a block that is not one is not read as one.
+    pub(super) const MAGIC: &[u8] = b"SC";
+    /// How many icon frames the save carries, in the low nibble.
+    pub(super) const FRAMES: usize = 0x02;
+    /// The title, in Shift-JIS, padded to its full width.
+    pub(super) const TITLE: usize = 0x04;
+    pub(super) const TITLE_LEN: usize = 64;
+    /// Sixteen colours, each a little-endian BGR555.
+    pub(super) const CLUT: usize = 0x60;
+    /// Where the frames start, each 16x16 at four bits a pixel.
+    pub(super) const ICON: usize = 0x80;
+    pub(super) const FRAME_LEN: usize = 128;
+    pub(super) const SIDE: usize = 16;
+    /// The most a save may carry, which is what the frame count is masked against.
+    pub(super) const MAX_FRAMES: u8 = 3;
+}
+
+/// The title the console lists a save under.
+fn title_of(data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
+    if !data.starts_with(header::MAGIC) {
+        return None;
+    }
+    label(shift_jis_field(data.get(header::TITLE..header::TITLE + header::TITLE_LEN)?), None)
+}
+
+/// The icon a PS1 save carries: up to three frames of 16x16, against sixteen colours.
+///
+/// Four bits a pixel, and the **high** nibble is the left one of each pair. That is not what a
+/// reader of the PS1's texture formats would assume, and reading it the other way round gives a
+/// picture that still looks like something: every pair of pixels is swapped, which combs each
+/// solid shape into stripes a pixel wide. The order here is the one that draws the Gran Turismo
+/// card under `data/saves` as solid shapes rather than as a comb.
+#[cfg(feature = "icon")]
+fn pictures(data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
+    use crate::icon::{Frame, Rgba, value};
+
+    if !data.starts_with(header::MAGIC) {
+        return None;
+    }
+    let count = (data.get(header::FRAMES)? & 0x0f).min(header::MAX_FRAMES);
+    let clut = data.get(header::CLUT..header::CLUT + 32)?;
+
+    let mut frames = Vec::new();
+    for index in 0..usize::from(count) {
+        let at = header::ICON + index * header::FRAME_LEN;
+        let bytes = data.get(at..at + header::FRAME_LEN)?;
+        let side = header::SIDE;
+        // Not tiled: a PS1 icon is scanlines, so the tile is the whole row.
+        let rgba = Rgba::from_tiles(side, side, (side, 1), |pixel| {
+            let byte = bytes[pixel / 2];
+            let entry = if pixel % 2 == 0 { byte >> 4 } else { byte & 0x0f };
+            bgr555(u16::from_le_bytes([clut[usize::from(entry) * 2], clut[usize::from(entry) * 2 + 1]]))
+        });
+        // A PS1 icon holds no timing of its own; the console runs the frames at its own rate.
+        frames.push(Frame { png: rgba.to_png()?, hold_ms: None });
+    }
+    value(frames, None)
+}
+
+/// One BGR555 colour, in which an all-zero entry is transparent rather than black.
+#[cfg(feature = "icon")]
+fn bgr555(value: u16) -> [u8; 4] {
+    if value == 0 {
+        return [0, 0, 0, 0];
+    }
+    let scale = |channel: u16| u8::try_from(u32::from(channel) * 255 / 31).expect("a byte");
+    [scale(value & 31), scale((value >> 5) & 31), scale((value >> 10) & 31), 255]
+}
+
 /// Reads a card into a bundle: one nested bundle per save.
 pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     let card = MemoryCard::parse(bytes).map_err(into_error)?;
@@ -50,7 +122,16 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         let game = ps1_memcard::serial_from_filename(&save.name)
             .map(|serial| Game { serial: Some(serial.to_owned()), ..Game::default() });
 
-        let mut part = save_part(Format::Ps1Card, parts.len(), save.data.clone(), game, options)?;
+        // The title and the picture are both in the save's first block, so both travel with it.
+        let mut inner = one_saves::Extensions::new();
+        if let Some(title) = title_of(&save.data) {
+            inner.insert(label_key(), title);
+        }
+        #[cfg(feature = "icon")]
+        if let Some(icon) = pictures(&save.data) {
+            inner.insert(crate::icon::icon_key(), icon);
+        }
+        let mut part = save_part_with(Format::Ps1Card, parts.len(), save.data.clone(), game, options, inner)?;
         part.path = Some(save.name.clone());
         part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
         part.dirent = Some(save.dirent.clone());

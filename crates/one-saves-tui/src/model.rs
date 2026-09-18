@@ -140,7 +140,7 @@ impl Card {
                         .or_else(|| part.path.clone())
                         .unwrap_or_else(|| format!("save {index}")),
                     detail: label.and_then(|(_, detail)| detail),
-                    blocks: part.payload.len().div_ceil(block),
+                    blocks: inner.as_ref().map_or(0, |save| blocks_of(save, block)),
                     icon: inner.as_ref().map(read_icon).unwrap_or_default(),
                 }
             })
@@ -209,6 +209,20 @@ impl Card {
             part.id = index as u64;
         }
     }
+}
+
+/// How many of a card's blocks a save occupies.
+///
+/// Counted over what the save actually holds rather than over the part carrying it: a `bundle`
+/// part's payload is the save *encoded*, header and all, which rounds up to one block more than
+/// the save takes. A card allocates each of a save's files its own whole block, so the count is
+/// per file rather than over their total.
+///
+/// A PS2 save also spends a block on the directory naming it, which this does not add: it is the
+/// card's overhead rather than the save's, and a consumer comparing a save against the space it
+/// would need somewhere else wants what the save is, not what a particular card spends on it.
+fn blocks_of(save: &Bundle, block: u64) -> u64 {
+    save.parts.iter().map(|part| part.payload.len().div_ceil(block)).sum()
 }
 
 /// The title and detail a save calls itself, from `x.1sav.label`.
