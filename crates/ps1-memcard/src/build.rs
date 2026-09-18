@@ -72,8 +72,16 @@ impl CardBuilder {
                     _ => state::MIDDLE,
                 };
                 dirent[..4].copy_from_slice(&state.to_le_bytes());
-                // The size field counts every block the save occupies, on every entry of the chain.
-                let size = u32::try_from(blocks * BLOCK).expect("a card's worth of bytes fits");
+                // The size belongs to the save's first entry and to no other. A console writes
+                // zero on every continuation entry, and a card that carries the length there
+                // instead is one the BIOS reads a directory out of and then stops trusting: the
+                // saves after it stop being listed, while a reader that takes the size off the
+                // first entry — as this crate does — sees nothing wrong at all.
+                let size = if index == 0 {
+                    u32::try_from(blocks * BLOCK).expect("a card's worth of bytes fits")
+                } else {
+                    0
+                };
                 dirent[4..8].copy_from_slice(&size.to_le_bytes());
                 let link = if index + 1 == blocks {
                     NO_NEXT

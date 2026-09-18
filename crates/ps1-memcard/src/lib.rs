@@ -291,6 +291,12 @@ mod tests {
     /// Hand-rolled rather than built with [`CardBuilder`] on purpose: the point of the round-trip
     /// test is that what this crate writes matches what a console wrote, so the fixture has to
     /// come from somewhere other than the writer under test.
+    ///
+    /// That is necessary and was not sufficient. This fixture and the writer both used to put the
+    /// save's length on every entry of a chain rather than on its first, so the byte-for-byte test
+    /// compared two expressions of one misunderstanding and passed. Code written twice is not
+    /// evidence; a card out of a console is, which is what `tests/real_cards.rs` now checks
+    /// against.
     pub(crate) fn card_with(saves: &[(&str, usize)]) -> Vec<u8> {
         let mut card = vec![0u8; CAPACITY];
         card[..2].copy_from_slice(MAGIC);
@@ -327,9 +333,10 @@ mod tests {
                     _ => state::MIDDLE,
                 };
                 frame[..4].copy_from_slice(&state.to_le_bytes());
-                frame[4..8].copy_from_slice(
-                    &u32::try_from(blocks * BLOCK).expect("a card's worth fits").to_le_bytes(),
-                );
+                // The size is the first entry's and no other's, as a console writes it.
+                let size =
+                    if index == 0 { u32::try_from(blocks * BLOCK).expect("a card's worth fits") } else { 0 };
+                frame[4..8].copy_from_slice(&size.to_le_bytes());
                 let link =
                     if index + 1 == *blocks { NO_NEXT } else { u16::try_from(current).expect("block fits") };
                 frame[8..10].copy_from_slice(&link.to_le_bytes());
