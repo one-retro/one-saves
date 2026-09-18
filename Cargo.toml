@@ -5,6 +5,7 @@ members = [
     "crates/one-saves-registry",
     "crates/one-saves-convert",
     "crates/one-saves-cli",
+    "crates/one-saves-tui",
     "crates/dreamcast-vmu",
     "crates/gc-memcard",
     "crates/n64-cpak",

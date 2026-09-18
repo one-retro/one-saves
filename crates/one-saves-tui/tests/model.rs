@@ -1,0 +1,97 @@
+//! The rules the interface obeys, checked without an interface.
+
+use std::path::PathBuf;
+
+use one_saves_tui::model::Card;
+
+fn fixture(rest: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(rest)
+}
+
+/// Opens a copy, so a test that edits never touches what is vendored.
+fn open_copy(rest: &str, name: &str) -> Card {
+    let to = std::env::temp_dir().join(name);
+    std::fs::copy(fixture(rest), &to).expect("copies the fixture");
+    Card::open(&to).expect("opens")
+}
+
+const PS2: &str = "PS2/Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2";
+
+#[test]
+fn a_card_lists_what_is_on_it_with_its_block_usage() {
+    let card = Card::open(fixture(PS2)).expect("opens");
+    assert_eq!(card.capacity(), 8_388_608);
+    // PS2 allocates in clusters of two 512-byte pages, which the registry knows.
+    assert_eq!(card.block_size(), 1024);
+    assert_eq!(card.blocks(), 8192);
+
+    let entries = card.entries();
+    assert_eq!(entries.len(), 3);
+    assert!(entries.iter().all(|e| e.blocks > 0), "every save occupies something");
+    assert_eq!(card.used_blocks(), entries.iter().map(|e| e.blocks).sum::<u64>());
+    assert!(card.free_blocks() < card.blocks(), "a card with saves on it is not empty");
+    assert!(!card.dirty(), "opening a card does not edit it");
+}
+
+#[test]
+fn deleting_a_save_frees_its_blocks() {
+    let mut card = open_copy(PS2, "1cards-delete.ps2");
+    let before = card.entries();
+    let freed = before[0].blocks;
+    let used = card.used_blocks();
+
+    card.remove(0).expect("removes");
+    assert!(card.dirty());
+    assert_eq!(card.entries().len(), before.len() - 1);
+    assert_eq!(card.used_blocks(), used - freed);
+    // The rest keep their order and are renumbered to close the gap.
+    assert_eq!(card.entries()[0].title, before[1].title);
+    assert_eq!(card.entries()[0].index, 0);
+}
+
+#[test]
+fn a_save_only_goes_on_a_card_its_system_can_read() {
+    let gc = fixture("GameCube");
+    assert!(gc.exists(), "the GameCube fixtures are .gci, not cards, so this stays a PS2 test");
+
+    let source = Card::open(fixture(PS2)).expect("opens");
+    let mut target = open_copy(PS2, "1cards-copy.ps2");
+    let before = target.entries().len();
+
+    target.copy_from(&source, 0).expect("a PS2 save goes on a PS2 card");
+    assert_eq!(target.entries().len(), before + 1);
+    assert!(target.dirty());
+}
+
+#[test]
+fn a_save_that_will_not_fit_is_refused_rather_than_truncated() {
+    let source = Card::open(fixture(PS2)).expect("opens");
+    let mut target = open_copy(PS2, "1cards-full.ps2");
+
+    // Fill the card, then ask for one more. The refusal says what was needed and what was left,
+    // because a status line that only says "no" cannot be acted on.
+    let mut refused = None;
+    for _ in 0..9000 {
+        if let Err(e) = target.copy_from(&source, 0) {
+            refused = Some(e.to_string());
+            break;
+        }
+    }
+    let refused = refused.expect("a card fills up");
+    assert!(refused.contains("blocks"), "the refusal names blocks: {refused}");
+    assert!(target.free_blocks() < target.entries()[0].blocks, "and it really was full");
+}
+
+#[test]
+fn writing_a_card_back_keeps_what_is_on_it() {
+    let mut card = open_copy(PS2, "1cards-write.ps2");
+    card.remove(0).expect("removes");
+    let expected: Vec<String> = card.entries().iter().map(|e| e.title.clone()).collect();
+
+    card.save().expect("writes back");
+    assert!(!card.dirty(), "a written card is no longer edited");
+
+    let again = Card::open(&card.path).expect("reopens what it wrote");
+    let got: Vec<String> = again.entries().iter().map(|e| e.title.clone()).collect();
+    assert_eq!(got, expected);
+}

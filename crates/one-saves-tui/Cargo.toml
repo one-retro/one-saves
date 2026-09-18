@@ -1,0 +1,31 @@
+[package]
+name = "one-saves-tui"
+description = "A terminal explorer and editor for memory cards in the Universal Saves Format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+publish = false
+
+[[bin]]
+name = "1cards"
+path = "src/main.rs"
+
+[dependencies]
+one-saves.workspace = true
+one-saves-registry.workspace = true
+# `icon` is the point of the thing: a save's picture arrives already decoded to PNG, so nothing
+# here needs to know what RGB5A3 is.
+one-saves-convert = { workspace = true, features = ["cards", "icon"] }
+ratatui = "0.29"
+crossterm = "0.28"
+ratatui-image = "8"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[lints]
+workspace = true
