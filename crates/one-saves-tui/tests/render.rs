@@ -531,3 +531,27 @@ fn the_block_map_wraps_onto_as_many_rows_as_it_needs() {
         "and every one of them is drawn:\n{drawn}"
     );
 }
+
+/// A card too big to draw one cell per block still shows which save is selected.
+///
+/// A PS2 card has eight thousand blocks. Drawn as a bar it says how full the card is and nothing
+/// about what is on it, so moving the selection changed nothing on screen.
+#[test]
+fn a_large_card_scales_its_map_rather_than_giving_up_on_it() {
+    let mut app = App::new(vec![card()], picker());
+
+    let first = screen(&mut app, 84, 24);
+    assert!(first.contains("a cell"), "the map says what a cell stands for:\n{first}");
+    let selected = |drawn: &str| {
+        drawn.lines().find(|line| line.contains('█')).map(ToOwned::to_owned).expect("a selection")
+    };
+    let before = selected(&first);
+
+    app.step(1);
+    let after = selected(&screen(&mut app, 84, 24));
+    assert_ne!(before, after, "and moving the selection moves what is filled in");
+
+    // Every cell is one of the three: occupied, selected, or free.
+    let row = before.trim_matches(|c| c != '█' && c != '▓' && c != '·');
+    assert!(row.chars().all(|c| matches!(c, '█' | '▓' | '·')), "{row}");
+}

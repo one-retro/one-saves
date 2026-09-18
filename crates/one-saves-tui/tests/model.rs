@@ -131,3 +131,24 @@ fn deleting_the_last_save_leaves_a_card_that_reads_back_empty() {
     assert_eq!(again.entries().len(), 0);
     assert_eq!(again.used_blocks(), 0, "and nothing is left occupying it");
 }
+
+/// A PS2 card is written the way hardware holds one: every page followed by its ECC.
+///
+/// Writing the bare data pages produces a file this tool reads back perfectly and a console does
+/// not see a card in at all — it reports the card as unformatted, because the sixteen bytes after
+/// every page are where it looks to check that a page is intact.
+#[test]
+fn a_written_ps2_card_keeps_the_spare_areas_a_console_reads() {
+    let source = Card::open(fixture(PS2)).expect("opens");
+    let mut target = open_copy(PS2_EMPTY, "1cards-spare.ps2");
+    let before = std::fs::metadata(&target.path).expect("the copy").len();
+
+    target.copy_from(&source, 0).expect("copies");
+    target.save().expect("writes");
+
+    let after = std::fs::metadata(&target.path).expect("the written card").len();
+    assert_eq!(after, before, "a card keeps the shape it came in");
+    // 512 bytes of data and 16 of spare, over and over.
+    assert_eq!(after % 528, 0, "which is pages of 528 bytes");
+    assert_eq!(after / 528 * 512, target.capacity(), "of which the data area is the capacity");
+}

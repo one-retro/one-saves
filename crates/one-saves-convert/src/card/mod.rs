@@ -104,8 +104,12 @@ pub fn write(format: Format, bundle: &Bundle) -> Result<Vec<u8>> {
         Format::GcCard => gc::write(bundle),
         #[cfg(feature = "vmu")]
         Format::Vmu => vmu::write(bundle),
+        // With the spare areas and their ECC, which is what a PS2 card is on hardware: every
+        // 512-byte page is followed by sixteen further bytes, and a console handed an image
+        // without them does not see a card at all. `ps2::write` still writes the bare pages for
+        // a caller that wants only the data area.
         #[cfg(feature = "ps2")]
-        Format::Ps2Card => ps2::write(bundle),
+        Format::Ps2Card => ps2::write_with_spare(bundle),
         #[cfg(feature = "neogeo")]
         Format::NeoGeoCard => neogeo::write(bundle),
         Format::Bundle | Format::Raw => {

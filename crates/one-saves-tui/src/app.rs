@@ -480,11 +480,11 @@ impl App {
         // Capped so it cannot crowd out the save it is describing.
         let across = usize::from(area.width.saturating_sub(2)).max(1);
         let blocks = usize::try_from(self.card().blocks()).unwrap_or(usize::MAX);
+        // As many rows as one cell per block would take, up to what can be spared: past that the
+        // map scales, and the extra rows buy resolution rather than being wasted.
         let wanted = u16::try_from(blocks.div_ceil(across)).unwrap_or(u16::MAX).saturating_add(2);
         let cap = area.height.saturating_sub(MAP_LEAVES).max(3);
-        // A card whose blocks will not fit in the room going is drawn as a bar instead, and a bar
-        // is one line however many blocks it stands for.
-        let map = if wanted <= cap { wanted.max(3) } else { 3 };
+        let map = wanted.clamp(3, cap.max(3));
 
         let rows = Layout::default()
             .direction(Direction::Vertical)
@@ -494,57 +494,64 @@ impl App {
         self.draw_detail(frame, rows[1]);
     }
 
-    /// The focused card's blocks, one cell each, coloured by what occupies them.
+    /// The focused card's blocks, coloured by what occupies them.
+    ///
+    /// One cell per block where they fit. Where they do not — a PS2 card has eight thousand — a
+    /// cell stands for several, and a cell holding any of the selected save is drawn as that save
+    /// rather than as whatever else shares it, so a one-block save stays findable on a card that
+    /// holds thousands. A bar would be less work and would lose exactly that.
     ///
     /// The order is the directory's rather than the card's physical layout: a save's blocks are
     /// not recorded once it is read, and packing them in listed order is what writing the card
-    /// back does anyway. A card with more blocks than there is room for gets a bar instead.
+    /// back does anyway.
     fn draw_map(&self, frame: &mut Frame, area: Rect) {
         let card = self.card();
-        let block = Block::default().borders(Borders::ALL).title(format!(
-            " {} of {} blocks used ",
-            card.used_blocks(),
-            card.blocks()
-        ));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
         let entries = card.entries();
-        let total = card.blocks();
-        let room = u64::from(inner.width) * u64::from(inner.height);
+        let total = usize::try_from(card.blocks()).unwrap_or(usize::MAX);
 
-        if total == 0 || total > room {
-            // Too many to draw one each, so the same information as a bar.
-            let filled = card
-                .used_blocks()
-                .checked_mul(u64::from(inner.width))
-                .and_then(|scaled| scaled.checked_div(total))
-                .and_then(|at| usize::try_from(at).ok())
-                .unwrap_or(0);
-            let bar: String =
-                (0..inner.width as usize).map(|at| if at < filled { '▓' } else { '░' }).collect();
-            frame.render_widget(Paragraph::new(bar).style(Style::default().fg(Color::Cyan)), inner);
-            return;
+        // Which save holds each block, then nothing for the free ones.
+        let mut owners: Vec<Option<usize>> = Vec::new();
+        for (at, entry) in entries.iter().enumerate() {
+            owners.extend(std::iter::repeat_n(Some(at), usize::try_from(entry.blocks).unwrap_or(0)));
         }
+        owners.resize(total, None);
+
+        let block = Block::default().borders(Borders::ALL);
+        let inner = block.inner(area);
+        let room = usize::from(inner.width) * usize::from(inner.height);
+        let per_cell = if room == 0 { 1 } else { total.div_ceil(room).max(1) };
+
+        let title = if per_cell == 1 {
+            format!(" {} of {} blocks used ", card.used_blocks(), card.blocks())
+        } else {
+            format!(" {} of {} blocks · {per_cell} a cell ", card.used_blocks(), card.blocks())
+        };
+        frame.render_widget(block.title(title), area);
 
         let selected = self.selected();
-        let mut cells: Vec<Span> = Vec::new();
-        for (at, entry) in entries.iter().enumerate() {
-            let style = Style::default().fg(hue(at)).add_modifier(if Some(at) == selected {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            });
-            for _ in 0..entry.blocks {
-                cells.push(Span::styled(if Some(at) == selected { "█" } else { "▓" }, style));
-            }
-        }
-        for _ in 0..card.free_blocks() {
-            cells.push(Span::styled("·", Style::default().fg(Color::DarkGray)));
-        }
+        let cells: Vec<Span> = owners
+            .chunks(per_cell.max(1))
+            .map(|chunk| {
+                // The selected save wins its cell, so a small one is not hidden by a large
+                // neighbour sharing the same handful of blocks.
+                let owner = chunk
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .find(|at| Some(*at) == selected)
+                    .or_else(|| chunk.iter().flatten().copied().next());
+                match owner {
+                    Some(at) if Some(at) == selected => {
+                        Span::styled("█", Style::default().fg(hue(at)).add_modifier(Modifier::BOLD))
+                    }
+                    Some(at) => Span::styled("▓", Style::default().fg(hue(at))),
+                    None => Span::styled("·", Style::default().fg(Color::DarkGray)),
+                }
+            })
+            .collect();
 
-        let width = inner.width as usize;
-        let lines: Vec<Line> = cells.chunks(width.max(1)).map(|row| Line::from(row.to_vec())).collect();
+        let width = usize::from(inner.width).max(1);
+        let lines: Vec<Line> = cells.chunks(width).map(|row| Line::from(row.to_vec())).collect();
         frame.render_widget(Paragraph::new(lines), inner);
     }
 
