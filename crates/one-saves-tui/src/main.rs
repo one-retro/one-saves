@@ -91,25 +91,31 @@ fn loop_over<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: 
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        match std::mem::replace(&mut app.mode, Mode::Browsing) {
-            // A question takes yes or no and nothing else, so a stray key cannot delete anything.
-            Mode::Confirming(question, pending) => match key.code {
-                KeyCode::Char('y' | 'Y') => app.confirm(pending),
-                KeyCode::Char('n' | 'N') | KeyCode::Esc => {}
-                _ => app.mode = Mode::Confirming(question, pending),
-            },
-            // A report clears on the next key, which then does nothing else.
-            Mode::Reporting(_) => {}
-            Mode::Browsing => match key.code {
-                KeyCode::Char('q' | 'Q') | KeyCode::Esc => app.done = true,
-                KeyCode::Up | KeyCode::Char('k') => app.step(-1),
-                KeyCode::Down | KeyCode::Char('j') => app.step(1),
-                KeyCode::Tab => app.switch(),
-                KeyCode::Char('c') => app.copy(),
-                KeyCode::Char('d') => app.ask_delete(),
-                KeyCode::Char('w') => app.ask_save(),
-                _ => {}
-            },
+        // A question takes yes or no and nothing else, so a stray key cannot delete anything.
+        if let Mode::Confirming(confirm) = std::mem::replace(&mut app.mode, Mode::Browsing) {
+            match key.code {
+                KeyCode::Char('y' | 'Y') => app.confirm(confirm.pending),
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => app.status = None,
+                // Anything else leaves the question standing rather than answering it.
+                _ => app.mode = Mode::Confirming(confirm),
+            }
+            continue;
+        }
+
+        // What was said last stops being news the moment anything else happens, but it never
+        // swallows the key that happened: a report is something to read, not something to dismiss.
+        app.status = None;
+        match key.code {
+            KeyCode::Char('q' | 'Q') | KeyCode::Esc => app.ask_quit(),
+            KeyCode::Up | KeyCode::Char('k') => app.step(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.step(1),
+            // Both directions do the same thing with two cards, and a person reaching for
+            // shift-tab is asking for the other one either way.
+            KeyCode::Tab | KeyCode::BackTab => app.switch(),
+            KeyCode::Char('c') => app.copy(),
+            KeyCode::Char('d') => app.ask_delete(),
+            KeyCode::Char('w') => app.ask_write(),
+            _ => {}
         }
     }
     Ok(())
