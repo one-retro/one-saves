@@ -172,6 +172,18 @@ pub struct CardFormat {
     /// `None` for `saturn-bup`, which keeps its entry inside the save's first block and so omits
     /// the key entirely.
     pub dirent_len: Option<usize>,
+    /// The format's block size in bytes: the unit a card allocates a save in.
+    ///
+    /// For every format but one this is a property of the format, and reading it is enough.
+    /// `saturn-bup` is the exception: its 64 is the Saturn's **internal** memory, and a backup
+    /// cartridge carries its own, so a block count derived from this one is wrong for a cartridge.
+    ///
+    /// The medium is sometimes recoverable and sometimes not. A Saturn read whole is a device
+    /// whose parts carry a [`role`](role) — `internal` against `ram-cart` — but a cartridge dumped
+    /// by itself is a card bundle with no role anywhere in it, and nothing then says which it was.
+    /// The specifications leave this as written for 0.2; settling it means keying the block size
+    /// on the card map's `capacity`, which every card carries, rather than on the format alone.
+    pub block_size: usize,
     /// What is particular about this format.
     pub notes: &'static str,
 }
@@ -545,6 +557,23 @@ mod tests {
             ("saturn-bup", None),
         ] {
             assert_eq!(card_format(name).unwrap().dirent_len, len, "{name}");
+        }
+    }
+
+    #[test]
+    fn block_sizes_are_what_the_memory_cards_spec_fixes() {
+        // The unit a card allocates a save in, added in 0.2. `saturn-bup` has one like the rest:
+        // the 64 is the console's internal memory.
+        for (name, block) in [
+            ("ps1-mc", 8192),
+            ("ps2-mc", 1024),
+            ("n64-cpak", 256),
+            ("gc-mc", 8192),
+            ("vmu", 512),
+            ("neogeo-mc", 64),
+            ("saturn-bup", 64),
+        ] {
+            assert_eq!(card_format(name).unwrap().block_size, block, "{name}");
         }
     }
 

@@ -176,6 +176,8 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
 
     Ok(Bundle {
         header: Header {
+            // A raw dump is one game's state: the parts are the regions that state is made of.
+            shape: one_saves::Shape::Save,
             created_at: options.created_at,
             system,
             game: options.game.clone(),

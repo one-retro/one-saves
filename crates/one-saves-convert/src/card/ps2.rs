@@ -68,7 +68,14 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         }
 
         let inner = Bundle {
-            header: Header { system: Some(slug(SYSTEM)), game: game.clone(), ..Header::default() },
+            header: Header {
+                // A PS2 save is a directory, so this nested bundle has a part per file — still
+                // one game's state, and so still a save.
+                shape: one_saves::Shape::Save,
+                system: Some(slug(SYSTEM)),
+                game: game.clone(),
+                ..Header::default()
+            },
             parts: inner_parts,
         };
 

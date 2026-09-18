@@ -46,7 +46,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // The game code and note name together are how a pak names a note, and neither is unique.
         let game = (!note.game_code.is_empty()).then(|| Game {
             serial: Some(note.game_code.clone()),
-            name: (!note.name.is_empty()).then(|| note.name.clone()),
+            title: (!note.name.is_empty()).then(|| note.name.clone()),
             ..Game::default()
         });
 

@@ -11,9 +11,10 @@ use dcbor::prelude::*;
 use crate::error::{Error, ErrorKind};
 use crate::hash::{HashAlgorithm, HashValue};
 use crate::model::{
-    Bundle, Card, Extensions, ExternalRef, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys,
+    Bundle, Card, Extensions, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys,
 };
 use crate::name::{Name, ReverseDnsName, Slug};
+use crate::shape::Shape;
 
 /// How strictly to read a bundle.
 ///
@@ -227,6 +228,7 @@ impl Bundle {
 
         let header = decode_header(header, strictness)?;
         let parts = decode_parts(parts, strictness)?;
+
         Ok(Bundle { header, parts })
     }
 }
@@ -236,14 +238,63 @@ fn decode_header(value: &CBOR, strictness: Strictness) -> Result<Header, Error> 
     let mut fields = Fields::split(map, "header")?;
     let extensions = fields.extensions("header")?;
 
-    let created_at = fields.take(0).map(|v| want_epoch(&v, "header.created_at")).transpose()?;
+    // Key 0 is required, and a slug this version does not define is a later version's shape
+    // rather than a malformed bundle: it parses, round-trips, and is declined at the point of use.
+    let shape = fields
+        .take(0)
+        .ok_or_else(|| Error::at("header", ErrorKind::MissingKey("shape")))
+        .and_then(|v| want_slug(&v, "header.shape"))
+        .map(Shape::from_slug)?;
+    // The schema pins the four shapes this version defines, so validating against it says "this
+    // is a conforming 0.2 bundle" rather than "some decoder can read this". A decoder is looser
+    // on purpose, and declines at the point of use instead.
+    if strictness == Strictness::Schema
+        && let Shape::Unknown(slug) = &shape
+    {
+        return Err(Error::at("header", ErrorKind::UnknownShape(slug.as_str().to_owned())));
+    }
     let system = fields.take(1).map(|v| want_slug(&v, "header.system")).transpose()?;
     let game = fields.take(2).map(|v| decode_game(&v, "header.game", strictness)).transpose()?;
     let source = fields.take(3).map(|v| decode_source(&v, "header.source", strictness)).transpose()?;
     let card = fields.take(4).map(|v| decode_card(&v, "header.card", strictness)).transpose()?;
     let description = fields.take(5).map(|v| want_text(&v, "header.description")).transpose()?;
+    let created_at = fields.take(6).map(|v| want_epoch(&v, "header.created_at")).transpose()?;
+
+    // Each shape admits a different header, and the shape is read first, so a contradiction is a
+    // decode error rather than something a consumer has to re-derive. A shape this version does
+    // not define constrains nothing: its rules are in a document this decoder has not seen.
+    let forbid = |present: bool, field: &'static str, shape: &'static str| {
+        present.then(|| Error::at("header", ErrorKind::KeyNotInShape { shape, field })).map_or(Ok(()), Err)
+    };
+    match &shape {
+        // A save is one game's state, and a card map is what would make it a card instead.
+        Shape::Save => forbid(card.is_some(), "card", "save")?,
+        // The card map is the claim proper: it carries the format and capacity a writer needs.
+        Shape::Card => {
+            if card.is_none() {
+                return Err(Error::at("header", ErrorKind::MissingKey("card")));
+            }
+        }
+        // `system` is what tells a device from a collection; its components hold saves for many
+        // games rather than for one, so `game` says nothing at this level.
+        Shape::Device => {
+            if system.is_none() {
+                return Err(Error::at("header", ErrorKind::MissingKey("system")));
+            }
+            forbid(game.is_some(), "game", "device")?;
+            forbid(card.is_some(), "card", "device")?;
+        }
+        // A collection's entries do not agree on any of the three, so it names none of them.
+        Shape::Collection => {
+            forbid(system.is_some(), "system", "collection")?;
+            forbid(game.is_some(), "game", "collection")?;
+            forbid(card.is_some(), "card", "collection")?;
+        }
+        Shape::Unknown(_) => {}
+    }
 
     Ok(Header {
+        shape,
         created_at,
         system,
         game,
@@ -301,10 +352,18 @@ fn decode_game(value: &CBOR, path: &str, strictness: Strictness) -> Result<Game,
 
     let rom_filename = fields.take(2).map(|v| want_text(&v, path)).transpose()?;
     let serial = fields.take(3).map(|v| want_text(&v, path)).transpose()?;
-    let name = fields.take(4).map(|v| want_text(&v, path)).transpose()?;
+    let title = fields.take(4).map(|v| want_text(&v, path)).transpose()?;
+    let system = fields.take(5).map(|v| want_slug(&v, &format!("{path}.system"))).transpose()?;
 
-    let game =
-        Game { game_id, rom_hashes, rom_filename, serial, name, unknown: fields.unknown(path, strictness)? };
+    let game = Game {
+        game_id,
+        rom_hashes,
+        rom_filename,
+        serial,
+        title,
+        system,
+        unknown: fields.unknown(path, strictness)?,
+    };
     // An optional container has exactly one encoding of empty, and that is not being there.
     if game.is_empty() {
         return Err(Error::at(path, ErrorKind::EmptyContainer));
@@ -433,7 +492,7 @@ fn decode_part(value: &CBOR, path: &str, strictness: Strictness) -> Result<Part,
     let binding = fields.take(13).map(|v| want_slug(&v, &format!("{path}.binding"))).transpose()?;
 
     let payload_value = fields.take(-1).ok_or_else(|| Error::at(path, ErrorKind::MissingKey("payload")))?;
-    let payload = decode_payload(&payload_value, encoding.as_deref(), size, &sha256, path)?;
+    let payload = decode_payload(&payload_value, encoding.as_deref(), size, path)?;
 
     Ok(Part {
         id,
@@ -454,30 +513,16 @@ fn decode_part(value: &CBOR, path: &str, strictness: Strictness) -> Result<Part,
     })
 }
 
-/// Reads the payload, and with it which of the three shapes this part is in.
+/// Reads the payload, and with it which of the two forms this part is in.
 ///
-/// `size` is carried only where it cannot be derived, so its presence is not a free choice: it
-/// belongs on a compressed or referenced payload and nowhere else.
+/// `size` is carried only where it cannot be derived, which since 0.2 means a compressed payload
+/// and nothing else: the thin form that also needed it is gone.
 fn decode_payload(
     value: &CBOR,
     encoding: Option<&str>,
     size: Option<u64>,
-    sha256: &HashValue,
     path: &str,
 ) -> Result<Payload, Error> {
-    // An external reference is the only payload that is a map rather than a byte string.
-    if let Some(map) = value.as_map() {
-        let reference = decode_external_ref(map, &format!("{path}.payload"))?;
-        if encoding.is_some() {
-            return Err(Error::at(path, ErrorKind::ThinPartCompressed));
-        }
-        if &reference.hash != sha256 {
-            return Err(Error::at(format!("{path}.payload"), ErrorKind::ExternalRefHashMismatch));
-        }
-        let size = size.ok_or_else(|| Error::at(path, ErrorKind::MissingSize))?;
-        return Ok(Payload::External { reference, size });
-    }
-
     let bytes = want_bytes(value, &format!("{path}.payload"))?;
     match (encoding, size) {
         (Some(_), Some(size)) => Ok(Payload::Compressed { bytes, size }),
@@ -486,31 +531,6 @@ fn decode_payload(
         (None, Some(_)) => Err(Error::at(format!("{path}.size"), ErrorKind::SizeOnUncompressedPart)),
         (None, None) => Ok(Payload::Embedded(bytes)),
     }
-}
-
-fn decode_external_ref(map: &Map, path: &str) -> Result<ExternalRef, Error> {
-    let mut fields = Fields::split(map, path)?;
-    fields.no_extensions(path)?;
-
-    let marker = fields
-        .take(0)
-        .ok_or_else(|| Error::at(path, ErrorKind::MissingKey("ref")))
-        .and_then(|v| want_text(&v, path))?;
-    if marker != "ref" {
-        return Err(Error::at(path, ErrorKind::Type { expected: "the text \"ref\"" }));
-    }
-    let hash = fields
-        .take(1)
-        .ok_or_else(|| Error::at(path, ErrorKind::MissingKey("hash")))
-        .and_then(|v| want_sha256(&v, path))?;
-    let uri = fields.take(2).map(|v| want_text(&v, path)).transpose()?;
-
-    // An external reference is not one of the maps a later minor version extends freely, so
-    // anything left here is a key nothing defines.
-    if let Some((&key, _)) = fields.ints.iter().next() {
-        return Err(Error::at(path, ErrorKind::UnknownIntegerKey(key)));
-    }
-    Ok(ExternalRef { hash, uri })
 }
 
 /// Checks a `path`: non-empty, at most 512 bytes, no leading `/` and no `..` segment.
@@ -577,8 +597,9 @@ impl Header {
     #[must_use]
     pub fn to_cbor(&self) -> CBOR {
         let mut map = Map::new();
+        map.insert(0u64, self.shape.as_str());
         if let Some(created_at) = self.created_at {
-            map.insert(0u64, epoch_cbor(created_at));
+            map.insert(6u64, epoch_cbor(created_at));
         }
         if let Some(system) = &self.system {
             map.insert(1u64, system.as_str());
@@ -624,8 +645,11 @@ impl Game {
         if let Some(serial) = &self.serial {
             map.insert(3u64, serial.as_str());
         }
-        if let Some(name) = &self.name {
-            map.insert(4u64, name.as_str());
+        if let Some(title) = &self.title {
+            map.insert(4u64, title.as_str());
+        }
+        if let Some(system) = &self.system {
+            map.insert(5u64, system.as_str());
         }
         finish(map, &self.unknown, &Extensions::new())
     }
@@ -700,9 +724,6 @@ impl Part {
                 map.insert(7u64, "zstd");
                 map.insert(8u64, *size);
             }
-            Payload::External { size, .. } => {
-                map.insert(8u64, *size);
-            }
         }
         map.insert(9u64, hash_cbor(&self.sha256));
         if let Some(source) = &self.source {
@@ -723,15 +744,6 @@ impl Part {
                 // Both go out as a byte string; what differs is whether keys 7 and 8 above
                 // said the bytes are compressed.
                 Payload::Embedded(bytes) | Payload::Compressed { bytes, .. } => CBOR::to_byte_string(bytes),
-                Payload::External { reference, .. } => {
-                    let mut reference_map = Map::new();
-                    reference_map.insert(0u64, "ref");
-                    reference_map.insert(1u64, hash_cbor(&reference.hash));
-                    if let Some(uri) = &reference.uri {
-                        reference_map.insert(2u64, uri.as_str());
-                    }
-                    reference_map.into()
-                }
             },
         );
         finish(map, &self.unknown, &self.extensions)

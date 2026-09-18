@@ -127,6 +127,8 @@ with_a_card_format! {
         options: &CardOptions,
     ) -> one_saves::Header {
         one_saves::Header {
+            // The card map is what makes it a card, and the shape says so outright since 0.2.
+            shape: one_saves::Shape::Card,
             system: format.system().map(slug),
             card: Some(one_saves::Card {
                 format: slug(format.card_format().expect("a card format names a slug")),
@@ -166,6 +168,7 @@ pub(crate) fn save_part(
     let system = format.system().map(slug);
     let inner = Bundle {
         header: one_saves::Header {
+            shape: one_saves::Shape::Save,
             system: system.clone(),
             game: game.clone(),
             ..one_saves::Header::default()

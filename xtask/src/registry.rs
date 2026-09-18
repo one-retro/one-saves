@@ -75,6 +75,8 @@ pub struct Vendor {
 pub struct CardFormat {
     pub format: String,
     pub dirent_len: Option<usize>,
+    /// The format's block size in bytes, which 0.2 added and every format has.
+    pub block_size: usize,
     pub notes: String,
 }
 
@@ -138,8 +140,10 @@ pub fn read_from_docs(docs: &Path) -> Fallible<Registries> {
         roles: roles(&read(&content.join("registries/roles.md"))?)?,
         vendors: vendors(&read(&content.join("registries/vendors.md"))?)?,
         card_formats: card_formats(&read(&content.join("specifications/memory-cards.md"))?)?,
-        device_kinds: device_kinds(&read(&content.join("specifications/universal-saves-format.md"))?)?,
-        bindings: bindings(&read(&content.join("specifications/universal-saves-format.md"))?)?,
+        // 0.2 split the format page: the per-field tables moved to `bundle.md`, and what stayed
+        // behind is the prose about shapes and extensions.
+        device_kinds: device_kinds(&read(&content.join("specifications/bundle.md"))?)?,
+        bindings: bindings(&read(&content.join("specifications/bundle.md"))?)?,
     })
 }
 
@@ -276,7 +280,11 @@ fn card_formats(page: &str) -> Fallible<Vec<CardFormat>> {
                 } else {
                     Some(dirent.parse().map_err(|_| format!("{dirent:?} is not a dirent length"))?)
                 },
-                notes: prose(&row[2]),
+                block_size: {
+                    let block = row[2].trim();
+                    block.parse().map_err(|_| format!("{block:?} is not a block size"))?
+                },
+                notes: prose(&row[3]),
             });
         }
     }

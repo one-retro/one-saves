@@ -324,7 +324,7 @@ fn identify(args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
     if let Some(dat) = args.dat.as_deref() {
         let catalog = one_saves_convert::dat::Catalog::open(dat)?;
         if catalog.enrich(&mut game) {
-            println!("identified as {:?}", game.name.as_deref().unwrap_or_default());
+            println!("identified as {:?}", game.title.as_deref().unwrap_or_default());
         } else {
             eprintln!("note: this ROM is not in {}", dat.display());
         }
@@ -430,7 +430,7 @@ fn inspect(path: &Path) -> Fallible {
     }
     if let Some(game) = &header.game {
         let mut bits = Vec::new();
-        if let Some(name) = &game.name {
+        if let Some(name) = &game.title {
             bits.push(name.clone());
         }
         if let Some(serial) = &game.serial {

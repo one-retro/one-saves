@@ -2,36 +2,43 @@
   {
     "format": "ps1-mc",
     "dirent_len": 128,
-    "notes": ""
+    "block_size": 8192,
+    "notes": "The 128 is one directory frame, and a block is 64 of them."
   },
   {
     "format": "ps2-mc",
     "dirent_len": 512,
-    "notes": "One entry for the save's directory, one per file inside it."
+    "block_size": 1024,
+    "notes": "One entry for the save's directory, one per file inside it. A block is a cluster of two 512-byte pages."
   },
   {
     "format": "n64-cpak",
     "dirent_len": 32,
-    "notes": ""
+    "block_size": 256,
+    "notes": "The pak's own word for a block is a page."
   },
   {
     "format": "gc-mc",
     "dirent_len": 64,
+    "block_size": 8192,
     "notes": ""
   },
   {
     "format": "vmu",
     "dirent_len": 32,
+    "block_size": 512,
     "notes": ""
   },
   {
     "format": "neogeo-mc",
     "dirent_len": 4,
-    "notes": ""
+    "block_size": 64,
+    "notes": "Cards run from 2 KiB to 16 KiB and every one of them uses the same block."
   },
   {
     "format": "saturn-bup",
     "dirent_len": null,
-    "notes": "The entry lives in the first block of the save itself, so the key is absent."
+    "block_size": 64,
+    "notes": "The entry lives in the first block of the save itself, so the key is absent. The 64 is the console's internal memory; a backup cartridge is a separate device carrying its own."
   }
 ]

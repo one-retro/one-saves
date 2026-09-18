@@ -175,7 +175,7 @@ impl Catalog {
         let Some(entry) = self.lookup_any(&game.rom_hashes) else {
             return false;
         };
-        game.name = Some(entry.name.clone());
+        game.title = Some(entry.name.clone());
         if game.serial.is_none() {
             game.serial.clone_from(&entry.serial);
         }
@@ -339,7 +339,7 @@ game (
     fn enriching_takes_the_catalog_name_and_keeps_the_header_serial() {
         let catalog = Catalog::parse(LOGIQX).expect("parses");
         let mut game = Game {
-            name: Some("POKEMON RED".into()),
+            title: Some("POKEMON RED".into()),
             serial: Some("FROM-HEADER".into()),
             rom_hashes: vec![hash_from_hex(HashAlgorithm::Crc32, "9F7FDD53").unwrap()],
             ..Game::default()
@@ -347,7 +347,7 @@ game (
 
         assert!(catalog.enrich(&mut game));
         // The canonical set name replaces the shouty header title.
-        assert_eq!(game.name.as_deref(), Some("Pokemon - Red Version (USA, Europe)"));
+        assert_eq!(game.title.as_deref(), Some("Pokemon - Red Version (USA, Europe)"));
         // The serial came off the ROM itself, so the catalog's transcription does not overwrite it.
         assert_eq!(game.serial.as_deref(), Some("FROM-HEADER"));
         // Digests the catalog had and we did not are taken, still ascending by tag.
@@ -359,7 +359,7 @@ game (
     fn enriching_a_rom_no_catalog_lists_changes_nothing() {
         let catalog = Catalog::parse(LOGIQX).expect("parses");
         let mut game = Game {
-            name: Some("UNKNOWN".into()),
+            title: Some("UNKNOWN".into()),
             rom_hashes: vec![hash_from_hex(HashAlgorithm::Crc32, "DEADBEEF").unwrap()],
             ..Game::default()
         };

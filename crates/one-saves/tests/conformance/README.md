@@ -2,12 +2,9 @@
 
 Bundles for testing an implementation of the
 [Universal Saves Format](https://docs.1retro.com/specifications/universal-saves-format/). The layout, the manifest
-fields and how to run a corpus are described with the
-[specifications](https://docs.1retro.com/specifications/); this page covers what is specific to this spec.
+fields and how to run a corpus are in the [parent README](../README.md); this page covers what is specific to this spec.
 
-Cases are generated from `test/bundles.js` in the specifications repository. This copy is
-vendored: re-copy it with `just vendor-conformance` rather than editing it here. The manifest
-carries a digest per case and the harness checks it, so a hand edit shows up as corruption.
+Cases are generated from `test/bundles.js`.
 
 ## What a green run does not cover
 
@@ -31,10 +28,10 @@ than an accept/reject one.
 The CDDL schemas are not vendored here, since an implementation checks these rules natively rather than by shelling out
 to a validator. They live beside the specifications:
 
-- [`universal-saves-format.cddl`](https://github.com/hansl/docs.1retro.com/blob/main/src/content/docs/specifications/universal-saves-format.cddl)
+- [`universal-saves-format.cddl`](https://github.com/one-retro/docs/blob/main/src/content/docs/specifications/universal-saves-format.cddl)
   for the bundle itself
 - one file per extension key under
-  [`specifications/extensions/`](https://github.com/hansl/docs.1retro.com/tree/main/src/content/docs/specifications/extensions)
+  [`specifications/extensions/`](https://github.com/one-retro/docs/tree/main/src/content/docs/specifications/extensions)
 
 A schema describes one version exactly and rejects integer keys it does not list. A shipped decoder is deliberately
 looser: it ignores and round-trips an integer key it does not know, because the only thing such a key can be is a later

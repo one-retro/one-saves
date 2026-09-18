@@ -195,7 +195,10 @@ pub fn game_from_rom(bytes: &[u8], filename: Option<&str>) -> Game {
         rom_hashes: hashes(bytes),
         rom_filename: filename.map(ToOwned::to_owned),
         serial: info.serial,
-        name: info.title,
+        title: info.title,
+        // Which system's release these hints identify, which the ROM header is exactly the thing
+        // that knows. Distinct from the header's `system`, which says what will load the save.
+        system: info.system.and_then(|slug| slug.parse().ok()),
         unknown: one_saves::UnknownKeys::new(),
     }
 }
@@ -323,7 +326,7 @@ mod tests {
     fn a_game_map_from_a_rom_carries_everything_it_can() {
         let rom = gb_rom(b"POKEMON RED", 0x00);
         let game = game_from_rom(&rom, Some("pokemon_red.gb"));
-        assert_eq!(game.name.as_deref(), Some("POKEMON RED"));
+        assert_eq!(game.title.as_deref(), Some("POKEMON RED"));
         assert_eq!(game.rom_filename.as_deref(), Some("pokemon_red.gb"));
         assert_eq!(game.rom_hashes.len(), 4);
         assert!(!game.is_empty());

@@ -26,9 +26,7 @@ impl Bundle {
     ///
     /// # Errors
     ///
-    /// A thin bundle cannot compute its own content hash: normalizing it means embedding every
-    /// referenced payload, which means resolving every reference against a store first. That is
-    /// [`ErrorKind::Thin`].
+    /// Decompressing a payload that does not inflate to the length and digest it claims.
     pub fn content_hash(&self) -> Result<HashValue, Error> {
         Ok(HashValue::sha256_of(&self.normalized()?.to_vec()?))
     }
@@ -43,15 +41,6 @@ impl Bundle {
         }
         Ok(normalized)
     }
-
-    /// Whether every part carries its bytes inline.
-    ///
-    /// A self-contained bundle works on its own; a thin one needs an external
-    /// content-addressable store to resolve the referenced digests.
-    #[must_use]
-    pub fn is_self_contained(&self) -> bool {
-        self.parts.iter().all(|part| part.payload.is_embedded())
-    }
 }
 
 impl Part {
@@ -59,7 +48,6 @@ impl Part {
     fn normalize(&mut self, path: &str) -> Result<(), Error> {
         match &self.payload {
             Payload::Embedded(_) => Ok(()),
-            Payload::External { .. } => Err(Error::at(path, ErrorKind::Thin)),
             Payload::Compressed { bytes, size } => {
                 let plain = inflate(bytes, *size, path)?;
                 self.payload = Payload::Embedded(plain);
@@ -70,11 +58,9 @@ impl Part {
 
     /// This part's bytes, inflating them if they are compressed.
     ///
-    /// Returns [`ErrorKind::Thin`] for a referenced payload, whose bytes are not here.
     pub fn bytes(&self) -> Result<std::borrow::Cow<'_, [u8]>, Error> {
         match &self.payload {
             Payload::Embedded(bytes) => Ok(std::borrow::Cow::Borrowed(bytes)),
-            Payload::External { .. } => Err(Error::at("", ErrorKind::Thin)),
             Payload::Compressed { bytes, size } => Ok(std::borrow::Cow::Owned(inflate(bytes, *size, "")?)),
         }
     }
@@ -87,19 +73,30 @@ impl Part {
 
 /// Inflates a zstd payload, checking it against the length the part stated.
 ///
-/// The stated size is checked rather than trusted: it is an attacker-controlled number that
-/// would otherwise size an allocation.
+/// `size` is what a producer says the payload will come to, not a promise it will, so it is
+/// neither trusted nor merely checked afterwards: the decompression is **abandoned** the moment it
+/// outgrows the claim. Inflating first and comparing second would let a part claiming a hundred
+/// bytes expand to gigabytes before anything noticed.
+///
+/// That still leaves the claim itself as an attacker-controlled bound. A consumer unwilling to
+/// handle a payload of a given size should decline before calling: [`Payload::len`] reports what
+/// the part claims without touching the compressed bytes.
 #[cfg(feature = "zstd")]
 fn inflate(bytes: &[u8], size: u64, path: &str) -> Result<Vec<u8>, Error> {
+    use std::io::Read as _;
+
     let capacity = usize::try_from(size)
         .map_err(|_| Error::at(path, ErrorKind::ZstdInvalid("stated size does not fit".into())))?;
-    let plain = zstd::stream::decode_all(bytes)
-        .map_err(|e| Error::at(path, ErrorKind::ZstdInvalid(e.to_string())))?;
+    let invalid = |message: String| Error::at(path, ErrorKind::ZstdInvalid(message));
+
+    let decoder = zstd::stream::read::Decoder::new(bytes).map_err(|e| invalid(e.to_string()))?;
+    // One byte past the claim is all it takes to know the payload outgrew it, and it caps what a
+    // bomb can make this allocate at the stated length rather than at whatever it inflates to.
+    let mut plain = Vec::new();
+    decoder.take(size.saturating_add(1)).read_to_end(&mut plain).map_err(|e| invalid(e.to_string()))?;
+
     if plain.len() != capacity {
-        return Err(Error::at(
-            path,
-            ErrorKind::ZstdInvalid(format!("inflated to {} bytes, not the stated {capacity}", plain.len())),
-        ));
+        return Err(invalid(format!("inflated past the stated {capacity} bytes")));
     }
     Ok(plain)
 }
@@ -119,7 +116,6 @@ mod tests {
         // The two hashes coincide exactly when there is nothing to normalize, which is every
         // bundle nested inside another.
         let bundle = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
-        assert!(bundle.is_self_contained());
         assert_eq!(bundle.file_hash().unwrap(), bundle.content_hash().unwrap());
     }
 
@@ -136,13 +132,29 @@ mod tests {
         assert_eq!(plain.content_hash().unwrap(), compressed.content_hash().unwrap());
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
-    fn a_thin_bundle_cannot_compute_its_own_content_hash() {
-        use crate::model::ExternalRef;
+    fn a_decompression_is_abandoned_when_it_outgrows_what_the_part_claimed() {
+        // `size` is a claim, not a promise. A part understating it is how a small file asks a
+        // consumer to allocate a large one, so the inflate stops at the claim rather than running
+        // to completion and comparing afterwards.
+        let bomb = zstd::stream::encode_all(&vec![0u8; 4 << 20][..], 3).unwrap();
+        assert!(bomb.len() < 4096, "the point of the case is that the compressed form is small");
+
         let mut bundle = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
-        let hash = bundle.parts[0].sha256.clone();
-        bundle.parts[0].payload = Payload::External { reference: ExternalRef { hash, uri: None }, size: 4 };
-        assert!(!bundle.is_self_contained());
-        assert_eq!(bundle.content_hash().unwrap_err().kind(), &ErrorKind::Thin);
+        bundle.parts[0].payload = Payload::Compressed { bytes: bomb, size: 64 };
+
+        let error = bundle.parts[0].bytes().unwrap_err();
+        let ErrorKind::ZstdInvalid(message) = error.kind() else {
+            panic!("a payload that outgrows its claim is invalid, not silently large: {error}");
+        };
+        // The evidence that it stopped rather than finished: having abandoned the decompression,
+        // it cannot say how big the payload really was. Reporting the true 4194304 would mean it
+        // had inflated the whole thing first, which is the behaviour this guards against.
+        assert!(message.contains("64"), "names the claim it broke: {message}");
+        assert!(
+            !message.contains(&(4usize << 20).to_string()),
+            "must not know the true length, which would mean it inflated everything: {message}"
+        );
     }
 }

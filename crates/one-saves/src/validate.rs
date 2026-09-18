@@ -8,6 +8,7 @@ use crate::codec::Strictness;
 use crate::error::{Error, ErrorKind};
 use crate::hash::HashValue;
 use crate::model::{Bundle, Part, PartKind, Payload};
+use crate::shape::Shape;
 
 impl Bundle {
     /// Checks every structural rule the format states.
@@ -25,29 +26,48 @@ impl Bundle {
     /// on a 16 MiB card it is the work twice. [`from_cbor`](Bundle::from_cbor) is the way out: it
     /// does not validate, so it does not step into a payload.
     pub fn validate(&self) -> Result<(), Error> {
-        self.validate_at_depth(0)
+        self.validate_inner()
     }
 
-    /// Checks the rules, knowing how deep this bundle already sits.
+    /// Checks the rules, including what this bundle's shape may hold.
     ///
-    /// Depth is capped at 2: a bundle's own parts are depth 0, a nested bundle's are depth 1,
-    /// and one nested inside that is depth 2. A save, a card and a collection of cards fill all
-    /// three tiers, so anything deeper is malformed and decoders enforce it to keep recursion
-    /// bounded.
-    fn validate_at_depth(&self, depth: usize) -> Result<(), Error> {
+    /// Nesting is bounded by the shapes rather than by a depth counter: a save holds no bundle,
+    /// a card holds saves, a device holds cards and saves, and a collection holds anything but
+    /// another collection. That admits the same structures the old cap of 2 did, and says why
+    /// rather than counting.
+    fn validate_inner(&self) -> Result<(), Error> {
         if self.parts.is_empty() {
             return Err(Error::at("parts", ErrorKind::EmptyContainer));
         }
         self.check_part_order()?;
         self.check_part_addresses()?;
 
+        // A device's components are told apart by `role` and nothing else. Writing it is required
+        // rather than advised, because `role` otherwise defaults to `primary`, and two components
+        // that both fell back to it would be a device whose halves a consumer cannot distinguish.
+        if self.header.shape == Shape::Device
+            && let Some(index) = self.parts.iter().position(|part| part.role.is_none())
+        {
+            return Err(Error::at(
+                format!("parts[{index}]"),
+                ErrorKind::PartNotInShape { shape: "device", reason: "names a role on every part" },
+            ));
+        }
+
         for (index, part) in self.parts.iter().enumerate() {
             let path = format!("parts[{index}]");
             check_rom_hash_order(part, &path)?;
+            // On every part, not only a `bundle` one: these keys describe a save, and a save is
+            // the bundle rather than the part that carries it.
+            check_key_placement(&part.extensions, &path)?;
             if part.kind == PartKind::Bundle {
-                check_no_inherited_keys(part, &path)?;
-                check_nested(part, depth, &path)?;
+                check_nested(part, &self.header.shape, &path)?;
             }
+        }
+        // A card's or a collection's header is not a save's, so the clock keys have no business
+        // there either: the reading belongs to one save, which is a nested bundle of its own.
+        if self.header.shape != Shape::Save {
+            check_key_placement(&self.header.extensions, "header")?;
         }
         if let Some(game) = &self.header.game {
             check_hashes(&game.rom_hashes, "header.game.rom_hashes")?;
@@ -89,28 +109,33 @@ impl Bundle {
     }
 }
 
-/// Namespaces a `bundle` part may not carry a key from, because a nested bundle inherits nothing.
+/// Extension subtrees the specifications place on a save's bundle header and nowhere else.
 ///
-/// A value that describes the bytes rather than the wrapper has to live inside the inner bundle,
-/// where it stays correct once the save is sliced out. Put on the outer part it would be dropped
-/// by the byte copy that extracting a save is.
+/// A value that describes the bytes rather than the wrapper has to live inside the save's own
+/// header, where it stays correct once the save is sliced out of whatever holds it. On a part it
+/// would be dropped by the byte copy that extracting a save is.
 ///
 /// These are whole subtrees, not exact names. Every clock key lives under `x.1sav.rtc` — the
 /// portable reading is that name, and each chip is a label below it — so one label-boundary test
 /// covers the family and a chip added later is covered without touching this list.
-const NOT_ON_A_BUNDLE_PART: [&str; 1] = ["x.1sav.rtc"];
+const SAVE_HEADER_ONLY: [&str; 1] = ["x.1sav.rtc"];
 
-fn check_no_inherited_keys(part: &Part, path: &str) -> Result<(), Error> {
-    for key in part.extensions.keys() {
-        for root in NOT_ON_A_BUNDLE_PART {
-            let root = crate::ReverseDnsName::parse(root).expect("a well-formed name");
-            // Label-boundary matching, never a string prefix: `x.1sav.rtcx` is somebody else's.
-            if key.is_under(&root) {
-                return Err(Error::at(
-                    format!("{path}[{:?}]", key.as_str()),
-                    ErrorKind::NotOnABundlePart(key.as_str().to_owned()),
-                ));
-            }
+/// Whether a key sits under one of the subtrees above.
+fn is_save_header_only(key: &crate::ReverseDnsName) -> bool {
+    SAVE_HEADER_ONLY.iter().any(|root| {
+        let root = crate::ReverseDnsName::parse(root).expect("a well-formed name");
+        // Label-boundary matching, never a string prefix: `x.1sav.rtcx` is somebody else's.
+        key.is_under(&root)
+    })
+}
+
+fn check_key_placement(extensions: &crate::Extensions, path: &str) -> Result<(), Error> {
+    for key in extensions.keys() {
+        if is_save_header_only(key) {
+            return Err(Error::at(
+                format!("{path}[{:?}]", key.as_str()),
+                ErrorKind::KeyOutOfPlace { key: key.as_str().to_owned(), allowed: "a save's bundle header" },
+            ));
         }
     }
     Ok(())
@@ -140,14 +165,10 @@ fn check_hashes(hashes: &[HashValue], path: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Checks the four rules a `bundle` part carries, all of them past what a schema can see.
-fn check_nested(part: &Part, depth: usize, path: &str) -> Result<(), Error> {
-    if depth >= crate::MAX_NESTING_DEPTH {
-        return Err(Error::at(path, ErrorKind::NestingTooDeep));
-    }
-
-    // A thin `bundle` part is a legitimate shape — that is what a thin card is — but its payload
-    // is not here to check, so the rules below wait until it is resolved.
+/// Checks the rules a `bundle` part carries, all of them past what a schema can see.
+fn check_nested(part: &Part, outer: &Shape, path: &str) -> Result<(), Error> {
+    // A compressed `bundle` part has to be inflated before any of this can be read, and that is
+    // the caller's business rather than a validation step.
     let Payload::Embedded(bytes) = &part.payload else {
         return Ok(());
     };
@@ -177,7 +198,30 @@ fn check_nested(part: &Part, depth: usize, path: &str) -> Result<(), Error> {
         return Err(Error::at(path, ErrorKind::NestedHashMismatch));
     }
 
-    inner.validate_at_depth(depth + 1).map_err(|e| e.within(&format!("{path}.payload")))
+    // What a shape may hold, which is what bounds the nesting now that the depth cap is gone. A
+    // shape this version does not define is not inspected: its rules are in a document this
+    // decoder has not seen, so it is round-tripped rather than judged.
+    // An inner shape this version does not define is not judged on either side: its rules are in
+    // a document this decoder has not seen, so the bundle round-trips rather than being rejected.
+    if !outer.is_known() || !inner.shape().is_known() {
+        return Ok(());
+    }
+    let (holds, shape, reason) = match outer {
+        Shape::Save => (false, "save", "holds no nested bundle"),
+        Shape::Card => (matches!(inner.shape(), Shape::Save), "card", "holds saves and nothing else"),
+        Shape::Device => {
+            (matches!(inner.shape(), Shape::Card | Shape::Save), "device", "holds cards and saves")
+        }
+        Shape::Collection => {
+            (!matches!(inner.shape(), Shape::Collection), "collection", "does not hold another collection")
+        }
+        Shape::Unknown(_) => return Ok(()),
+    };
+    if !holds {
+        return Err(Error::at(path, ErrorKind::PartNotInShape { shape, reason }));
+    }
+
+    inner.validate_inner().map_err(|e| e.within(&format!("{path}.payload")))
 }
 
 #[cfg(test)]
@@ -219,19 +263,32 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_clock_reading_on_a_bundle_part() {
-        // A nested bundle inherits nothing from the header around it, so a reading put on the
-        // wrapper would vanish the moment the save is sliced out. The spec makes that a MUST NOT.
+    fn a_clock_reading_belongs_on_a_saves_header_and_nowhere_else() {
+        // 0.2 narrowed this: the clock keys are a save's bundle header, full stop. A reading put
+        // on any part would vanish the moment the save is sliced out, and one on a card's header
+        // would belong to no save in particular.
+        let key = crate::ReverseDnsName::parse("x.1sav.rtc").unwrap();
+        let reading = dcbor::CBOR::from(1u64);
+
+        // On a `bundle` part, which is what the rule used to be about.
         let inner = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
         let mut outer = Part::new(0, inner.to_vec().unwrap());
         outer.kind = PartKind::Bundle;
-        outer.extensions.insert(crate::ReverseDnsName::parse("x.1sav.rtc").unwrap(), dcbor::CBOR::from(1u64));
-
-        let bundle = bundle_of(vec![outer]);
+        outer.extensions.insert(key.clone(), reading.clone());
         assert_eq!(
-            bundle.validate().unwrap_err().kind(),
-            &ErrorKind::NotOnABundlePart("x.1sav.rtc".to_owned())
+            bundle_of(vec![outer]).validate().unwrap_err().kind(),
+            &ErrorKind::KeyOutOfPlace { key: "x.1sav.rtc".to_owned(), allowed: "a save's bundle header" }
         );
+
+        // And on a plain part, which it now also covers.
+        let mut plain = Part::new(0, *b"SAVE");
+        plain.extensions.insert(key.clone(), reading.clone());
+        assert!(bundle_of(vec![plain]).validate().is_err(), "not on a plain part either");
+
+        // A save's own header is where it belongs.
+        let mut save = bundle_of(vec![Part::new(0, *b"SAVE")]);
+        save.header.extensions.insert(key, reading);
+        save.validate().expect("a save's header carries the reading");
     }
 
     #[test]
@@ -245,15 +302,6 @@ mod tests {
             outer.extensions.insert(crate::ReverseDnsName::parse(key).unwrap(), dcbor::CBOR::from(1u64));
             assert!(bundle_of(vec![outer]).validate().is_err(), "{key} on a bundle part");
         }
-    }
-
-    #[test]
-    fn a_clock_reading_is_fine_on_an_ordinary_part() {
-        // The restriction is about `bundle` parts specifically: a part whose bytes came off a
-        // different medium may name its own clock.
-        let mut part = Part::new(0, *b"SAVE");
-        part.extensions.insert(crate::ReverseDnsName::parse("x.1sav.rtc").unwrap(), dcbor::CBOR::from(1u64));
-        assert!(bundle_of(vec![part]).validate().is_ok());
     }
 
     #[test]

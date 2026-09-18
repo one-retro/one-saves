@@ -57,9 +57,10 @@ fn cases() -> Vec<Case> {
 /// The corpus is run at [`Strictness::Schema`].
 ///
 /// Two invalid cases — `header-unknown-integer-key` and `part-unknown-integer-key` — are invalid
-/// against the version 0.1 schema and *accepted* by a shipped decoder, which ignores and
+/// against the version 0.2 schema and *accepted* by a shipped decoder, which ignores and
 /// round-trips an integer key it does not know. Running the corpus in decoder mode would fail
-/// those two for being right.
+/// those two for being right. A shape a later version assigned is the same asymmetry; see
+/// `a_decoder_round_trips_a_shape_a_later_version_defined` for why the corpus cannot show it.
 #[test]
 fn corpus() {
     let mut failures = Vec::new();
@@ -67,7 +68,7 @@ fn corpus() {
 
     // A manifest this harness failed to read would otherwise pass by testing nothing.
     let (valid, invalid): (Vec<_>, Vec<_>) = cases.iter().partition(|c| c.expect_valid);
-    assert_eq!((valid.len(), invalid.len()), (24, 49), "the corpus is not the size it should be");
+    assert_eq!((valid.len(), invalid.len()), (27, 63), "the corpus is not the size it should be");
 
     for case in cases {
         let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
@@ -161,6 +162,39 @@ fn unknown_names_and_keys_survive_a_round_trip() {
     }
 }
 
+/// A shape a later minor version assigned is round-tripped, not rejected.
+///
+/// The corpus covers half of this — `shape-unknown` is invalid against the schema, which pins the
+/// four shapes 0.2 defines. It cannot cover the other half: the harness runs everything at
+/// [`Strictness::Schema`], and the manifest has no category for "invalid to the schema, fine for a
+/// decoder". So the accepting side is built here, exactly as it is for the two unknown-integer-key
+/// cases below.
+#[test]
+fn a_decoder_round_trips_a_shape_a_later_version_defined() {
+    use one_saves::{Header, Part, Shape};
+
+    let later = Bundle {
+        header: Header {
+            shape: "disc-set".parse::<one_saves::Slug>().map(Shape::from_slug).unwrap(),
+            ..Header::default()
+        },
+        parts: vec![Part::new(0, *b"SAVE")],
+    };
+    let bytes = later.to_vec().expect("encodes");
+
+    // The schema pins the four this version defines, so it refuses.
+    assert!(
+        Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
+        "the schema must refuse a shape it does not define"
+    );
+
+    // A shipped decoder parses it, keeps the slug, and gives the bytes back unchanged.
+    let read = Bundle::from_slice(&bytes).expect("a decoder must accept a later version's shape");
+    assert_eq!(read.shape().as_str(), "disc-set");
+    assert!(!read.shape().is_known(), "and must know it cannot act on it");
+    assert_eq!(read.to_vec().expect("re-encode"), bytes, "an unknown shape must round-trip");
+}
+
 /// A shipped decoder is looser than the schema over exactly one thing.
 #[test]
 fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
@@ -169,7 +203,7 @@ fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
 
         assert!(
             Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
-            "{name} must fail against the version 0.1 schema"
+            "{name} must fail against the version 0.2 schema"
         );
 
         let bundle = Bundle::from_slice(&bytes)
@@ -181,79 +215,110 @@ fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
         );
     }
 }
-
-/// Nesting depth: the corpus reaches the cap but cannot express going past it.
+/// What each shape may hold, which is what replaced the depth cap in 0.2.
 ///
-/// A bundle deeper than the cap is rejected by a rule about structure rather than by anything a
-/// decoder sees in one map, so the over-deep bundle is built here.
+/// A save holds no nested bundle, a card holds saves, a device holds cards and saves, and a
+/// collection holds anything but another collection. Nesting is bounded by those rules rather
+/// than by counting, so the check is that each refusal names the shape that refused.
 #[test]
-fn rejects_a_bundle_nested_deeper_than_the_cap() {
+fn a_shape_holds_only_what_its_document_allows() {
     use one_saves::{Header, Part, PartKind};
 
-    // A save, wrapped until it is one level past what a collection of cards of saves needs.
-    let mut bundle = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
-
-    for depth in 0..=one_saves::MAX_NESTING_DEPTH {
-        let payload = bundle.to_vec().expect("inner bundle encodes");
+    fn wrap(inner: &Bundle, outer: Shape) -> Bundle {
+        let payload = inner.to_vec().expect("inner bundle encodes");
         let mut part = Part::new(0, payload);
         part.kind = PartKind::Bundle;
-        bundle = Bundle { header: Header::default(), parts: vec![part] };
-
-        let deep = depth == one_saves::MAX_NESTING_DEPTH;
-        assert_eq!(
-            bundle.validate().is_err(),
-            deep,
-            "a bundle part at depth {depth} should {} be rejected",
-            if deep { "" } else { "not" }
-        );
+        let mut header = Header { shape: outer, ..Header::default() };
+        // Each shape admits a different header; give it the least that makes it well-formed.
+        match &header.shape {
+            Shape::Device => {
+                header.system = Some("n64".parse().unwrap());
+                // A device tells its components apart by `role`, and requires one on every part.
+                part.role = Some("cartridge".parse().unwrap());
+            }
+            Shape::Card => panic!("this helper does not build the card map a card needs"),
+            _ => {}
+        }
+        Bundle { header, parts: vec![part] }
     }
+
+    let save = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
+    assert_eq!(save.shape(), &Shape::Save);
+    save.validate().expect("a bare save is valid");
+
+    // A collection may hold a save or a device, and not another collection.
+    wrap(&save, Shape::Collection).validate().expect("a collection holds a save");
+    let device = wrap(&save, Shape::Device);
+    device.validate().expect("a device holds a save");
+    wrap(&device, Shape::Collection).validate().expect("a collection holds a device");
+
+    let collection = wrap(&save, Shape::Collection);
+    let nested = wrap(&collection, Shape::Collection);
+    assert!(nested.validate().is_err(), "a collection may not hold another collection");
+
+    // A device holds cards and saves, never a collection.
+    assert!(wrap(&collection, Shape::Device).validate().is_err(), "a device holds no collection");
+
+    // And every one of a device's parts names a role, since that is the only thing telling two
+    // components apart: without it both would fall back to `primary`.
+    let mut roleless = wrap(&save, Shape::Device);
+    roleless.parts[0].role = None;
+    assert!(roleless.validate().is_err(), "a device names a role on every part");
 }
 
 /// What each corpus case *is*, checked against the shapes the corpus was written to demonstrate.
 ///
-/// [`Bundle::shape`] is spec knowledge rather than plumbing, so it is pinned to the spec's own
-/// files: every case named here has a note in the corpus manifest saying which tier it belongs
-/// to, and this is that note as an assertion.
+/// Since 0.2 a bundle names its own shape, so this is no longer a test of a derivation. What it
+/// pins is the mapping from the slug on the wire to [`Shape`], and that the corpus still exercises
+/// all four: a decoder that silently read every shape as `save` would pass a round-trip test and
+/// fail this one.
 #[test]
-fn valid_cases_classify_into_the_shapes_the_corpus_describes() {
-    let expected = [
+fn valid_cases_carry_the_shapes_the_corpus_describes() {
+    let exemplars = [
         // "An empty header and one bare save. The floor of what a bundle is."
         ("minimal", Shape::Save),
-        // "No `system`, because several consoles read one and none of them owns it." Absence on
-        // all three header keys is not enough on its own — a collection also holds bundles.
-        ("token-bound-save", Shape::Save),
-        ("compressed-and-aux", Shape::Save),
-        ("binding", Shape::Save),
         ("transfer-pak", Shape::Save),
-        ("zero-byte-payload", Shape::Save),
         ("ps1-card", Shape::Card),
-        ("ps2-card", Shape::Card),
-        ("card-of-one-game", Shape::Card),
-        ("card-system-area", Shape::Card),
-        ("card-image-beside-splits", Shape::Card),
-        // The save spans two blocks, but the bundle around it is still a card: what the case
-        // varies is the size of the one nested entry, not the tier it sits in.
-        ("ps1-multi-block-save", Shape::Card),
-        // A thin card's entries point at content hashes, which changes nothing about what it is.
-        ("thin-card", Shape::Card),
         // "A `card_image` is the only part it can have, since there is no save to nest."
         ("empty-formatted-card", Shape::Card),
+        // "One console's storage read whole. A Sega CD carries internal backup RAM and a Backup
+        // RAM Cart." Two places, one console.
+        ("device", Shape::Device),
+        // One game whose state spans a cartridge and a Controller Pak. Before 0.2 this was the
+        // case that fell through every tier; it is a device, because the console is what keeps
+        // the two halves together.
+        ("cartridge-and-pak", Shape::Device),
         // "No system, no game, no card of its own, and entries that do not agree on a system."
         ("collection", Shape::Collection),
-        // "Neither a card (the bundle is not one) nor a collection (it has a system and a game)."
-        ("cartridge-and-card", Shape::Mixed),
     ];
 
     let mut failures = Vec::new();
-    for (name, want) in expected {
+    for (name, want) in exemplars {
         let bytes = fs::read(corpus_dir().join(format!("valid/{name}.cbor")))
             .unwrap_or_else(|e| panic!("read {name}: {e}"));
         let bundle = Bundle::from_slice(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let got = bundle.shape();
-        if got != want {
-            failures.push(format!("{name}: classified as {got}, not {want}"));
+        if bundle.shape() != &want {
+            failures.push(format!("{name}: carries {}, not {want}", bundle.shape()));
         }
     }
-
     assert!(failures.is_empty(), "{} case(s) failed:\n{}", failures.len(), failures.join("\n"));
+
+    // Every valid case names a shape this version defines, and between them they cover all four.
+    let mut seen = std::collections::BTreeSet::new();
+    for case in cases().into_iter().filter(|c| c.expect_valid) {
+        let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
+        let bundle = Bundle::from_slice(&bytes).unwrap_or_else(|e| panic!("{}: {e}", case.name));
+        assert!(
+            bundle.shape().is_known(),
+            "{} names {}, which this version does not define",
+            case.name,
+            bundle.shape()
+        );
+        seen.insert(bundle.shape().to_string());
+    }
+    assert_eq!(
+        seen.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["card", "collection", "device", "save"],
+        "the corpus should exercise every shape"
+    );
 }

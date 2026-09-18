@@ -90,6 +90,38 @@ pub enum ErrorKind {
     /// A required key was absent.
     MissingKey(&'static str),
 
+    /// A shape this version does not define.
+    ///
+    /// Only [`Strictness::Schema`](crate::Strictness::Schema) raises this. A shipped decoder
+    /// parses and round-trips such a bundle, because the only thing an unrecognised shape can be
+    /// is one a later minor version assigned — the same asymmetry as
+    /// [`UnknownIntegerKey`](ErrorKind::UnknownIntegerKey). It must still decline any operation
+    /// that depends on knowing what the shape means.
+    UnknownShape(String),
+
+    /// A key the bundle's shape does not admit.
+    ///
+    /// Each shape takes a different header: a card is a card because it carries the `card` map, a
+    /// save never carries one, a device names a `system` and no `game`, and a collection has
+    /// nothing of its own to say. The shape is read first, so this names what contradicted it.
+    KeyNotInShape {
+        /// The shape the header named.
+        shape: &'static str,
+        /// The field that shape does not admit.
+        field: &'static str,
+    },
+
+    /// A part whose kind the bundle's shape does not admit.
+    ///
+    /// A save holds no nested bundle: a component that is a card of its own makes the bundle a
+    /// device rather than a save.
+    PartNotInShape {
+        /// The shape the header named.
+        shape: &'static str,
+        /// What was wrong with the part.
+        reason: &'static str,
+    },
+
     /// An integer key this version does not define.
     ///
     /// Only [`Strictness::Schema`](crate::Strictness::Schema) raises this. A shipped decoder
@@ -161,29 +193,21 @@ pub enum ErrorKind {
     /// `encoding` named something other than `"zstd"`.
     UnknownEncoding(String),
 
-    /// An external reference's hash did not equal the part's `sha256`.
-    ExternalRefHashMismatch,
-
     /// A part's `sha256` did not equal the digest of its payload.
     PayloadHashMismatch,
 
-    /// A thin part set `encoding`.
+    /// An extension key placed somewhere its own specification does not allow.
     ///
-    /// A reference is keyed by the hash of the uncompressed payload, so what the store holds is
-    /// uncompressed by construction.
-    ThinPartCompressed,
-
-    /// An extension key that describes a payload was put on the `bundle` part wrapping it.
-    ///
-    /// A nested bundle inherits nothing from the header around it, so such a value belongs in the
-    /// inner bundle's own header, where it survives the save being sliced out.
-    NotOnABundlePart(String),
-
-    /// A `bundle` part nested deeper than the cap of 2.
-    ///
-    /// A save, a card and a collection of cards fill all three tiers. Anything deeper is
-    /// malformed, and decoders enforce it so recursion stays bounded.
-    NestingTooDeep,
+    /// Each key names every placement it admits, and names it by shape, because a header and a
+    /// part mean different things in each. The clock keys are a save's bundle header and nowhere
+    /// else: a nested bundle inherits nothing from the header around it, so a reading put on a
+    /// part would be dropped by the byte copy that extracting a save is.
+    KeyOutOfPlace {
+        /// The key.
+        key: String,
+        /// Where its specification does allow it.
+        allowed: &'static str,
+    },
 
     /// A part inside a nested bundle was compressed or referenced rather than embedded plain.
     ///
@@ -204,12 +228,6 @@ pub enum ErrorKind {
 
     /// A `zstd` payload did not inflate, or inflated to something other than its stated `size`.
     ZstdInvalid(String),
-
-    /// A thin bundle was asked for something only a self-contained one can answer.
-    ///
-    /// Normalizing a thin bundle means embedding every referenced payload, which means resolving
-    /// every reference against a store first.
-    Thin,
 }
 
 impl fmt::Display for ErrorKind {
@@ -222,6 +240,15 @@ impl fmt::Display for ErrorKind {
             ErrorKind::NotABundle { found: None } => f.write_str("not wrapped in the bundle tag"),
             ErrorKind::Type { expected } => write!(f, "expected {expected}"),
             ErrorKind::MissingKey(name) => write!(f, "required key `{name}` is absent"),
+            ErrorKind::UnknownShape(shape) => {
+                write!(f, "shape `{shape}` is not defined by version {}", crate::SPEC_VERSION)
+            }
+            ErrorKind::KeyNotInShape { shape, field } => {
+                write!(f, "a `{shape}` bundle does not carry `{field}`")
+            }
+            ErrorKind::PartNotInShape { shape, reason } => {
+                write!(f, "a `{shape}` bundle {reason}")
+            }
             ErrorKind::UnknownIntegerKey(key) => {
                 write!(f, "integer key {key} is not defined by version {}", crate::SPEC_VERSION)
             }
@@ -254,22 +281,11 @@ impl fmt::Display for ErrorKind {
             ErrorKind::UnknownEncoding(found) => {
                 write!(f, "`{found}` is not an encoding; only `zstd` is ever written")
             }
-            ErrorKind::ExternalRefHashMismatch => {
-                f.write_str("the reference's hash does not equal the part's `sha256`")
-            }
             ErrorKind::PayloadHashMismatch => {
                 f.write_str("`sha256` does not equal the digest of the payload")
             }
-            ErrorKind::ThinPartCompressed => {
-                f.write_str("is thin and sets `encoding`; a store holds payloads uncompressed")
-            }
-            ErrorKind::NotOnABundlePart(key) => write!(
-                f,
-                "`{key}` describes a payload, so it belongs in the nested bundle's own header \
-                 rather than on the part wrapping it"
-            ),
-            ErrorKind::NestingTooDeep => {
-                write!(f, "nests deeper than the cap of {}", crate::MAX_NESTING_DEPTH)
+            ErrorKind::KeyOutOfPlace { key, allowed } => {
+                write!(f, "`{key}` belongs on {allowed} and nowhere else")
             }
             ErrorKind::NestedPartNotNormalized => {
                 f.write_str("is inside a nested bundle and is not embedded uncompressed")
@@ -284,9 +300,6 @@ impl fmt::Display for ErrorKind {
                 f.write_str("is `zstd` and this build of one-saves has the `zstd` feature off")
             }
             ErrorKind::ZstdInvalid(why) => write!(f, "`zstd` payload is not readable: {why}"),
-            ErrorKind::Thin => {
-                f.write_str("is thin, so normalizing it needs every reference resolved against a store first")
-            }
         }
     }
 }

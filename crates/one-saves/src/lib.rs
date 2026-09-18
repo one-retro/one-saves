@@ -59,15 +59,17 @@
 //! # Nesting: cards, collections and the saves inside them
 //!
 //! A [`bundle`](crate::PartKind::Bundle) part's payload is itself a complete `.1saves` file, which
-//! is how a card holds its saves and how a collection holds its cards. Ask
-//! [`shape`](crate::Bundle::shape) what you have been handed, then step in with the same
-//! [`from_slice`](crate::Bundle::from_slice) you used on the outside:
+//! is how a card holds its saves and how a collection holds its entries. Ask
+//! [`shape`](crate::Bundle::shape) what you have been handed — a bundle names its own since 0.2 —
+//! then step in with the same [`from_slice`](crate::Bundle::from_slice) you used on the outside.
+//! Check [`is_known`](crate::Shape::is_known) first: a shape a later version defines must be
+//! round-tripped rather than walked.
 //!
 //! ```no_run
 //! use one_saves::{Bundle, Part, PartKind, Shape};
 //!
 //! let card = Bundle::from_slice(&std::fs::read("card.1saves")?)?;
-//! assert_eq!(card.shape(), Shape::Card);
+//! assert_eq!(card.shape(), &Shape::Card);
 //!
 //! for part in &card.parts {
 //!     if part.kind == PartKind::Bundle {
@@ -142,7 +144,7 @@ pub use codec::Strictness;
 pub use error::{Error, ErrorKind};
 pub use hash::{HashAlgorithm, HashError, HashValue};
 pub use model::{
-    Bundle, Card, Extensions, ExternalRef, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys,
+    Bundle, Card, Extensions, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys,
 };
 pub use name::{Name, NameError, ReverseDnsName, Slug};
 pub use shape::Shape;
@@ -165,15 +167,7 @@ pub const EXTENSION: &str = "1saves";
 pub const MEDIA_TYPE: &str = "application/vnd.1saves+cbor";
 
 /// The version of the specification this crate implements.
-pub const SPEC_VERSION: &str = "0.1";
-
-/// How deep a `bundle` part may nest.
-///
-/// A bundle's own parts are depth 0, a nested bundle's are depth 1, and one nested inside that is
-/// depth 2. Put the other way: a `bundle` part may sit at depth 0 or depth 1 and never at depth
-/// 2. A save, a card and a collection of cards fill all three tiers; they are the deepest shapes,
-/// not the only ones.
-pub const MAX_NESTING_DEPTH: usize = 2;
+pub const SPEC_VERSION: &str = "0.2";
 
 /// How long a part's `path` may run, in bytes.
 ///

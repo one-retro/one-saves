@@ -12,6 +12,7 @@ use dcbor::CBOR;
 
 use crate::hash::HashValue;
 use crate::name::{Name, ReverseDnsName, Slug};
+use crate::shape::Shape;
 
 /// Extension keys and their values, keyed by a reverse-DNS name.
 ///
@@ -38,6 +39,12 @@ pub struct Bundle {
 /// Everything the bundle says about itself.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Header {
+    /// What this bundle is. Required, and the first key on the wire.
+    ///
+    /// Read rather than derived: since 0.2 the bundle names its own shape, and what its parts mean
+    /// is that shape's document. A shape this version does not define is
+    /// [`Unknown`](Shape::Unknown) and round-trips; see there before acting on one.
+    pub shape: Shape,
     /// When the bundle was assembled, in whole epoch seconds.
     pub created_at: Option<i64>,
     /// The system **these bytes are a save for**: the one that reads them natively, whatever
@@ -86,8 +93,13 @@ pub struct Game {
     pub rom_filename: Option<String>,
     /// A per-system serial code out of the ROM header, such as `SLUS-00404`.
     pub serial: Option<String>,
-    /// The best-known game name, as a free string.
-    pub name: Option<String>,
+    /// The best-known game title, as a free string.
+    pub title: Option<String>,
+    /// Which system's release these hints identify.
+    ///
+    /// Distinct from the header's [`system`](Header::system), which says what will load the bytes.
+    /// The two answer different questions even where they agree.
+    pub system: Option<Slug>,
     /// Integer keys from a later minor version.
     pub unknown: UnknownKeys,
 }
@@ -100,7 +112,8 @@ impl Game {
             && self.rom_hashes.is_empty()
             && self.rom_filename.is_none()
             && self.serial.is_none()
-            && self.name.is_none()
+            && self.title.is_none()
+            && self.system.is_none()
             && self.unknown.is_empty()
     }
 }
@@ -318,14 +331,13 @@ impl Part {
 
 /// A part's bytes, in one of the three shapes the format allows.
 ///
-/// Which shape a part is in decides whether `size` appears on the wire, so the two cannot
-/// disagree:
+/// Which form a part is in decides whether `size` appears on the wire, so the two cannot disagree.
+/// Since 0.2 `size` rides on compression and nothing else:
 ///
-/// | Shape                  | `size`  | `encoding` | payload            |
-/// | ---------------------- | ------- | ---------- | ------------------ |
-/// | Embedded, uncompressed | absent  | absent     | byte string        |
-/// | Embedded, compressed   | present | `"zstd"`   | byte string        |
-/// | Thin                   | present | absent     | external reference |
+/// | Form         | `size`  | `encoding` | payload     |
+/// | ------------ | ------- | ---------- | ----------- |
+/// | Uncompressed | absent  | absent     | byte string |
+/// | Compressed   | present | `"zstd"`   | byte string |
 #[derive(Debug, Clone, PartialEq)]
 pub enum Payload {
     /// The bytes, inline and uncompressed. The payload states its own length, so no `size`.
@@ -337,13 +349,6 @@ pub enum Payload {
         /// The uncompressed byte length, which the compressed form does not state.
         size: u64,
     },
-    /// A reference to bytes held in a content-addressable store.
-    External {
-        /// Where to find them.
-        reference: ExternalRef,
-        /// The uncompressed byte length.
-        size: u64,
-    },
 }
 
 impl Default for Payload {
@@ -353,35 +358,20 @@ impl Default for Payload {
 }
 
 impl Payload {
-    /// The uncompressed byte length, whichever shape this is.
+    /// The uncompressed byte length, whichever form this is.
     #[must_use]
     pub fn len(&self) -> u64 {
         match self {
             Payload::Embedded(bytes) => bytes.len() as u64,
-            Payload::Compressed { size, .. } | Payload::External { size, .. } => *size,
+            Payload::Compressed { size, .. } => *size,
         }
     }
 
-    /// Whether the payload is zero bytes long, which is a shape the format allows.
+    /// Whether the payload is zero bytes long, which the format allows.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    /// Whether the bytes are here rather than in a store.
-    #[must_use]
-    pub fn is_embedded(&self) -> bool {
-        !matches!(self, Payload::External { .. })
-    }
-}
-
-/// A reference to a payload held elsewhere, keyed by the hash of the uncompressed bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExternalRef {
-    /// The SHA-256 of the referenced bytes, which must equal the part's own `sha256`.
-    pub hash: HashValue,
-    /// Where to fetch them, when the producer knows somewhere to point.
-    pub uri: Option<String>,
 }
 
 #[cfg(test)]

@@ -43,7 +43,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
     let mut parts = Vec::new();
     for save in vmu.saves() {
-        let game = Some(Game { name: Some(save.name.clone()), ..Game::default() });
+        let game = Some(Game { title: Some(save.name.clone()), ..Game::default() });
 
         let mut part = save_part(Format::Vmu, parts.len(), save.data.clone(), game, options)?;
         part.path = Some(save.name.clone());
