@@ -602,40 +602,110 @@ impl App {
     }
 
     /// The question, over the top of everything, because it is the only thing that takes a key.
+    ///
+    /// Sized to what it holds rather than to a number picked by eye: a question wraps to however
+    /// many lines the path in it needs, and a box built to fit the short ones puts the buttons
+    /// past its own bottom edge on the long ones. The buttons also get a row of their own below
+    /// the text, so the thing that has to be reachable is not what runs out of room first.
     fn draw_modal(&self, frame: &mut Frame, area: Rect) {
         let Mode::Confirming(confirm) = &self.mode else { return };
 
-        let width = area.width.saturating_sub(8).clamp(20, 64);
-        let height = if confirm.warning.is_some() { 7 } else { 6 };
+        let width = area.width.saturating_sub(8).clamp(24, 68);
+        let text_width = usize::from(width).saturating_sub(4);
+
+        let mut body = vec![Line::from("")];
+        for line in wrap(&confirm.question, text_width) {
+            body.push(Line::from(line));
+        }
+        if let Some(warning) = &confirm.warning {
+            body.push(Line::from(""));
+            for line in wrap(warning, text_width) {
+                body.push(Line::styled(line, Style::default().fg(Color::Yellow)));
+            }
+        }
+        body.push(Line::from(""));
+
+        // Two borders, the text, and one row for the buttons.
+        let wanted = u16::try_from(body.len()).unwrap_or(u16::MAX).saturating_add(3);
+        let height = wanted.min(area.height);
         let box_area = Rect {
             x: area.x + (area.width.saturating_sub(width)) / 2,
             y: area.y + (area.height.saturating_sub(height)) / 2,
             width,
-            height: height.min(area.height),
+            height,
         };
 
-        let mut lines = vec![Line::from(""), Line::from(confirm.question.clone())];
-        if let Some(warning) = &confirm.warning {
-            lines.push(Line::styled(warning.clone(), Style::default().fg(Color::Yellow)));
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            button(" Yes ", confirm.yes),
-            Span::raw("   "),
-            button(" No ", !confirm.yes),
-        ]));
-
         frame.render_widget(Clear, box_area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(Style::default().fg(Color::Yellow));
+        let inner = block.inner(box_area);
+        frame.render_widget(block, box_area);
+
+        // The buttons take their row first, so a question too tall for the screen loses text
+        // rather than losing the only way to answer it.
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        frame.render_widget(Paragraph::new(body).alignment(Alignment::Center), rows[0]);
         frame.render_widget(
-            Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: true }).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Double)
-                    .border_style(Style::default().fg(Color::Yellow)),
-            ),
-            box_area,
+            Paragraph::new(Line::from(vec![
+                button(" Yes ", confirm.yes),
+                Span::raw("   "),
+                button(" No ", !confirm.yes),
+            ]))
+            .alignment(Alignment::Center),
+            rows[1],
         );
     }
+}
+
+/// Breaks text to a column width, on a space where it can and mid-word where it must.
+///
+/// Counted in terminal cells rather than characters, so a full-width title wraps where it looks
+/// like it should. A word longer than the width — which a path with no spaces in it is — is cut
+/// rather than allowed to run past the edge.
+fn wrap(text: &str, columns: usize) -> Vec<String> {
+    use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
+
+    let columns = columns.max(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        // A space is only needed where something is already on the line.
+        let joined = usize::from(!line.is_empty()) + word.width();
+        if !line.is_empty() && line.width() + joined > columns {
+            lines.push(std::mem::take(&mut line));
+        }
+        if word.width() > columns {
+            // Nothing to break on, so it goes in chunks of whatever fits.
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            let mut chunk = String::new();
+            for character in word.chars() {
+                if chunk.width() + character.width().unwrap_or(0) > columns {
+                    lines.push(std::mem::take(&mut chunk));
+                }
+                chunk.push(character);
+            }
+            line = chunk;
+            continue;
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 /// How large a save's picture is drawn, on its longest side in pixels.

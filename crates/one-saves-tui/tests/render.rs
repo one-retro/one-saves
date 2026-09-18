@@ -471,3 +471,36 @@ fn the_other_questions_open_on_yes() {
         app.on_key(KeyCode::Esc);
     }
 }
+
+/// The question box is as tall as what it holds, and the buttons are always in it.
+///
+/// A box built to fit a short question puts its buttons past its own bottom edge as soon as a path
+/// long enough to wrap turns up — which is every real path, and which left no way to answer.
+#[test]
+fn a_question_that_wraps_still_shows_its_buttons() {
+    // A path long enough to wrap at any width worth drawing.
+    let deep = std::env::temp_dir().join("Library/Application Support/DuckStation/memcards");
+    std::fs::create_dir_all(&deep).expect("a deep directory");
+    let target = deep.join("shared_card_1.mcd");
+    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
+    std::fs::copy(ps1.join("Gran Turismo/DuckStation/shared_card_1.mcd"), &target)
+        .expect("copies the fixture");
+
+    let mut app = App::new(vec![Card::open(&target).expect("opens")], picker());
+    app.cards[0].remove(0).expect("something to write");
+    app.on_key(KeyCode::Char('w'));
+
+    for (width, height) in [(46, 20), (80, 20), (120, 40)] {
+        let drawn = screen(&mut app, width, height);
+        assert!(drawn.contains("Write over"), "the question is there at {width}x{height}");
+        assert!(drawn.contains("Yes"), "and so is Yes at {width}x{height}:\n{drawn}");
+        assert!(drawn.contains("No"), "and No at {width}x{height}");
+        // The box closes, so nothing it holds fell off the bottom.
+        assert!(drawn.contains('╚'), "the box closes at {width}x{height}:\n{drawn}");
+
+        // The buttons sit inside the box rather than past its last line.
+        let bottom = drawn.lines().position(|line| line.contains('╚')).expect("a bottom");
+        let buttons = drawn.lines().position(|line| line.contains("Yes")).expect("buttons");
+        assert!(buttons < bottom, "buttons are inside the box at {width}x{height}");
+    }
+}
