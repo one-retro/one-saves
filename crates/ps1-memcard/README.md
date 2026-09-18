@@ -17,6 +17,23 @@ The same 131072 bytes ship as `.mcr`, `.mcd`, `.bin` and `.srm` bare, and behind
 (DexDrive), `.vgs` (VGS/Connectix) and `.vmp` (PSP). `strip_container` takes the wrapper off, which
 is why this is one reader rather than five.
 
+## One save, on its own
+
+A save also travels without a card: `.psv` is what a PS3 or a Vita exports, `.mcs` what most PC
+tools write. `read_single` reads either into a `Save` a `CardBuilder` can file onto a card.
+
+```rust,no_run
+use ps1_memcard::{CardBuilder, read_single};
+
+let save = read_single(&std::fs::read("BASLUS-01476.PSV")?).expect("a save");
+let card = CardBuilder::new().add(save).build()?;
+```
+
+The name comes out of the container, not the filename: exporters hex-escape anything outside
+`[A-Za-z0-9]`, so the save a console calls `BASLUS-01363-00002` arrives as
+`BASLUS-013632D3030303032.PSV`. A `.psv` holding a PS2 save is refused rather than read — that one
+is a directory of files, not a run of blocks.
+
 ## The layout
 
 | Unit | Size | Notes |

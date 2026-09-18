@@ -1,6 +1,6 @@
 [package]
 name = "ps1-memcard"
-description = "Read and write PlayStation memory card images: directory, block chains and the DexDrive, VGS and PSP containers"
+description = "Read and write PlayStation memory cards: directory, block chains, the DexDrive, VGS and PSP containers, and single saves as .psv or .mcs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

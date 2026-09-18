@@ -124,3 +124,39 @@ fn an_icon_belongs_to_the_save_rather_than_to_the_card() {
         assert!(!part.extensions.contains_key(&key));
     }
 }
+
+/// A save exported on its own, filed onto a card so the card reader can be pointed at it.
+#[cfg(feature = "shift-jis")]
+fn from_psv(rest: &str) -> Bundle {
+    let path = format!("{}/../../data/saves/PS1/{rest}", env!("CARGO_MANIFEST_DIR"));
+    let save = ps1_memcard::read_single(&std::fs::read(path).expect("the vendored save")).expect("a save");
+    let image = ps1_memcard::CardBuilder::new().add(save).build().expect("one save fits");
+    let card =
+        one_saves_convert::card::read(Format::Ps1Card, &image, &CardOptions::default()).expect("reads");
+    Bundle::from_slice(&card.parts[0].bytes().expect("nested")).expect("a save")
+}
+
+/// A Japanese release's title, which is the case the Shift-JIS table exists for.
+///
+/// The Latin letters here are full-width ones — the card stores `Ｃ` at 0x8262, not `C` at 0x43 —
+/// and they stay full-width. Narrowing them is what NFKC would do and the format asks for NFC, so
+/// a reader that normalises harder than it was told writes a title the save does not carry.
+#[cfg(feature = "shift-jis")]
+#[test]
+fn a_japanese_title_keeps_its_full_width_letters() {
+    let save = from_psv("Capcom vs SNK Millennium Fight 2000 Pro/PS3/BISLPM-87053.PSV");
+    assert_eq!(label_of(&save), "ＣＡＰＣＯＭ　ＶＳ．　ＳＮＫ　ＰＲＯ");
+}
+
+/// A save that spans two blocks, labelled off the first one.
+///
+/// Final Fantasy IV writes the party's HP and the playtime into the title, so what the console
+/// lists is the state of the game rather than a name for it. Nothing here has to understand that;
+/// it is worth a fixture because a title full of digits and punctuation is the one a Shift-JIS
+/// table gets wrong quietly, where a title full of letters comes out looking fine either way.
+#[cfg(feature = "shift-jis")]
+#[test]
+fn a_two_block_save_is_labelled_off_its_first_block() {
+    let save = from_psv("Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV");
+    assert_eq!(label_of(&save), "ＦＦ４　３１０７／３１０７　　　４５：２０");
+}

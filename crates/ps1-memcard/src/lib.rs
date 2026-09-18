@@ -21,6 +21,9 @@
 //! `.gme` (DexDrive), `.vgs` (VGS/Connectix) and `.vmp` (PSP). [`strip_container`] takes the
 //! wrapper off, which is why this is one reader rather than five.
 //!
+//! A save can also arrive on its own, as `.psv` from a PS3 or a Vita or as `.mcs` from a PC tool.
+//! [`read_single`] reads those into a [`Save`] a [`CardBuilder`] can file onto a card.
+//!
 //! # What round-trips, and what does not
 //!
 //! [`MemoryCard::parse`] keeps each save's 128-byte directory entry verbatim, so whatever the
@@ -36,9 +39,11 @@
 
 mod build;
 mod error;
+mod single;
 
 pub use build::CardBuilder;
 pub use error::{Error, Result};
+pub use single::read_single;
 
 /// One frame: the unit the header block is divided into, and a directory entry's length.
 pub const FRAME: usize = 128;
