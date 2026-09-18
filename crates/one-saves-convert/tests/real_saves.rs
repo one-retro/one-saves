@@ -550,3 +550,84 @@ fn a_save_is_the_same_bytes_whatever_volume_it_sits_on() {
     assert!(internal[..0x40].iter().any(|&b| b != 0), "the console's own volume uses block 0");
     assert!(cart[..0x40].iter().all(|&b| b == 0), "the cart's is still blank");
 }
+
+/// The GameCube entry time, read off directory entries Dolphin actually wrote.
+///
+/// A `.gci` is a single save exported from a card: a 64-byte directory entry followed by the save
+/// data. That entry is what `x.1sav.dirent` reads, so the two files here pin the offset, the
+/// byte order and the epoch against bytes rather than against recollection.
+///
+/// Both readings are seven hours off the instant each file was written, because a GameCube's clock
+/// is set in a menu with no notion of a zone. That is the reading the key asks for, and the reason
+/// no offset rides beside it.
+#[test]
+fn a_gamecube_entry_dates_the_last_write_on_the_consoles_own_clock() {
+    // 2000-01-01T00:00:00Z, which is what a GameCube directory entry counts from.
+    const GC_EPOCH: i64 = 946_684_800;
+
+    for (path, want) in [
+        // 2026-09-17 17:06:36, as the console's clock read it.
+        ("GameCube/Super Smash Bros. Melee/Dolphin/01-GALE-SuperSmashBros0110290334.gci", 1_789_664_796i64),
+        // 2026-08-20 14:51:35.
+        ("GameCube/F-Zero GX/Dolphin/8P-GFZE-f_zero.dat.gci", 1_787_237_495),
+    ] {
+        let bytes = std::fs::read(fixtures_root().join(path)).expect("a vendored .gci");
+        let dirent = &bytes[..64];
+        let raw = u32::from_be_bytes(dirent[0x28..0x2c].try_into().expect("four bytes"));
+        assert_eq!(GC_EPOCH + i64::from(raw), want, "{path}");
+
+        // The rest of the entry is what says the 0x28 reading is the one field left for a time:
+        // the game and maker codes open the save, and the payload is a whole number of blocks.
+        assert!(dirent[0..4].is_ascii(), "game code is text: {path}");
+        assert_eq!((bytes.len() - 64) % 8192, 0, "a whole number of blocks: {path}");
+    }
+}
+
+/// The PS2 entry times, off a card PCSX2 wrote, with the zone that makes them instants.
+///
+/// A PS2 keeps directory times on Japan Standard Time whatever the console's region, so unlike a
+/// GameCube these readings can be qualified: the instant is the reading minus nine hours. Both
+/// fields are checked because they sit at different offsets and a save written once would not
+/// tell them apart — each of these was created a few seconds before the write that followed it.
+#[cfg(feature = "ps2")]
+#[test]
+fn a_ps2_entry_dates_both_the_creation_and_the_last_write() {
+    let path = fixtures_root().join("PS2/Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2");
+    let bundle = one_saves_convert::card::read(
+        one_saves_convert::Format::Ps2Card,
+        &std::fs::read(path).expect("the vendored card"),
+        &one_saves_convert::CardOptions::default(),
+    )
+    .expect("reads as a card");
+    assert_eq!(bundle.shape(), &one_saves::Shape::Card);
+
+    let key = one_saves::ReverseDnsName::parse("x.1sav.dirent").unwrap();
+    let readings: Vec<(i64, i64)> = bundle
+        .parts
+        .iter()
+        .filter_map(|part| part.extensions.get(&key))
+        .map(|value| {
+            let map = value.as_map().expect("a dirent map");
+            let at = |k: u64| {
+                let arm = map.get::<u64, one_saves::dcbor::CBOR>(k).expect("both times");
+                let pair = arm.as_array().expect("a reading and maybe an offset");
+                assert_eq!(pair.len(), 2, "a PS2 reading carries its zone");
+                assert_eq!(i64::try_from(pair[1].clone()).expect("an offset"), 9 * 3600);
+                let one_saves::dcbor::CBORCase::Tagged(_, seconds) = pair[0].as_case() else {
+                    panic!("a reading is a tagged epoch")
+                };
+                i64::try_from(seconds.clone()).expect("seconds")
+            };
+            (at(0), at(1))
+        })
+        .collect();
+
+    // Tekken 4, then two Dragon Quest VIII saves, in the order the directory lists them.
+    assert_eq!(
+        readings,
+        [(1_789_734_752, 1_789_734_753), (1_789_734_887, 1_789_734_891), (1_789_735_398, 1_789_735_401)]
+    );
+    for (created, modified) in &readings {
+        assert!(created <= modified, "a save is written no earlier than it is made");
+    }
+}

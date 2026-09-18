@@ -13,7 +13,7 @@ use one_saves::{Bundle, Game, Header, Part, PartKind};
 use ps2_memcard::{Capacity, CardBuilder, File, MemoryCard, Save};
 
 use crate::CardOptions;
-use crate::card::{card_header, slug};
+use crate::card::{card_header, civil_seconds, created_and_modified, dirent_key, slug};
 use crate::detect::Format;
 use crate::error::{Error, Result};
 
@@ -38,6 +38,34 @@ pub fn detect(bytes: &[u8]) -> bool {
     MemoryCard::parse(bytes).is_ok()
 }
 
+/// Where a PS2 directory entry keeps the times, and how it lays one out.
+///
+/// Two `sceMcStDateTime` structs, at 0x08 and 0x18: a reserved byte, then second, minute, hour,
+/// day and month as plain binary, then a little-endian year. Confirmed against cards PCSX2 wrote,
+/// whose three saves each dated a creation a few seconds before the write that followed it.
+const CREATED_AT: usize = 0x08;
+const MODIFIED_AT: usize = 0x18;
+
+/// The zone a PS2 keeps its directory times in, in seconds east of UTC.
+///
+/// A PS2's clock runs on Japan Standard Time whatever the console's region, and the timezone a
+/// later BIOS lets you set moves what the browser *shows* rather than what the filesystem writes.
+/// So unlike a GameCube or a VMU, a PS2 reading can be qualified: the instant is the reading minus
+/// this.
+///
+/// Established by controlling for the obvious alternative rather than by argument. A console left
+/// at its defaults is configured as Japan, so times nine hours ahead of the host prove nothing on
+/// their own. The BIOS was then set to a zone seven hours *behind* UTC and a card formatted, and
+/// the entry that format wrote still read +9 — so the offset is the hardware's and not the
+/// configuration's.
+const JST: i32 = 9 * 3_600;
+
+/// One `sceMcStDateTime`, as a wall-clock reading on the Unix scale.
+fn entry_seconds(dirent: &[u8], at: usize) -> Option<i64> {
+    let f = dirent.get(at..at + 8)?;
+    civil_seconds(u16::from_le_bytes([f[6], f[7]]), f[5], f[4], f[3], f[2], f[1])
+}
+
 /// Reads a card into a bundle: one nested bundle per save, one part per file in it.
 pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     let card = MemoryCard::parse(bytes).map_err(|e| into_error(&e))?;
@@ -46,6 +74,11 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     let mut parts = Vec::new();
     for (index, save) in saves.iter().enumerate() {
         let game = Some(Game { serial: serial_from_name(&save.name), ..Game::default() });
+        // The directory's record of the save: when it was made and when it was last written, both
+        // qualified by the zone a PS2 keeps them in.
+        let times = entry_seconds(&save.dirent, CREATED_AT)
+            .zip(entry_seconds(&save.dirent, MODIFIED_AT))
+            .map(|(created, modified)| created_and_modified(created, modified, Some(JST)));
 
         // Each file is a part of the nested bundle, carrying its own directory entry. That is
         // what a PS2 save needs and a PS1 save does not: it is a directory with an entry of its
@@ -86,6 +119,9 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         part.slot = Some(u64::try_from(index).expect("fits"));
         // The directory's own entry, carrying its mode bits and timestamps, belongs to no file.
         part.dirent = Some(save.dirent.clone());
+        if let Some(times) = times {
+            part.extensions.insert(dirent_key(), times);
+        }
         part.game = game;
         part.system = Some(slug(SYSTEM));
         parts.push(part);

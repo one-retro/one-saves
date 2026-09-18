@@ -57,7 +57,8 @@ pub mod ps2;
 #[cfg(feature = "vmu")]
 pub mod vmu;
 
-use one_saves::{Bundle, Part, PartKind, Slug};
+use one_saves::dcbor::{CBOR, CBORCase, Map, Tag};
+use one_saves::{Bundle, Part, PartKind, ReverseDnsName, Slug};
 
 use crate::Format;
 use crate::error::{Error, Result};
@@ -141,6 +142,77 @@ with_a_card_format! {
         }
     }
 
+}
+
+/// The `x.1sav.dirent` key: what a card's directory records about one save.
+pub(crate) fn dirent_key() -> ReverseDnsName {
+    ReverseDnsName::parse("x.1sav.dirent").expect("a spec name is well-formed")
+}
+
+/// One reading, and the zone it was taken in where that is known.
+///
+/// The seconds are the wall clock the console showed, put on the Unix scale by reading that wall
+/// clock as though it were UTC. They are deliberately not an instant: a GameCube sets its clock in
+/// the IPL menu with no notion of a zone, so the number fixes a date and a time of day and says
+/// nothing about where on Earth that was. The offset, in seconds east of UTC, is what would close
+/// the gap — the instant is the reading minus the offset — and it is written only where a producer
+/// actually knows the zone, never filled in from where the *dump* happened.
+fn entry_time(seconds: i64, utc_offset: Option<i32>) -> CBOR {
+    let reading = CBOR::from(CBORCase::Tagged(Tag::new(1u64, "epoch"), seconds.into()));
+    match utc_offset {
+        Some(offset) => vec![reading, CBOR::from(offset)].into(),
+        None => vec![reading].into(),
+    }
+}
+
+/// Days from 1970-01-01 to a civil date, by Howard Hinnant's algorithm.
+///
+/// Spelled out rather than taken from a date crate: this is the only arithmetic of its kind here,
+/// and `one-saves-convert` is not worth a dependency for it.
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let day_of_year =
+        (153 * (i64::from(month) + if month > 2 { -3 } else { 9 }) + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+/// A calendar reading on the Unix scale, by reading it as though it were UTC.
+///
+/// Which is what the reading in `x.1sav.dirent` is: a date and a time of day, with the zone it was
+/// kept in carried separately where a producer knows it.
+pub(crate) fn civil_seconds(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> Option<i64> {
+    // Range-checked rather than trusted: these come off a card, and a field a game never wrote is
+    // usually zero, which is not a date.
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    Some(
+        days_from_civil(i64::from(year), u32::from(month), u32::from(day)) * 86_400
+            + i64::from(hour) * 3_600
+            + i64::from(minute) * 60
+            + i64::from(second),
+    )
+}
+
+/// The `x.1sav.dirent` value for an entry recording both a creation and a write.
+pub(crate) fn created_and_modified(created: i64, modified: i64, utc_offset: Option<i32>) -> CBOR {
+    let mut map = Map::new();
+    map.insert(0u64, entry_time(created, utc_offset));
+    map.insert(1u64, entry_time(modified, utc_offset));
+    map.into()
+}
+
+/// The `x.1sav.dirent` value for an entry that records a write and no creation.
+///
+/// GameCube is this shape: the directory dates the last write and nothing else, which is why the
+/// schema admits a map holding key 1 alone rather than making key 0 optional.
+pub(crate) fn modified_only(seconds: i64, utc_offset: Option<i32>) -> CBOR {
+    let mut map = Map::new();
+    map.insert(1u64, entry_time(seconds, utc_offset));
+    map.into()
 }
 
 /// Parses a slug the specification defines, which is always well-formed.
@@ -276,5 +348,42 @@ impl CardOptions {
     #[must_use]
     pub fn role_for(&self, format: Format) -> Slug {
         self.role.clone().unwrap_or_else(|| slug(format.default_role()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_calendar_reading_lands_on_the_unix_scale() {
+        // Date arithmetic is where an off-by-one hides, and a wrong leap year would move a card's
+        // timestamp by a day without ever looking wrong. The awkward cases are pinned outright:
+        // both sides of the epoch, a leap day in a year divisible by 400, and the day after
+        // February in 2100, which is *not* a leap year despite being divisible by 4.
+        for (y, mo, d, h, mi, s, want) in [
+            (1970u16, 1u8, 1u8, 0u8, 0u8, 0u8, 0i64),
+            (1999, 12, 31, 23, 59, 59, 946_684_799),
+            (2000, 1, 1, 0, 0, 0, 946_684_800),
+            (2000, 2, 29, 12, 0, 0, 951_825_600),
+            (2024, 2, 29, 23, 59, 59, 1_709_251_199),
+            (2100, 3, 1, 0, 0, 0, 4_107_542_400),
+            // The instant a card in `data/saves` was formatted, read as the console wrote it.
+            (2026, 9, 18, 12, 55, 10, 1_789_736_110),
+        ] {
+            assert_eq!(civil_seconds(y, mo, d, h, mi, s), Some(want), "{y}-{mo}-{d} {h}:{mi}:{s}");
+        }
+    }
+
+    #[test]
+    fn a_field_that_is_not_a_date_is_absence_rather_than_a_guess() {
+        // Zero is what an entry holds where a game never wrote one, and month zero is the tell.
+        assert_eq!(civil_seconds(0, 0, 0, 0, 0, 0), None);
+        assert_eq!(civil_seconds(2026, 13, 1, 0, 0, 0), None, "month past December");
+        assert_eq!(civil_seconds(2026, 1, 32, 0, 0, 0), None, "day past the longest month");
+        assert_eq!(civil_seconds(2026, 1, 1, 24, 0, 0), None, "hour past 23");
+        assert_eq!(civil_seconds(2026, 1, 1, 0, 60, 0), None, "minute past 59");
+        // A leap second is a real reading rather than a malformed one.
+        assert!(civil_seconds(2026, 1, 1, 23, 59, 60).is_some());
     }
 }
