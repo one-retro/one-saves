@@ -1,6 +1,6 @@
 {
   "corpus": "Universal Saves Format conformance cases",
-  "spec_version": "0.2",
+  "spec_version": "0.3",
   "generated_from": "test/bundles.js",
   "counts": {
     "valid": 27,
@@ -202,7 +202,7 @@
       "rejected_by": "schema",
       "file": "invalid/part-unknown-integer-key.cbor",
       "sha256": "f35a7f557ea356a7f764c22b6b31626ddd8da0891fcf91824df0a1ad5df5faaa",
-      "note": "This schema describes v0.1, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+      "note": "This schema describes v0.3, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
     },
     {
       "name": "header-unknown-integer-key",
@@ -210,7 +210,7 @@
       "rejected_by": "schema",
       "file": "invalid/header-unknown-integer-key.cbor",
       "sha256": "38d3710e8cca5034c58a831bb3b81fa64f54c8c129909e229af966448c92f818",
-      "note": "This schema describes v0.1, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+      "note": "This schema describes v0.3, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
     },
     {
       "name": "header-without-shape",

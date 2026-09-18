@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "dreamcast-vmu"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "either"
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "gc-memcard"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "getrandom"
@@ -1107,11 +1107,11 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "n64-cpak"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "neogeo-memcard"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "new_debug_unreachable"
@@ -1217,7 +1217,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "one-saves"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "dcbor",
  "serde_json",
@@ -1227,7 +1227,7 @@ dependencies = [
 
 [[package]]
 name = "one-saves-cli"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "one-saves",
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "one-saves-convert"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "crc32fast",
  "datary",
@@ -1259,11 +1259,11 @@ dependencies = [
 
 [[package]]
 name = "one-saves-registry"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "one-saves-tui"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "crossterm",
  "image",
@@ -1381,11 +1381,11 @@ dependencies = [
 
 [[package]]
 name = "ps1-memcard"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "ps2-memcard"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "pulp"
