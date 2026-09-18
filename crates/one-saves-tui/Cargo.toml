@@ -21,11 +21,14 @@ one-saves.workspace = true
 one-saves-registry.workspace = true
 # `icon` is the point of the thing: a save's picture arrives already decoded to PNG, so nothing
 # here needs to know what RGB5A3 is.
-one-saves-convert = { workspace = true, features = ["cards", "icon"] }
+one-saves-convert = { workspace = true, features = ["cards", "icon", "shift-jis"] }
 ratatui = "0.29"
 crossterm = "0.28"
 ratatui-image = "8"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# A title can be full width — a PS2 browser line is — and a terminal gives such a character two
+# cells. ratatui measures its own text this way; the list column has to agree with it.
+unicode-width = "0.2"
 
 [lints]
 workspace = true

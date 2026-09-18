@@ -21,6 +21,14 @@ fn picker() -> Picker {
     Picker::from_fontsize((8, 16))
 }
 
+/// Everything drawn with the spacing taken out, for asserting on content.
+///
+/// A wide character occupies two cells and the second is left blank, so reading the buffer cell by
+/// cell puts a gap inside every full-width word. What a person sees has no gap.
+fn text(app: &mut App, width: u16, height: u16) -> String {
+    screen(app, width, height).replace(' ', "")
+}
+
 /// Everything drawn, as one string, which is what a person would be reading.
 fn screen(app: &mut App, width: u16, height: u16) -> String {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test terminal");
@@ -36,14 +44,16 @@ fn screen(app: &mut App, width: u16, height: u16) -> String {
 fn the_card_and_its_saves_are_on_screen() {
     let mut app = App::new(vec![card()], picker());
     let drawn = screen(&mut app, 100, 24);
+    let content = text(&mut app, 100, 24);
 
     assert!(drawn.contains("Mcd001.ps2"), "the card names itself:\n{drawn}");
     // Free space comes from the registry's block size, not from arithmetic in the view.
     assert!(drawn.contains("free"), "and what is left on it");
 
-    for save in ["BASLUS-20328Tekken-4", "BASLUS-21207dq8_0", "BASLUS-21207dq8_1"] {
-        assert!(drawn.contains(save), "{save} is listed:\n{drawn}");
-    }
+    // The names come from `x.1sav.label` — what the console's browser shows — rather than from
+    // the directory, which holds `BASLUS-20328Tekken-4`.
+    assert!(content.contains("ＴＥＫＫＥＮ"), "a save is listed by what the console calls it:\n{drawn}");
+    assert!(!content.contains("BASLUS"), "and not by its directory name");
     assert!(drawn.contains("blk"), "with what each occupies");
     assert!(drawn.contains("q quit"), "and the keys are shown");
 }
@@ -53,10 +63,11 @@ fn deleting_asks_first_and_names_what_it_would_delete() {
     let mut app = App::new(vec![card()], picker());
     app.ask_delete();
     let drawn = screen(&mut app, 100, 24);
+    let content = text(&mut app, 100, 24);
 
-    assert!(drawn.contains("Delete"), "it asks:\n{drawn}");
-    assert!(drawn.contains("Tekken"), "and names the save");
-    assert!(drawn.contains("[y/n]"), "and says what answers it takes");
+    assert!(content.contains("Delete"), "it asks:\n{drawn}");
+    assert!(content.contains("ＴＥＫＫＥＮ"), "and names the save as the console does");
+    assert!(content.contains("[y/n]"), "and says what answers it takes");
     assert!(!app.cards[0].dirty(), "asking is not doing");
 }
 
@@ -77,6 +88,19 @@ fn copying_with_one_card_open_says_what_is_missing() {
     let mut app = App::new(vec![card()], picker());
     app.copy();
     assert!(matches!(&app.mode, Mode::Reporting(m) if m.contains("second card")));
+}
+
+#[test]
+fn a_full_width_title_is_measured_in_cells_rather_than_characters() {
+    // A PS2 browser line is full width, where every character takes two terminal cells. Counting
+    // characters would run the name column to twice its width and push the size off the screen.
+    let mut app = App::new(vec![card()], picker());
+    app.step(1); // onto a Dragon Quest save, whose title is long as well as wide
+    let drawn = screen(&mut app, 76, 10);
+
+    assert!(drawn.lines().all(|line| line.chars().count() == 76), "no line overflows");
+    assert!(drawn.contains("173 blk"), "the size column survives a wide title:\n{drawn}");
+    assert!(drawn.contains('…'), "and the title reads as cut");
 }
 
 #[test]

@@ -583,6 +583,39 @@ fn a_gamecube_entry_dates_the_last_write_on_the_consoles_own_clock() {
     }
 }
 
+/// What a PS2 browser lists a save under, which is in `icon.sys` rather than in the directory.
+#[cfg(all(feature = "ps2", feature = "shift-jis"))]
+#[test]
+fn a_ps2_save_is_labelled_by_what_its_icon_sys_says() {
+    let path = fixtures_root().join("PS2/Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2");
+    let bundle = one_saves_convert::card::read(
+        one_saves_convert::Format::Ps2Card,
+        &std::fs::read(path).expect("the vendored card"),
+        &one_saves_convert::CardOptions::default(),
+    )
+    .expect("reads as a card");
+
+    let key = one_saves::ReverseDnsName::parse("x.1sav.label").expect("well-formed");
+    let titles: Vec<String> = bundle
+        .parts
+        .iter()
+        .map(|part| {
+            let save = one_saves::Bundle::from_slice(&part.bytes().expect("nested")).expect("a save");
+            let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");
+            map.get::<u64, one_saves::dcbor::CBOR>(0).unwrap().as_text().unwrap().to_owned()
+        })
+        .collect();
+
+    // Full width stays full width. The format asks for NFC, which does not fold `Ｔ` to `T`, and
+    // folding it would be writing a title the save does not say.
+    assert_eq!(titles[0], "ＴＥＫＫＥＮ　４");
+    assert!(titles[1].starts_with("ＤＱ８"), "{}", titles[1]);
+    // The browser breaks the line at an offset the file carries; both halves are one title, so
+    // nothing here splits it.
+    assert!(titles[1].contains("Ｌｖ０１"), "the whole line, not just the first half: {}", titles[1]);
+    assert_ne!(titles[1], titles[2], "two saves of one game are still two saves");
+}
+
 /// The PS2 entry times, off a card PCSX2 wrote, with the zone that makes them instants.
 ///
 /// A PS2 keeps directory times on Japan Standard Time whatever the console's region, so unlike a

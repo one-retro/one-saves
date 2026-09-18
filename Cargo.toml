@@ -55,6 +55,10 @@ zstd = "0.13"
 # consumer should need no decoder of its own. Optional, because a converter that does not carry
 # icons should not compile a deflate implementation to do it.
 png = "0.18"
+# Shift-JIS, which is what a PlayStation, a PS2 and a Japanese GameCube release write a title in.
+# A title half-read is worse than one omitted, so this is a real decoder rather than a table of
+# the characters a Western release happens to use.
+encoding_rs = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 # DAT catalogs, in both the Logiqx XML and ClrMamePro syntaxes. `index` and `verify` stay off:
 # one-saves-convert keeps its own digest index, keyed by `one_saves::HashValue`, and hashing is

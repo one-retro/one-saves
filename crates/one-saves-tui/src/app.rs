@@ -206,7 +206,7 @@ impl App {
                 .iter()
                 .map(|entry| {
                     ListItem::new(Line::from(vec![
-                        Span::raw(format!("{:<name_width$}", truncate(&entry.title, name_width))),
+                        Span::raw(fit(&entry.title, name_width)),
                         Span::styled(
                             format!("{:>4} blk", entry.blocks),
                             Style::default().fg(Color::DarkGray),
@@ -289,10 +289,30 @@ impl App {
 /// What the block count column takes, which the name gets what is left of.
 const BLOCK_COLUMN: usize = 8;
 
-/// Cuts a title to fit, with an ellipsis so it reads as cut rather than as the whole name.
-fn truncate(text: &str, width: usize) -> String {
-    if text.chars().count() <= width {
-        return text.to_owned();
+/// Fits a title to a column count, padding it out to exactly that.
+///
+/// Counted in the cells a terminal gives each character rather than in characters: a PS2 browser
+/// line is full width, where every character takes two, and a column measured by counting them
+/// would run to twice its width and push what follows off the screen.
+fn fit(text: &str, columns: usize) -> String {
+    use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
+
+    let (mut out, mut used) = (String::new(), 0);
+    if text.width() <= columns {
+        out.push_str(text);
+        used = text.width();
+    } else {
+        // One cell held back for the ellipsis, so a cut name reads as cut.
+        for character in text.chars() {
+            let width = character.width().unwrap_or(0);
+            if used + width > columns.saturating_sub(1) {
+                break;
+            }
+            out.push(character);
+            used += width;
+        }
+        out.push('…');
+        used += 1;
     }
-    text.chars().take(width.saturating_sub(1)).collect::<String>() + "…"
+    out + &" ".repeat(columns.saturating_sub(used))
 }

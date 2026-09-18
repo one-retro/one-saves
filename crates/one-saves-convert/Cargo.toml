@@ -25,6 +25,7 @@ neogeo-memcard = { workspace = true, optional = true }
 ps1-memcard = { workspace = true, optional = true }
 ps2-memcard = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
+encoding_rs = { workspace = true, optional = true }
 crc32fast = { workspace = true, optional = true }
 md-5 = { workspace = true, optional = true }
 sha1 = { workspace = true, optional = true }
@@ -32,7 +33,7 @@ sha2 = { workspace = true, optional = true }
 datary = { workspace = true, optional = true }
 
 [features]
-default = ["cards", "dat", "dat-cmpro", "rom", "zstd"]
+default = ["cards", "dat", "dat-cmpro", "rom", "shift-jis", "zstd"]
 # Every card format. Each is a crate of its own and an adapter here; none of them brings anything
 # from outside the workspace, so what a format costs is its own code and nothing else.
 cards = ["gc", "n64", "neogeo", "ps1", "ps2", "vmu"]
@@ -52,6 +53,10 @@ dat-cmpro = ["dat", "datary/cmpro"]
 # Reading a ROM's header and computing the digests a catalog is keyed on. This is what the four
 # hash crates are for; nothing else in the crate hashes anything.
 rom = ["dep:crc32fast", "dep:md-5", "dep:sha1", "dep:sha2"]
+# Reading a title a console stored in Shift-JIS, which is every PlayStation and PS2 one and the
+# Japanese GameCube releases. Off, such a title is omitted rather than half-read: a producer that
+# would be guessing writes no label at all.
+shift-jis = ["dep:encoding_rs"]
 # Decoding a console's icon to PNG, for `x.1sav.icon`. Off by default: it is the only thing here
 # that pulls a compression library of its own, and a producer that carries no icons pays nothing.
 # A card still reads and writes without it; the key is simply absent.

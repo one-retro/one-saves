@@ -12,9 +12,10 @@ use n64_cpak::{ControllerPak, Note, PakBuilder};
 use one_saves::{Bundle, Game};
 
 use crate::CardOptions;
-use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part};
+use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with};
 use crate::detect::Format;
 use crate::error::{Error, Result};
+use crate::label::{label_key, value as label};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::N64Pak.label();
@@ -43,14 +44,19 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
     let mut parts = Vec::new();
     for note in pak.notes() {
-        // The game code and note name together are how a pak names a note, and neither is unique.
-        let game = (!note.game_code.is_empty()).then(|| Game {
-            serial: Some(note.game_code.clone()),
-            title: (!note.name.is_empty()).then(|| note.name.clone()),
-            ..Game::default()
-        });
+        // The game code is how a pak names the release; the note name is what the console lists
+        // the note under, which is a label rather than a title and belongs under its own key.
+        let game = (!note.game_code.is_empty())
+            .then(|| Game { serial: Some(note.game_code.clone()), ..Game::default() });
 
-        let mut part = save_part(Format::N64Pak, parts.len(), note.data.clone(), game, options)?;
+        // A Controller Pak is the one format that keeps its text in the note table rather than in
+        // the note, so this is read off the entry and not out of the payload.
+        let mut inner = one_saves::Extensions::new();
+        if let Some(label) = label(Some(note.name.clone()).filter(|n| !n.is_empty()), None) {
+            inner.insert(label_key(), label);
+        }
+
+        let mut part = save_part_with(Format::N64Pak, parts.len(), note.data.clone(), game, options, inner)?;
         part.path = Some(note.path());
         // Two notes may agree on game code and name, so the table index is what keeps them apart.
         part.slot = Some(u64::try_from(note.slot).expect("slot fits"));

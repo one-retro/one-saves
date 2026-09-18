@@ -16,6 +16,7 @@ use crate::card::{
 };
 use crate::detect::Format;
 use crate::error::{Error, Result};
+use crate::label::{ascii_field, label_key, value as label};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::GcCard.label();
@@ -133,6 +134,29 @@ fn pictures(dirent: &[u8], data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
     value(frames, banner)
 }
 
+/// Where the entry points at the two lines a GameCube shows for a save.
+///
+/// A four-byte offset into the save's payload, at which sit two 32-byte fields: what the console
+/// lists the save under, and what it says about it beneath that.
+const COMMENTS_OFFSET: usize = 0x3c;
+/// Each comment is a fixed 32 bytes, padded.
+const COMMENT: usize = 32;
+
+/// The two lines the console shows, as `x.1sav.label` wants them.
+fn comments(dirent: &[u8], data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
+    let at = usize::try_from(u32::from_be_bytes(
+        dirent.get(COMMENTS_OFFSET..COMMENTS_OFFSET + 4)?.try_into().ok()?,
+    ))
+    .ok()?;
+    // An entry that points nowhere is how a save says it has no comments.
+    if at == usize::try_from(u32::MAX).unwrap_or(usize::MAX) {
+        return None;
+    }
+    let title = ascii_field(data.get(at..at + COMMENT)?);
+    let detail = ascii_field(data.get(at + COMMENT..at + 2 * COMMENT)?);
+    label(title, detail)
+}
+
 /// Where a GameCube directory entry keeps the time the console last wrote the save.
 ///
 /// Four big-endian bytes at 0x28, counting seconds from 2000-01-01. The offset is the one field
@@ -177,6 +201,9 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         #[cfg(feature = "icon")]
         if let Some(icon) = pictures(&save.dirent, &save.data) {
             inner.insert(crate::icon::icon_key(), icon);
+        }
+        if let Some(label) = comments(&save.dirent, &save.data) {
+            inner.insert(label_key(), label);
         }
         let mut part = save_part_with(Format::GcCard, parts.len(), save.data.clone(), game, options, inner)?;
         part.path = Some(save.filename.clone());

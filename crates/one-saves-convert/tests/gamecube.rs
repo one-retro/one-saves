@@ -1,11 +1,13 @@
-//! GameCube icons, decoded off saves a console actually wrote.
+//! GameCube saves a console actually wrote: what they are called, and what they look like.
 //!
 //! The two fixtures cover both pixel formats between them: F-Zero GX stores its icon as RGB5A3,
 //! which carries its colours inline, and Melee stores one as CI8 against a palette that follows
 //! the frames. Both keep a 96x32 banner. A decoder that muddled the tile geometry would still
 //! produce a plausibly sized picture, so the pixels are hashed rather than the shape checked.
+//!
+//! The labels need no feature: a GameCube writes its two comment lines in plain text.
 
-#![cfg(feature = "icon")]
+#![cfg(feature = "gc")]
 
 use one_saves::dcbor::CBOR;
 use one_saves::{Bundle, ReverseDnsName};
@@ -29,6 +31,7 @@ fn card_from_gci(path: &str) -> Vec<u8> {
 }
 
 /// The pixels a PNG decodes to, so a change of encoder is not a change of picture.
+#[cfg(feature = "icon")]
 fn pixels(png: &[u8]) -> (u32, u32, Vec<u8>) {
     let decoder = png::Decoder::new(std::io::Cursor::new(png));
     let mut reader = decoder.read_info().expect("a PNG");
@@ -38,6 +41,7 @@ fn pixels(png: &[u8]) -> (u32, u32, Vec<u8>) {
     (info.width, info.height, buf)
 }
 
+#[cfg(feature = "icon")]
 fn digest(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     use std::fmt::Write as _;
@@ -47,6 +51,7 @@ fn digest(bytes: &[u8]) -> String {
     })
 }
 
+#[cfg(feature = "icon")]
 #[test]
 fn a_gamecube_save_carries_its_icon_and_banner_as_png() {
     for (path, frame_digest, banner_digest) in [
@@ -91,6 +96,34 @@ fn a_gamecube_save_carries_its_icon_and_banner_as_png() {
         let (w, h, px) = pixels(banner.as_byte_string().expect("a PNG"));
         assert_eq!((w, h), (96, 32), "{path}: a banner is 96x32");
         assert_eq!(digest(&px), banner_digest, "{path}: banner pixels");
+    }
+}
+
+/// What the console lists a save under, out of the two comment strings the entry points at.
+#[test]
+fn a_gamecube_save_is_labelled_by_the_lines_the_console_shows() {
+    for (path, title, detail) in [
+        ("data/saves/GameCube/F-Zero GX/Dolphin/8P-GFZE-f_zero.dat.gci", "F-ZERO GX", "26/08/20 HANS"),
+        (
+            "data/saves/GameCube/Super Smash Bros. Melee/Dolphin/01-GALE-SuperSmashBros0110290334.gci",
+            "Super Smash Bros. Melee",
+            "Game Data 2026/09/17",
+        ),
+    ] {
+        let card = card_from_gci(path);
+        let bundle = one_saves_convert::card::read(Format::GcCard, &card, &CardOptions::default())
+            .expect("reads the card");
+        let save = Bundle::from_slice(&bundle.parts[0].bytes().expect("nested")).expect("a save");
+
+        let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
+        let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");
+        assert_eq!(map.get::<u64, CBOR>(0).unwrap().as_text().unwrap(), title, "{path}");
+        assert_eq!(map.get::<u64, CBOR>(1).unwrap().as_text().unwrap(), detail, "{path}");
+
+        // The padding a fixed-width field pads with goes; the text itself is untouched.
+        assert!(!title.ends_with(' '), "trimmed");
+        // And it is the save's, so it is in the save's header rather than on the card's part.
+        assert!(!bundle.parts[0].extensions.contains_key(&key), "{path}");
     }
 }
 
