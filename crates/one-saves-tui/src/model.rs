@@ -145,10 +145,15 @@ impl Card {
                 let label = inner.as_ref().and_then(read_label);
                 Entry {
                     index,
+                    // What to call it, best first. A save need not have a title: a Neo Geo
+                    // game writes one only if it feels like it, and Fatal Fury 2 writes a
+                    // binary header instead. The serial still says which game it belongs to,
+                    // which beats calling it by its position on the card.
                     title: label
                         .as_ref()
                         .map(|(title, _)| title.clone())
                         .or_else(|| part.path.clone())
+                        .or_else(|| inner.as_ref().and_then(|save| save.header.game.as_ref()?.serial.clone()))
                         .unwrap_or_else(|| format!("save {index}")),
                     detail: label.and_then(|(_, detail)| detail),
                     blocks: inner.as_ref().map_or(0, |save| blocks_of(save, block)),

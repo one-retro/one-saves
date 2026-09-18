@@ -130,3 +130,62 @@ fn a_caller_can_still_name_the_socket() {
     let bundle = read(&fixture("Metal Slug X"), &options).expect("reads");
     assert_eq!(bundle.parts[0].role.as_ref().unwrap().as_str(), "memcard-2");
 }
+
+/// The title a game writes into its own save is carried as `x.1sav.label`.
+///
+/// Every other format puts what the console displays under this key, and a consumer looking for a
+/// name to show should not have to know that a Neo Geo card keeps it somewhere else. It is the
+/// same string as the part's `path`, which is deliberate: here one string is both the save's
+/// identity on the card and its name.
+#[test]
+fn a_saves_title_is_carried_as_a_label() {
+    use one_saves::ReverseDnsName;
+    use one_saves::dcbor::CBOR;
+
+    let bundle = read(&fixture("Metal Slug X"), &CardOptions::default()).expect("reads");
+    let part = bundle.parts.iter().find(|p| p.kind == PartKind::Bundle).expect("a save");
+    let save = Bundle::from_slice(&part.bytes().expect("nested")).expect("a save");
+
+    let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
+    let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");
+    let title = map.get::<u64, CBOR>(0).expect("a title").as_text().expect("text").to_owned();
+
+    assert_eq!(title, "METAL SLUG X");
+    assert_eq!(part.path.as_deref(), Some("METAL SLUG X"));
+}
+
+/// A game that writes no title gets no label, rather than an empty one.
+///
+/// Fatal Fury 2 puts a binary header where the title convention says a title goes. There is
+/// nothing legible to carry, and inventing one would say something the save does not.
+#[test]
+fn a_save_with_no_title_carries_no_label() {
+    use one_saves::ReverseDnsName;
+
+    // The CD's memory belongs to the console, so this file holds Metal Slug's save as well as the
+    // one the filename promises. Fatal Fury 2 is NGH-0047.
+    let bytes = {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../data/saves/NEOGEO-CD/Fatal Fury 2/NeoCD");
+        let entry = std::fs::read_dir(&dir)
+            .expect("the fixture directory")
+            .filter_map(std::result::Result::ok)
+            .find(|e| e.path().extension().is_some_and(|x| x == "srm"))
+            .expect("a .srm fixture");
+        std::fs::read(entry.path()).expect("reads")
+    };
+    let bundle = read(&bytes, &CardOptions::default()).expect("reads");
+    let saves: Vec<Bundle> = bundle
+        .parts
+        .iter()
+        .filter(|p| p.kind == PartKind::Bundle)
+        .map(|p| Bundle::from_slice(&p.bytes().expect("nested")).expect("a save"))
+        .collect();
+    assert_eq!(saves.len(), 2, "one console's memory, two games' saves");
+
+    let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
+    assert!(saves[0].header.extensions.get(&key).is_some(), "Metal Slug titles its save");
+    assert!(saves[1].header.extensions.get(&key).is_none(), "Fatal Fury 2 does not");
+    // What identifies it instead, and what the interface falls back to naming it by.
+    assert_eq!(saves[1].header.game.as_ref().expect("a game").serial.as_deref(), Some("NGH-0047"));
+}

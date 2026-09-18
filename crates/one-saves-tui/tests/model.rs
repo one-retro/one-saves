@@ -152,3 +152,21 @@ fn a_written_ps2_card_keeps_the_spare_areas_a_console_reads() {
     assert_eq!(after % 528, 0, "which is pages of 528 bytes");
     assert_eq!(after / 528 * 512, target.capacity(), "of which the data area is the capacity");
 }
+
+/// A Neo Geo CD's memory belongs to the console, not to the game in the drive.
+///
+/// The file is named for Fatal Fury 2 and holds two saves, because every game played on that
+/// console writes into the same 8 KiB. The one the filename promises is the *second* of them, and
+/// it carries no title at all: Fatal Fury 2 writes a binary header where a title would go. Naming
+/// it by its NGH number is what keeps it identifiable, where falling through to its position on
+/// the card would not be.
+#[test]
+fn a_save_with_no_title_is_named_by_its_serial() {
+    const CARD: &str = "NEOGEO-CD/Fatal Fury 2/NeoCD/Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).srm";
+    let card = Card::open(fixture(CARD)).expect("opens");
+
+    let entries = card.entries();
+    let titles: Vec<&str> = entries.iter().map(|e| e.title.as_str()).collect();
+    assert_eq!(titles, vec!["METAL SLUG", "NGH-0047"]);
+}
+

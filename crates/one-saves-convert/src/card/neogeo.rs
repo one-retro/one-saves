@@ -17,14 +17,19 @@
 //! it is, so the [`path`](one_saves::Part::path) is the title the game wrote into its own data and
 //! the NGH goes into the game's [`serial`](one_saves::Game::serial). Two saves for one game are
 //! told apart by [`slot`](one_saves::Part::slot), as they are on every other card.
+//!
+//! That title is also written as `x.1sav.label`, which is where every other format puts what the
+//! console displays. It is the same string in both places on purpose: `path` identifies the save
+//! within the card and the label says what to call it, and here one string happens to do both.
 
 use neogeo_memcard::{CardBuilder, Container, MemoryCard, Save};
 use one_saves::{Bundle, Game, Part, PartKind};
 
 use crate::CardOptions;
-use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part, slug};
+use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with, slug};
 use crate::detect::Format;
 use crate::error::{Error, Result};
+use crate::label::{label_key, value as label};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::NeoGeoCard.label();
@@ -62,8 +67,17 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // cartridge: NGH-047.
         let game = Some(Game { serial: Some(format!("NGH-{:04X}", save.ngh)), ..Game::default() });
 
-        let mut part = save_part(Format::NeoGeoCard, parts.len(), save.data.clone(), game, options)?;
+        // The title is what the BIOS lists the save under, so it is a label like every other
+        // console's. It doubles as the `path` because a Neo Geo card has no filenames — but a
+        // consumer after a name to show should not have to know that, which is what the key is for.
         let title = save.title();
+        let mut inner = one_saves::Extensions::new();
+        if let Some(value) = label(Some(title.clone()).filter(|t| !t.is_empty()), None) {
+            inner.insert(label_key(), value);
+        }
+
+        let mut part =
+            save_part_with(Format::NeoGeoCard, parts.len(), save.data.clone(), game, options, inner)?;
         part.path = (!title.is_empty()).then_some(title);
         part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
         part.dirent = Some(save.dirent.clone());
