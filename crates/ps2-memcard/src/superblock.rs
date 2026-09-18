@@ -137,6 +137,19 @@ impl SuperBlock {
         }
         data[0x150] = self.card_type;
         data[0x151] = self.card_flags;
+
+        // The tail of the superblock, all of it derivable from the geometry above and none of it
+        // optional: a console reads these rather than recomputing them, and `cardform` is the
+        // field that says the card is formatted at all. Left at zero — which is what a card this
+        // crate wrote used to carry — it says the opposite, and a console offers to format a card
+        // that is already full of saves.
+        let cluster_size = u32::try_from(self.page_size * self.pages_per_cluster).expect("a cluster fits");
+        put32(data, 0x154, cluster_size);
+        // Each FAT entry is four bytes, so a cluster of them holds this many.
+        put32(data, 0x158, cluster_size / 4);
+        put32(data, 0x15C, u32::try_from(self.pages_per_block / self.pages_per_cluster).expect("fits"));
+        // -1 means formatted. Anything else does not.
+        put32(data, 0x160, 0xFFFF_FFFF);
     }
 }
 

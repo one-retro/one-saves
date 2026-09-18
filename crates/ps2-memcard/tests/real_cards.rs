@@ -98,3 +98,31 @@ fn a_card_shaped_file_that_was_never_formatted_is_not_a_card() {
         "an unformatted card is rejected for what it says rather than for how long it is"
     );
 }
+
+/// The superblock this crate writes is the one a console wrote, field for field.
+///
+/// The tail of it — cluster size, FAT entries a cluster holds, clusters a block holds, and
+/// `cardform` — used to be left at zero, because the parser never needed those fields and so
+/// nothing noticed they were missing. `cardform` at zero is a card saying it is not formatted,
+/// which is a console offering to format a card that is full of saves. A reader that recomputes
+/// the geometry, as this crate's does, cannot see any of that; only a card from somewhere else
+/// can.
+#[test]
+fn a_rebuilt_superblock_matches_the_one_a_console_wrote() {
+    for name in ["Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2", "Formatted empty card/PCSX2/Mcd002.ps2"] {
+        let original = std::fs::read(card(name)).expect("a vendored card");
+        let parsed = ps2_memcard::MemoryCard::parse(&original).expect("parses");
+
+        let mut builder = ps2_memcard::CardBuilder::new(ps2_memcard::Capacity::Mb8);
+        for save in parsed.saves().expect("reads the directory") {
+            builder.add(save);
+        }
+        let rebuilt = builder.build_with_spare().expect("builds");
+
+        assert_eq!(rebuilt.len(), original.len(), "{name}: a card keeps its size");
+        // Through `cardform` at 0x160, which is the last field either of them sets.
+        assert_eq!(&rebuilt[0x150..0x164], &original[0x150..0x164], "{name}: the superblock tail");
+        // And the geometry above it, which was right all along.
+        assert_eq!(&rebuilt[..0x60], &original[..0x60], "{name}: magic and geometry");
+    }
+}
