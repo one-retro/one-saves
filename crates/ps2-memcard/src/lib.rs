@@ -167,14 +167,21 @@ impl MemoryCard {
     /// Every save on the card, in the order the root directory lists them.
     pub fn saves(&self) -> Result<Vec<Save>> {
         let mut saves = Vec::new();
-        for entry in self.read_directory(self.superblock.rootdir_cluster)? {
+        // The root has no parent to be counted by, so its own `.` is where the count lives.
+        let root = self.superblock.rootdir_cluster;
+        let root_count = Entry::parse(&self.read_chain_bytes(root, ENTRY)?)?.length;
+        for entry in self.read_directory(root, root_count)? {
             // Only directories are saves; a bare file in the root is not one, and `.` and `..`
             // are the directory naming itself and its parent.
             if entry.mode & mode::DIRECTORY == 0 || entry.name == "." || entry.name == ".." {
                 continue;
             }
             let mut files = Vec::new();
-            for file in self.read_directory(entry.cluster as usize)? {
+            // A save's entry count is on the parent's entry for it, not on the `.` inside it: a
+            // real card writes that `.` with a length of zero, and reading the count from there
+            // returns a directory with nothing in it. A card this crate built sets both, so its
+            // own round trips never caught this.
+            for file in self.read_directory(entry.cluster as usize, entry.length)? {
                 if file.mode & mode::FILE == 0 || file.name == "." || file.name == ".." {
                     continue;
                 }
@@ -189,23 +196,25 @@ impl MemoryCard {
         Ok(saves)
     }
 
-    /// Reads the entries of the directory starting at `cluster`.
-    fn read_directory(&self, cluster: usize) -> Result<Vec<Entry>> {
-        // The first entry of a directory is `.`, whose length field counts every entry in it.
-        let head = self.read_chain_bytes(cluster, ENTRY)?;
-        let count = Entry::parse(&head)?.length;
+    /// Reads `count` entries of the directory starting at `cluster`.
+    ///
+    /// The count is the caller's because only the caller knows where it is written: for the root
+    /// it is on the root's own `.`, and for a save it is on the parent's entry naming that save.
+    fn read_directory(&self, cluster: usize, count: usize) -> Result<Vec<Entry>> {
         if count > self.superblock.alloc_end {
             return Err(Error::Corrupt(format!("a directory claims {count} entries")));
         }
 
         let bytes = self.read_chain_bytes(cluster, count * ENTRY)?;
-        bytes
-            .as_chunks::<ENTRY>()
-            .0
-            .iter()
-            .map(|entry| Entry::parse(entry.as_slice()))
-            .filter(|entry| entry.as_ref().is_ok_and(|entry| entry.mode & mode::EXISTS != 0))
-            .collect()
+        let mut entries = Vec::new();
+        for entry in bytes.as_chunks::<ENTRY>().0 {
+            // Parsed before the filter, so a corrupt entry is an error rather than a free slot.
+            let entry = Entry::parse(entry.as_slice())?;
+            if entry.mode & mode::EXISTS != 0 {
+                entries.push(entry);
+            }
+        }
+        Ok(entries)
     }
 
     /// Reads `length` bytes along the cluster chain starting at `start`.
