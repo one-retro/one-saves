@@ -6,7 +6,7 @@
 //! the guess at `system` when nothing else settles it.
 //!
 //! Which arm of `app` a producer takes is not a preference. A core listed in the
-//! [Emulator Cores registry](one_saves_registry::cores) **must** write its slug, and one with no
+//! [Emulator Cores registry](mod@one_saves_registry::cores) **must** write its slug, and one with no
 //! entry **must** write a reverse-DNS name, so a producer has exactly one spelling. That is why
 //! this module resolves through the registry first and falls back second.
 

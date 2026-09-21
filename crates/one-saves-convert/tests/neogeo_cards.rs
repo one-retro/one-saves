@@ -184,8 +184,8 @@ fn a_save_with_no_title_carries_no_label() {
     assert_eq!(saves.len(), 2, "one console's memory, two games' saves");
 
     let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
-    assert!(saves[0].header.extensions.get(&key).is_some(), "Metal Slug titles its save");
-    assert!(saves[1].header.extensions.get(&key).is_none(), "Fatal Fury 2 does not");
+    assert!(saves[0].header.extensions.contains_key(&key), "Metal Slug titles its save");
+    assert!(!saves[1].header.extensions.contains_key(&key), "Fatal Fury 2 does not");
     // What identifies it instead, and what the interface falls back to naming it by.
     assert_eq!(saves[1].header.game.as_ref().expect("a game").serial.as_deref(), Some("NGH-0047"));
 }

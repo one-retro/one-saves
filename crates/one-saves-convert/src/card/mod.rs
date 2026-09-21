@@ -57,8 +57,11 @@ pub mod ps2;
 #[cfg(feature = "vmu")]
 pub mod vmu;
 
+#[cfg(any(feature = "gc", feature = "ps2"))]
+use one_saves::ReverseDnsName;
+#[cfg(any(feature = "gc", feature = "ps2"))]
 use one_saves::dcbor::{CBOR, CBORCase, Map, Tag};
-use one_saves::{Bundle, Part, PartKind, ReverseDnsName, Slug};
+use one_saves::{Bundle, Part, PartKind, Slug};
 
 use crate::Format;
 use crate::error::{Error, Result};
@@ -149,6 +152,7 @@ with_a_card_format! {
 }
 
 /// The `x.1sav.dirent` key: what a card's directory records about one save.
+#[cfg(any(feature = "gc", feature = "ps2"))]
 pub(crate) fn dirent_key() -> ReverseDnsName {
     ReverseDnsName::parse("x.1sav.dirent").expect("a spec name is well-formed")
 }
@@ -161,6 +165,7 @@ pub(crate) fn dirent_key() -> ReverseDnsName {
 /// nothing about where on Earth that was. The offset, in seconds east of UTC, is what would close
 /// the gap — the instant is the reading minus the offset — and it is written only where a producer
 /// actually knows the zone, never filled in from where the *dump* happened.
+#[cfg(any(feature = "gc", feature = "ps2"))]
 fn entry_time(seconds: i64, utc_offset: Option<i32>) -> CBOR {
     let reading = CBOR::from(CBORCase::Tagged(Tag::new(1u64, "epoch"), seconds.into()));
     match utc_offset {
@@ -173,6 +178,7 @@ fn entry_time(seconds: i64, utc_offset: Option<i32>) -> CBOR {
 ///
 /// Spelled out rather than taken from a date crate: this is the only arithmetic of its kind here,
 /// and `one-saves-convert` is not worth a dependency for it.
+#[cfg(feature = "ps2")]
 fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let year = year - i64::from(month <= 2);
     let era = if year >= 0 { year } else { year - 399 } / 400;
@@ -187,6 +193,7 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 ///
 /// Which is what the reading in `x.1sav.dirent` is: a date and a time of day, with the zone it was
 /// kept in carried separately where a producer knows it.
+#[cfg(feature = "ps2")]
 pub(crate) fn civil_seconds(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> Option<i64> {
     // Range-checked rather than trusted: these come off a card, and a field a game never wrote is
     // usually zero, which is not a date.
@@ -202,6 +209,7 @@ pub(crate) fn civil_seconds(year: u16, month: u8, day: u8, hour: u8, minute: u8,
 }
 
 /// The `x.1sav.dirent` value for an entry recording both a creation and a write.
+#[cfg(feature = "ps2")]
 pub(crate) fn created_and_modified(created: i64, modified: i64, utc_offset: Option<i32>) -> CBOR {
     let mut map = Map::new();
     map.insert(0u64, entry_time(created, utc_offset));
@@ -213,6 +221,7 @@ pub(crate) fn created_and_modified(created: i64, modified: i64, utc_offset: Opti
 ///
 /// GameCube is this shape: the directory dates the last write and nothing else, which is why the
 /// schema admits a map holding key 1 alone rather than making key 0 optional.
+#[cfg(feature = "gc")]
 pub(crate) fn modified_only(seconds: i64, utc_offset: Option<i32>) -> CBOR {
     let mut map = Map::new();
     map.insert(1u64, entry_time(seconds, utc_offset));
@@ -234,6 +243,7 @@ pub(crate) fn slug(text: &str) -> Slug {
 /// PS2 is not in the list below and does not use this: a PS2 save is a *directory*, so its nested
 /// bundle has a part per file rather than the one part every other format's save is.
 #[cfg(any(feature = "gc", feature = "n64", feature = "neogeo", feature = "ps1", feature = "vmu"))]
+#[cfg(feature = "vmu")]
 pub(crate) fn save_part(
     format: Format,
     id: usize,
@@ -248,6 +258,7 @@ pub(crate) fn save_part(
 ///
 /// A picture and a name travel with the save when it is sliced out, so they go in the header of
 /// the bundle that *is* the save. A directory's times do not, and ride on the part instead.
+#[cfg(any(feature = "gc", feature = "n64", feature = "neogeo", feature = "ps1", feature = "vmu"))]
 pub(crate) fn save_part_with(
     format: Format,
     id: usize,
@@ -371,7 +382,8 @@ impl CardOptions {
     }
 }
 
-#[cfg(test)]
+// Both tests here exercise the calendar, which only a format that records a dirent time compiles.
+#[cfg(all(test, feature = "ps2"))]
 mod tests {
     use super::*;
 

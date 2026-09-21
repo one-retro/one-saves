@@ -11,6 +11,13 @@
 //!
 //! [`x.1sav.label`]: https://docs.1retro.com/specifications/extensions/x.1sav.label/
 
+// Which of these is live depends on which card formats are compiled in — a GameCube reads a plain
+// field, a PlayStation a Shift-JIS one, and the fallback below reaches for the first when the
+// decoder is off. Enumerating that per function would be a second copy of the call graph, kept by
+// hand, and wrong the first time a format starts reading a title. The module as a whole is gated
+// on there being a format that reads one at all, which is the part worth stating.
+#![allow(dead_code)]
+
 use one_saves::ReverseDnsName;
 use one_saves::dcbor::{CBOR, Map};
 

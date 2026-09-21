@@ -70,6 +70,8 @@ pub mod detect;
 pub mod error;
 #[cfg(feature = "icon")]
 mod icon;
+// Only a card format reads a title, so without one there is no label to write.
+#[cfg(any(feature = "gc", feature = "n64", feature = "neogeo", feature = "ps1", feature = "ps2"))]
 mod label;
 pub mod profile;
 pub mod raw;

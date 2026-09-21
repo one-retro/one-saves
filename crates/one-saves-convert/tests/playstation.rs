@@ -3,7 +3,9 @@
 //! Two saves, which between them cover what a PS1 icon can be: Gran Turismo keeps a still one, and
 //! Crash Bandicoot 2 animates over three frames.
 
-#![cfg(feature = "ps1")]
+// Every test here reads either a title or a picture off a card, so a build with neither has
+// nothing to run and nothing to compile the helpers for.
+#![cfg(all(feature = "ps1", any(feature = "shift-jis", feature = "icon")))]
 
 use one_saves::dcbor::CBOR;
 use one_saves::{Bundle, ReverseDnsName};
@@ -26,6 +28,7 @@ fn saves() -> Vec<Bundle> {
         .collect()
 }
 
+#[cfg(feature = "shift-jis")]
 fn label_of(save: &Bundle) -> String {
     let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
     let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");

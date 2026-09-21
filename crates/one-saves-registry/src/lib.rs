@@ -60,7 +60,7 @@ mod generated;
 pub use generated::cores;
 /// A named const per listed system: [`systems::GBA`], [`systems::PSX`], and so on.
 ///
-/// The counterpart to [`cores`], and the same bargain: a consumer that knows which system it
+/// The counterpart to [`mod@cores`], and the same bargain: a consumer that knows which system it
 /// means names it, and carries that one rather than all 49.
 pub use generated::systems;
 
@@ -179,9 +179,9 @@ pub struct CardFormat {
     /// cartridge carries its own, so a block count derived from this one is wrong for a cartridge.
     ///
     /// The medium is sometimes recoverable and sometimes not. A Saturn read whole is a device
-    /// whose parts carry a [`role`](role) — `internal` against `ram-cart` — but a cartridge dumped
+    /// whose parts carry a [`role`] — `internal` against `ram-cart` — but a cartridge dumped
     /// by itself is a card bundle with no role anywhere in it, and nothing then says which it was.
-    /// The specifications leave this as written for 0.2; settling it means keying the block size
+    /// The specifications leave this as written for 0.3; settling it means keying the block size
     /// on the card map's `capacity`, which every card carries, rather than on the format alone.
     pub block_size: usize,
     /// What is particular about this format.

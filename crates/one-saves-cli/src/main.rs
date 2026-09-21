@@ -165,24 +165,39 @@ fn write_out(path: &Path, bytes: &[u8], force: bool) -> Fallible {
     Ok(())
 }
 
-fn convert(args: Convert) -> Fallible {
-    let bytes = std::fs::read(&args.input)?;
+/// The bytes to convert and the extension to detect them by, with any archive taken off first.
+///
+/// A card shared as an archive is read out of it rather than through a temporary directory. An
+/// archive of loose saves comes back as a card built to carry them, which is a card that never
+/// existed before now — so it is said out loud rather than passed off as what was read.
+#[cfg(feature = "archive")]
+fn unwrap_archive(
+    input: &std::path::Path,
+    bytes: Vec<u8>,
+) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
+    if !one_saves_convert::archive::is_archive(&bytes) {
+        return Ok((bytes, extension_of(input)));
+    }
+    let unpacked = one_saves_convert::archive::unpack(&bytes)?;
+    if unpacked.assembled {
+        eprintln!("{}: built a card from {}", input.display(), unpacked.source);
+    }
+    Ok((unpacked.bytes, unpacked.extension))
+}
 
-    // A card shared as an archive is read out of it rather than through a temporary directory.
-    // An archive of loose saves comes back as a card built to carry them, which is a card that
-    // never existed before now — so it is said out loud rather than passed off as what was read.
-    #[cfg(feature = "archive")]
-    let (bytes, extension) = if one_saves_convert::archive::is_archive(&bytes) {
-        let unpacked = one_saves_convert::archive::unpack(&bytes)?;
-        if unpacked.assembled {
-            eprintln!("{}: built a card from {}", args.input.display(), unpacked.source);
-        }
-        (unpacked.bytes, unpacked.extension)
-    } else {
-        (bytes, extension_of(&args.input))
-    };
-    #[cfg(not(feature = "archive"))]
-    let (bytes, extension) = (bytes, extension_of(&args.input));
+/// Without `archive`, a file is only ever itself.
+// Infallible, but it stands in for one that is not, so it keeps the signature.
+#[allow(clippy::unnecessary_wraps)]
+#[cfg(not(feature = "archive"))]
+fn unwrap_archive(
+    input: &std::path::Path,
+    bytes: Vec<u8>,
+) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
+    Ok((bytes, extension_of(input)))
+}
+
+fn convert(args: Convert) -> Fallible {
+    let (bytes, extension) = unwrap_archive(&args.input, std::fs::read(&args.input)?)?;
 
     // `--from` names either a producer (mgba, duckstation) or a format (ps1, raw). A producer
     // says who wrote the bytes; the format is still detected from the bytes themselves.

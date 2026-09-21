@@ -57,7 +57,7 @@ fn cases() -> Vec<Case> {
 /// The corpus is run at [`Strictness::Schema`].
 ///
 /// Two invalid cases — `header-unknown-integer-key` and `part-unknown-integer-key` — are invalid
-/// against the version 0.2 schema and *accepted* by a shipped decoder, which ignores and
+/// against the version 0.3 schema and *accepted* by a shipped decoder, which ignores and
 /// round-trips an integer key it does not know. Running the corpus in decoder mode would fail
 /// those two for being right. A shape a later version assigned is the same asymmetry; see
 /// `a_decoder_round_trips_a_shape_a_later_version_defined` for why the corpus cannot show it.
@@ -203,7 +203,7 @@ fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
 
         assert!(
             Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
-            "{name} must fail against the version 0.2 schema"
+            "{name} must fail against the version 0.3 schema"
         );
 
         let bundle = Bundle::from_slice(&bytes)

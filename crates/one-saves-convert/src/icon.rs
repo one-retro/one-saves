@@ -110,6 +110,7 @@ impl Rgba {
 /// The top bit picks the layout: set, the remaining fifteen are RGB555 and the pixel is opaque;
 /// clear, they are a three-bit alpha over four-bit channels.
 #[must_use]
+#[cfg(feature = "gc")]
 pub(crate) fn rgb5a3(value: u16) -> [u8; 4] {
     if value & 0x8000 != 0 {
         let (r, g, b) = ((value >> 10) & 31, (value >> 5) & 31, value & 31);
@@ -120,6 +121,7 @@ pub(crate) fn rgb5a3(value: u16) -> [u8; 4] {
     }
 }
 
+#[cfg(feature = "gc")]
 /// Widens a channel to eight bits over its full range, so white stays white.
 fn scale(value: u16, max: u16) -> u8 {
     u8::try_from(u32::from(value) * 255 / u32::from(max)).expect("a scaled channel is a byte")
@@ -127,6 +129,7 @@ fn scale(value: u16, max: u16) -> u8 {
 
 /// Reads a big-endian `u16` at a pixel index, which is how every 16-bit format here is stored.
 #[must_use]
+#[cfg(feature = "gc")]
 pub(crate) fn be16(bytes: &[u8], index: usize) -> u16 {
     let at = index * 2;
     bytes.get(at..at + 2).map_or(0, |pair| u16::from_be_bytes([pair[0], pair[1]]))
