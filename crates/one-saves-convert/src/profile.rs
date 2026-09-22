@@ -69,6 +69,20 @@ static PROFILES: &[Profile] = &[
         systems: &[],
     },
     Profile {
+        key: "mednafen",
+        label: "Mednafen",
+        device_kind: "emulator",
+        // The Cores registry lists the Beetle forks rather than Mednafen itself — "Mednafen
+        // Saturn" is an alias of `beetle-saturn`, a libretro core, and not a name upstream ever
+        // writes — so standalone Mednafen is unlisted and takes a reverse-DNS name. It reverses
+        // no domain of its own, the homepage having lived on someone else's twice over, so the
+        // `x` tree is the arm left.
+        app: "x.mednafen",
+        // Everything from the Lynx to the Saturn, which leaves `only_system` nothing to settle:
+        // a Mednafen save says which system ran only via `--system` or a `--rom`.
+        systems: &[],
+    },
+    Profile {
         key: "mgba",
         label: "mGBA",
         device_kind: "emulator",
@@ -202,6 +216,16 @@ mod tests {
         assert_eq!(fceumm.app, "fceumm");
         assert_eq!(fceumm.only_system(), Some("nes"));
         assert_eq!(profile("Genesis_MiSTer").map(|p| p.app), Some("megadrive-mister"));
+    }
+
+    #[test]
+    fn standalone_mednafen_is_not_one_of_the_beetle_forks_it_was_forked_into() {
+        // The registry carries "Mednafen Saturn" and six siblings as aliases of the libretro
+        // forks, so the bare name has to reach the emulator rather than one of its children.
+        assert_eq!(profile("mednafen").map(|p| p.app), Some("x.mednafen"));
+        assert_eq!(profile("Mednafen Saturn").map(|p| p.app), Some("beetle-saturn"));
+        // Many systems, so the profile settles none of them on its own.
+        assert_eq!(profile("mednafen").and_then(|p| p.only_system()), None);
     }
 
     #[test]
