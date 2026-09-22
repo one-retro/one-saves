@@ -77,9 +77,8 @@ fn core_kind(kind: &str) -> Result<&'static str, String> {
 /// Formatting here rather than leaving it to a later `cargo fmt` is what lets CI regenerate and
 /// diff: without it the sync check and the format check would contradict each other.
 ///
-/// Long, but flat: seven independent emitters in a row, with no branching between them. Splitting
-/// it would put a seam somewhere the data does not have one.
-#[allow(clippy::too_many_lines)]
+/// The per-registry emitters are separate functions below; the seams are where one registry ends
+/// and the next begins, which is the one place the data does have one.
 pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(), String> {
     // A clock layout naming a core that is not listed is a typo rather than a new core, and it
     // would otherwise vanish silently: nothing downstream reads this file by any other route.
@@ -106,69 +105,8 @@ pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(),
         .unwrap();
     writeln!(w).unwrap();
 
-    // One const per system, then the table built out of them, so the two cannot drift.
-    let system_names = const_names(data.systems.iter().map(|s| s.slug.as_str()))?;
-    writeln!(w, "/// A named const per listed system, for the consumers that know which one they mean.")
-        .unwrap();
-    writeln!(w, "pub mod systems {{").unwrap();
-    writeln!(w, "    use crate::System;\n").unwrap();
-    for (s, name) in data.systems.iter().zip(&system_names) {
-        if s.aliases.is_empty() {
-            writeln!(w, "    /// {}.", s.name).unwrap();
-        } else {
-            writeln!(w, "    /// {} — also seen as {}.", s.name, s.aliases.join(", ")).unwrap();
-        }
-        writeln!(
-            w,
-            "    pub const {name}: System = System {{ slug: {}, name: {}, aliases: {} }};",
-            lit(&s.slug),
-            lit(&s.name),
-            lits(&s.aliases),
-        )
-        .unwrap();
-    }
-    writeln!(w, "}}\n").unwrap();
-
-    let systems: Vec<_> = data.systems.iter().zip(&system_names).collect();
-    table(
-        w,
-        "Every system slug, sorted by slug so lookups can binary-search.",
-        "SYSTEMS",
-        "System",
-        &systems,
-        |(_, name)| format!("systems::{name}"),
-    );
-
-    // The same shape as the systems above: a const each, then the table built out of them. It
-    // costs nothing — a const has no symbol of its own, so a consumer naming one materialises that
-    // core alone and leaves the table dead.
-    let core_names = const_names(data.cores.iter().map(|c| c.slug.as_str()))?;
-    let cores: Vec<_> = data.cores.iter().zip(kinds).zip(&core_names).collect();
-    writeln!(w, "/// A named const per listed core, so a producer that knows which core it is can say so")
-        .unwrap();
-    writeln!(w, "/// without a lookup — and without linking the whole table.").unwrap();
-    writeln!(w, "pub mod cores {{").unwrap();
-    writeln!(w, "    use crate::{{ClockLayout, Core, CoreKind}};\n").unwrap();
-    for ((c, kind), name) in &cores {
-        writeln!(w, "    /// {} — {}.", c.name, c.systems.join(", ")).unwrap();
-        writeln!(
-            w,
-            "    pub const {name}: Core = Core {{ slug: {}, name: {}, kind: CoreKind::{kind}, \
-             systems: {}, aliases: {}, clock: {} }};",
-            lit(&c.slug),
-            lit(&c.name),
-            lits(&c.systems),
-            lits(&c.aliases),
-            clock(&c.slug, clocks)?,
-        )
-        .unwrap();
-    }
-    writeln!(w, "}}\n").unwrap();
-
-    table(w, "Every known emulator core, sorted by slug.", "CORES", "Core", &cores, |(_, name)| {
-        format!("cores::{name}")
-    });
-
+    emit_systems(w, data)?;
+    emit_cores(w, data, clocks, kinds)?;
     table(
         w,
         "Registered save roles that are compared whole, sorted by name.",
@@ -246,6 +184,85 @@ pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(),
         )
     });
 
+    write_and_format(path, &out)
+}
+
+/// One const per system, then the table built out of them, so the two cannot drift.
+fn emit_systems(w: &mut String, data: &Registries) -> Result<(), String> {
+    let system_names = const_names(data.systems.iter().map(|s| s.slug.as_str()))?;
+    writeln!(w, "/// A named const per listed system, for the consumers that know which one they mean.")
+        .unwrap();
+    writeln!(w, "pub mod systems {{").unwrap();
+    writeln!(w, "    use crate::System;\n").unwrap();
+    for (s, name) in data.systems.iter().zip(&system_names) {
+        if s.aliases.is_empty() {
+            writeln!(w, "    /// {}.", s.name).unwrap();
+        } else {
+            writeln!(w, "    /// {} — also seen as {}.", s.name, s.aliases.join(", ")).unwrap();
+        }
+        writeln!(
+            w,
+            "    pub const {name}: System = System {{ slug: {}, name: {}, aliases: {} }};",
+            lit(&s.slug),
+            lit(&s.name),
+            lits(&s.aliases),
+        )
+        .unwrap();
+    }
+    writeln!(w, "}}\n").unwrap();
+
+    let systems: Vec<_> = data.systems.iter().zip(&system_names).collect();
+    table(
+        w,
+        "Every system slug, sorted by slug so lookups can binary-search.",
+        "SYSTEMS",
+        "System",
+        &systems,
+        |(_, name)| format!("systems::{name}"),
+    );
+
+    Ok(())
+}
+
+/// The same shape as the systems above: a const each, then the table built out of them. It
+/// costs nothing — a const has no symbol of its own, so a consumer naming one materialises that
+/// core alone and leaves the table dead.
+fn emit_cores(w: &mut String, data: &Registries, clocks: &Clocks, kinds: Vec<&str>) -> Result<(), String> {
+    // The same shape as the systems above: a const each, then the table built out of them. It
+    // costs nothing — a const has no symbol of its own, so a consumer naming one materialises that
+    // core alone and leaves the table dead.
+    let core_names = const_names(data.cores.iter().map(|c| c.slug.as_str()))?;
+    let cores: Vec<_> = data.cores.iter().zip(kinds).zip(&core_names).collect();
+    writeln!(w, "/// A named const per listed core, so a producer that knows which core it is can say so")
+        .unwrap();
+    writeln!(w, "/// without a lookup — and without linking the whole table.").unwrap();
+    writeln!(w, "pub mod cores {{").unwrap();
+    writeln!(w, "    use crate::{{ClockLayout, Core, CoreKind}};\n").unwrap();
+    for ((c, kind), name) in &cores {
+        writeln!(w, "    /// {} — {}.", c.name, c.systems.join(", ")).unwrap();
+        writeln!(
+            w,
+            "    pub const {name}: Core = Core {{ slug: {}, name: {}, kind: CoreKind::{kind}, \
+             systems: {}, aliases: {}, clock: {} }};",
+            lit(&c.slug),
+            lit(&c.name),
+            lits(&c.systems),
+            lits(&c.aliases),
+            clock(&c.slug, clocks)?,
+        )
+        .unwrap();
+    }
+    writeln!(w, "}}\n").unwrap();
+
+    table(w, "Every known emulator core, sorted by slug.", "CORES", "Core", &cores, |(_, name)| {
+        format!("cores::{name}")
+    });
+
+    Ok(())
+}
+
+/// Writes the file and runs rustfmt over it, so the sync check and the format check agree.
+fn write_and_format(path: &Path, out: &str) -> Result<(), String> {
     // The last table is followed by a blank line from `table`; trim it so the file ends cleanly.
     let out = out.trim_end().to_owned() + "\n";
     std::fs::write(path, out).map_err(|e| format!("{}: {e}", path.display()))?;

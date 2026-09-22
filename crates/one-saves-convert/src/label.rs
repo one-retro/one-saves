@@ -11,13 +11,6 @@
 //!
 //! [`x.1sav.label`]: https://docs.1retro.com/specifications/extensions/x.1sav.label/
 
-// Which of these is live depends on which card formats are compiled in — a GameCube reads a plain
-// field, a PlayStation a Shift-JIS one, and the fallback below reaches for the first when the
-// decoder is off. Enumerating that per function would be a second copy of the call graph, kept by
-// hand, and wrong the first time a format starts reading a title. The module as a whole is gated
-// on there being a format that reads one at all, which is the part worth stating.
-#![allow(dead_code)]
-
 use one_saves::ReverseDnsName;
 use one_saves::dcbor::{CBOR, Map};
 
@@ -51,6 +44,7 @@ fn fits(line: &str) -> bool {
 /// Returns `None` where the field holds a byte this cannot transcode. A console that stored a
 /// title in an encoding nothing here decodes has a title, and omitting the key says so honestly,
 /// where writing the ASCII that happened to survive would say something the save does not.
+#[cfg(any(feature = "gc", all(any(feature = "ps1", feature = "ps2"), not(feature = "shift-jis"))))]
 pub(crate) fn ascii_field(bytes: &[u8]) -> Option<String> {
     let text = until_nul(bytes);
     if text.iter().any(|&b| !(0x20..0x7f).contains(&b)) {
@@ -66,7 +60,7 @@ pub(crate) fn ascii_field(bytes: &[u8]) -> Option<String> {
 /// folding it would be normalization the spec does not grant. A field this cannot read returns
 /// `None` rather than a partial reading, which is the same rule as everywhere else here: a
 /// producer that would be guessing omits the key.
-#[cfg(feature = "shift-jis")]
+#[cfg(all(any(feature = "ps1", feature = "ps2"), feature = "shift-jis"))]
 pub(crate) fn shift_jis_field(bytes: &[u8]) -> Option<String> {
     let text = until_nul(bytes);
     let (decoded, _, malformed) = encoding_rs::SHIFT_JIS.decode(text);
@@ -79,12 +73,13 @@ pub(crate) fn shift_jis_field(bytes: &[u8]) -> Option<String> {
 }
 
 /// Without a decoder, a title in an encoding this cannot read is one it does not carry.
-#[cfg(not(feature = "shift-jis"))]
+#[cfg(all(any(feature = "ps1", feature = "ps2"), not(feature = "shift-jis")))]
 pub(crate) fn shift_jis_field(bytes: &[u8]) -> Option<String> {
     ascii_field(bytes)
 }
 
 /// A fixed-width field runs to its first NUL, or to its end.
+#[cfg(any(feature = "gc", feature = "ps1", feature = "ps2"))]
 fn until_nul(bytes: &[u8]) -> &[u8] {
     match bytes.iter().position(|&b| b == 0) {
         Some(end) => &bytes[..end],
@@ -92,10 +87,12 @@ fn until_nul(bytes: &[u8]) -> &[u8] {
     }
 }
 
-#[cfg(test)]
+// Both tests read a fixed-width field, which only a format that has one compiles.
+#[cfg(all(test, any(feature = "gc", feature = "ps1", feature = "ps2")))]
 mod tests {
     use super::*;
 
+    #[cfg(any(feature = "gc", all(any(feature = "ps1", feature = "ps2"), not(feature = "shift-jis"))))]
     #[test]
     fn a_fixed_width_field_loses_its_padding_and_nothing_else() {
         assert_eq!(ascii_field(b"F-ZERO GX\0\0\0"), Some("F-ZERO GX".into()));
@@ -109,7 +106,7 @@ mod tests {
         assert_eq!(ascii_field(b"M\xe9tal"), None);
     }
 
-    #[cfg(feature = "shift-jis")]
+    #[cfg(all(any(feature = "ps1", feature = "ps2"), feature = "shift-jis"))]
     #[test]
     fn a_title_in_shift_jis_is_read_rather_than_approximated() {
         // "ＴＥＫＫＥＮ　４", which is what a PS2 card in `data/saves` actually holds.

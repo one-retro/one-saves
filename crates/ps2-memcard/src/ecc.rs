@@ -12,21 +12,28 @@
 /// How many bytes of data one code covers.
 pub const CHUNK: usize = 128;
 
+/// The byte a `0..256` table index stands for.
+///
+/// `usize::to_le_bytes` is const where `u8::try_from` is not, and taking the low byte of an index
+/// this crate only ever calls with `0..256` is the same value without a narrowing cast to allow.
+const fn table_index_byte(index: usize) -> u8 {
+    index.to_le_bytes()[0]
+}
+
 /// The parity of each byte value: 1 when it has an odd number of bits set.
 ///
-/// Built at compile time, so the narrowing casts below are over a `0..256` loop counter and
-/// cannot truncate. A `const fn` cannot call `try_from`, which is why they are written as `as`.
-#[allow(clippy::cast_possible_truncation)]
+/// Built at compile time. The counter is the byte itself, which is what keeps this free of the
+/// narrowing cast a `0..256` index would need and a `const fn` cannot write with `try_from`.
 const PARITY: [u8; 256] = {
     let mut table = [0u8; 256];
-    let mut value = 0usize;
-    while value < 256 {
-        let mut byte = value as u8; // 0..256, so this is the byte the entry is for
+    let mut index = 0usize;
+    while index < 256 {
+        let mut byte = table_index_byte(index);
         byte ^= byte >> 1;
         byte ^= byte >> 2;
         byte ^= byte >> 4;
-        table[value] = byte & 1;
-        value += 1;
+        table[index] = byte & 1;
+        index += 1;
     }
     table
 };
@@ -35,25 +42,24 @@ const PARITY: [u8; 256] = {
 ///
 /// Bit *i* of the mask is the parity of the byte under the *i*th column mask, which is what lets
 /// the per-byte loop below be a table lookup rather than seven nested parities.
-#[allow(clippy::cast_possible_truncation)]
 const COLUMN_PARITY: [u8; 256] = {
     // Three masks splitting the bits one way, a hole, then three splitting them the other.
     let masks = [0x55u8, 0x33, 0x0F, 0x00, 0xAA, 0xCC, 0xF0];
     let mut table = [0u8; 256];
-    let mut value = 0usize;
-    while value < 256 {
+    let mut index = 0usize;
+    while index < 256 {
         let mut mask = 0u8;
         let mut i = 0usize;
         while i < 7 {
-            let mut byte = (value as u8) & masks[i]; // as above: value is a byte's worth
+            let mut byte = table_index_byte(index) & masks[i];
             byte ^= byte >> 1;
             byte ^= byte >> 2;
             byte ^= byte >> 4;
             mask |= (byte & 1) << i;
             i += 1;
         }
-        table[value] = mask;
-        value += 1;
+        table[index] = mask;
+        index += 1;
     }
     table
 };

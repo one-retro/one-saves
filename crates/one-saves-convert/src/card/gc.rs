@@ -196,7 +196,6 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
         // The picture travels with the save, so it goes in the header of the bundle that *is* the
         // save rather than on the card's part naming it.
-        #[allow(unused_mut)]
         let mut inner = one_saves::Extensions::new();
         #[cfg(feature = "icon")]
         if let Some(icon) = pictures(&save.dirent, &save.data) {

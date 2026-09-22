@@ -4,11 +4,6 @@
 //! generating needs only the JSON this repository already carries, which is what lets CI check
 //! that the committed tables still match their data without fetching anything.
 
-// A few field names repeat their struct's name — `Role::role`, `Vendor::vendor`. Those are the
-// keys of the committed JSON rather than a naming choice, and renaming them here would rename
-// them on disk.
-#![allow(clippy::struct_field_names)]
-
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -38,7 +33,7 @@ pub struct Core {
 
 /// A save role compared whole.
 #[derive(Serialize, Deserialize)]
-pub struct Role {
+pub struct RoleEntry {
     pub role: String,
     pub description: String,
     pub common: bool,
@@ -57,13 +52,13 @@ pub struct RolePrefix {
 /// Both halves of the roles page.
 #[derive(Serialize, Deserialize)]
 pub struct Roles {
-    pub roles: Vec<Role>,
+    pub roles: Vec<RoleEntry>,
     pub prefixes: Vec<RolePrefix>,
 }
 
 /// An assigned name in the `x` tree.
 #[derive(Serialize, Deserialize)]
-pub struct Vendor {
+pub struct VendorEntry {
     pub name: String,
     pub kind: String,
     pub vendor: String,
@@ -119,7 +114,7 @@ pub struct Registries {
     pub systems: Vec<System>,
     pub cores: Vec<Core>,
     pub roles: Roles,
-    pub vendors: Vec<Vendor>,
+    pub vendors: Vec<VendorEntry>,
     pub card_formats: Vec<CardFormat>,
     pub device_kinds: Vec<DeviceKind>,
     pub bindings: Vec<Binding>,
@@ -242,7 +237,7 @@ fn roles(page: &str) -> Fallible<Roles> {
     Ok(Roles {
         roles: fold(plain)
             .into_iter()
-            .map(|(role, description, common, systems)| Role { role, description, common, systems })
+            .map(|(role, description, common, systems)| RoleEntry { role, description, common, systems })
             .collect(),
         prefixes: fold(prefixed)
             .into_iter()
@@ -251,11 +246,11 @@ fn roles(page: &str) -> Fallible<Roles> {
     })
 }
 
-fn vendors(page: &str) -> Fallible<Vec<Vendor>> {
+fn vendors(page: &str) -> Fallible<Vec<VendorEntry>> {
     let mut out = Vec::new();
     for table in tables(page).iter().filter(|t| t.headed_by("Name")) {
         for row in &table.rows {
-            out.push(Vendor {
+            out.push(VendorEntry {
                 name: one_code(&row[0])?,
                 kind: row[1].clone(),
                 vendor: row[2].clone(),

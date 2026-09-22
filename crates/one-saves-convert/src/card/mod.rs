@@ -72,7 +72,17 @@ use crate::error::{Error, Result};
 /// with is [`Unsupported`](Error::Unsupported) rather than misread.
 // A build with no card format at all reads neither argument, since every arm that would have is
 // gone. That is the point of the configuration rather than an oversight in it.
-#[allow(unused_variables)]
+#[cfg_attr(
+    not(any(
+        feature = "gc",
+        feature = "n64",
+        feature = "neogeo",
+        feature = "ps1",
+        feature = "ps2",
+        feature = "vmu"
+    )),
+    allow(unused_variables)
+)]
 pub fn read(format: Format, bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     match format {
         #[cfg(feature = "ps1")]
@@ -90,13 +100,33 @@ pub fn read(format: Format, bytes: &[u8], options: &CardOptions) -> Result<Bundl
         Format::Bundle | Format::Raw => {
             Err(Error::NotConvertible(format!("a {} is not a card", format.label())))
         }
-        #[allow(unreachable_patterns)]
+        #[cfg_attr(
+            all(
+                feature = "gc",
+                feature = "n64",
+                feature = "neogeo",
+                feature = "ps1",
+                feature = "ps2",
+                feature = "vmu"
+            ),
+            allow(unreachable_patterns)
+        )]
         other => Err(other.unsupported()),
     }
 }
 
 /// Writes a bundle back out as a card of the given format.
-#[allow(unused_variables)]
+#[cfg_attr(
+    not(any(
+        feature = "gc",
+        feature = "n64",
+        feature = "neogeo",
+        feature = "ps1",
+        feature = "ps2",
+        feature = "vmu"
+    )),
+    allow(unused_variables)
+)]
 pub fn write(format: Format, bundle: &Bundle) -> Result<Vec<u8>> {
     match format {
         #[cfg(feature = "ps1")]
@@ -118,7 +148,17 @@ pub fn write(format: Format, bundle: &Bundle) -> Result<Vec<u8>> {
         Format::Bundle | Format::Raw => {
             Err(Error::NotConvertible(format!("a {} is not a card", format.label())))
         }
-        #[allow(unreachable_patterns)]
+        #[cfg_attr(
+            all(
+                feature = "gc",
+                feature = "n64",
+                feature = "neogeo",
+                feature = "ps1",
+                feature = "ps2",
+                feature = "vmu"
+            ),
+            allow(unreachable_patterns)
+        )]
         other => Err(other.unsupported()),
     }
 }

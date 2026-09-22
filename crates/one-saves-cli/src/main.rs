@@ -185,19 +185,47 @@ fn unwrap_archive(
     Ok((unpacked.bytes, unpacked.extension))
 }
 
-/// Without `archive`, a file is only ever itself.
-// Infallible, but it stands in for one that is not, so it keeps the signature.
-#[allow(clippy::unnecessary_wraps)]
-#[cfg(not(feature = "archive"))]
-fn unwrap_archive(
-    input: &std::path::Path,
-    bytes: Vec<u8>,
-) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
-    Ok((bytes, extension_of(input)))
+/// The clock kept beside a save, and the instant it was read.
+///
+/// A clock in its own file has to be found, since the save does not mention it. The file records
+/// an origin rather than a reading, so an instant is what turns one into the other.
+type Sidecar = (std::path::PathBuf, Vec<u8>, i64);
+
+fn sidecar_clock(args: &Convert) -> Result<Option<Sidecar>, Box<dyn std::error::Error>> {
+    let path = args.rtc_file.clone().or_else(|| {
+        let beside = args.input.with_extension("rtc");
+        beside.exists().then_some(beside)
+    });
+    let Some(path) = path else {
+        if args.rtc_captured_at.is_some() {
+            return Err("--rtc-captured-at was given, but there is no sidecar clock to apply it to".into());
+        }
+        return Ok(None);
+    };
+
+    let bytes = std::fs::read(&path)?;
+    // Falling back to the modification time is a guess, and one that gets worse the further the
+    // file has travelled: copying, unzipping and checking out all reset it. It is only the right
+    // answer for a file the emulator wrote in place.
+    let captured_at = if let Some(stated) = args.rtc_captured_at {
+        stated
+    } else {
+        let mtime = std::fs::metadata(&path)?
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("{} has a modification time before 1970: {e}", path.display()))?
+            .as_secs();
+        i64::try_from(mtime)?
+    };
+    Ok(Some((path, bytes, captured_at)))
 }
 
 fn convert(args: Convert) -> Fallible {
+    #[cfg(feature = "archive")]
     let (bytes, extension) = unwrap_archive(&args.input, std::fs::read(&args.input)?)?;
+    // Without `archive`, a file is only ever itself.
+    #[cfg(not(feature = "archive"))]
+    let (bytes, extension) = (std::fs::read(&args.input)?, extension_of(&args.input));
 
     // `--from` names either a producer (mgba, duckstation) or a format (ps1, raw). A producer
     // says who wrote the bytes; the format is still detected from the bytes themselves.
@@ -212,38 +240,15 @@ fn convert(args: Convert) -> Fallible {
         return Err("this file is already a bundle".into());
     }
 
+    #[cfg(feature = "rom")]
     let Identified { mut game, system: rom_system } = identify(&args)?;
+    // Without `rom` there is no `--rom` to read, so there is nothing a ROM could have said.
+    #[cfg(not(feature = "rom"))]
+    let Identified { mut game, system: rom_system } = Identified::default();
 
-    // A clock kept in its own file has to be found, since the save does not mention it. The file
-    // records an origin rather than a reading, so an instant is what turns one into the other.
-    let sidecar_path = args.rtc_file.clone().or_else(|| {
-        let beside = args.input.with_extension("rtc");
-        beside.exists().then_some(beside)
-    });
-    if args.rtc_captured_at.is_some() && sidecar_path.is_none() {
-        return Err("--rtc-captured-at was given, but there is no sidecar clock to apply it to".into());
-    }
-
-    let sidecar = match &sidecar_path {
-        Some(path) => {
-            let bytes = std::fs::read(path)?;
-            // Falling back to the modification time is a guess, and one that gets worse the
-            // further the file has travelled: copying, unzipping and checking out all reset it.
-            // It is only the right answer for a file the emulator wrote in place.
-            let captured_at = if let Some(stated) = args.rtc_captured_at {
-                stated
-            } else {
-                let mtime = std::fs::metadata(path)?
-                    .modified()?
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| format!("{} has a modification time before 1970: {e}", path.display()))?
-                    .as_secs();
-                i64::try_from(mtime)?
-            };
-            Some((bytes, captured_at))
-        }
-        None => None,
-    };
+    let sidecar = sidecar_clock(&args)?;
+    let sidecar_path = sidecar.as_ref().map(|(path, _, _)| path.clone());
+    let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at));
 
     let source = profile.as_ref().map(|p| p.source(args.app_version.clone()));
     // A profile that covers exactly one system settles `system` when the user did not say.
@@ -364,16 +369,6 @@ fn identify(args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
         }
     }
     Ok(Identified { game: Some(game), system })
-}
-
-/// Stands in for the above in a build without `rom`, where there is no `--rom` to read.
-///
-/// It cannot fail, having nothing to read, but it keeps the signature so the caller does not have
-/// to know which build it is in.
-#[cfg(not(feature = "rom"))]
-#[allow(clippy::unnecessary_wraps)]
-fn identify(_args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
-    Ok(Identified::default())
 }
 
 fn extract(args: Extract) -> Fallible {
