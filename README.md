@@ -47,6 +47,7 @@ and stops there.
 | [`neogeo-memcard`](crates/neogeo-memcard) | Neo Geo memory cards, MVS and AES alike |
 | [`gc-memcard`](crates/gc-memcard) | GameCube memory cards |
 | [`dreamcast-vmu`](crates/dreamcast-vmu) | Dreamcast Visual Memory Units |
+| [`saturn-backup`](crates/saturn-backup) | Sega Saturn backup RAM, internal and Backup RAM Cart |
 
 What `one-saves-convert` holds for each is the adapter — the mapping between a card's saves and a
 bundle's nested parts — and nothing else.
@@ -58,8 +59,8 @@ consumer pays for what it uses. Reading and writing bundles needs none of them.
 
 | Feature | On | What it brings |
 | ------- | -- | -------------- |
-| `cards` | `one-saves-convert`, `one-saves-cli` | all six card formats below |
-| `ps1` `ps2` `n64` `gc` `vmu` `neogeo` | `one-saves-convert`, `one-saves-cli` | one card crate each, and nothing else |
+| `cards` | `one-saves-convert`, `one-saves-cli` | all seven card formats below |
+| `ps1` `ps2` `n64` `gc` `vmu` `neogeo` `saturn` | `one-saves-convert`, `one-saves-cli` | one card crate each, and nothing else |
 | `dat` | `one-saves-convert`, `one-saves-cli` | `datary`, `quick-xml`, `serde` and its derive |
 | `dat-cmpro` | `one-saves-convert`, `one-saves-cli` | `winnow` |
 | `rom` | `one-saves-convert`, `one-saves-cli` | `crc32fast`, `md-5`, `sha1` |
@@ -93,10 +94,19 @@ Each crate's README has the detail.
 | Dreamcast VMU | `.bin` | yes |
 | PS2 memory cards | `.ps2`, with or without ECC spare | yes |
 | Neo Geo memory cards | `.neo`, bare or in a MiSTer save | yes |
+| Saturn backup RAM | `.bkr` `.bcr`, internal and Backup RAM Cart | yes |
 
 Detection reads the bytes before the extension, because the extension is the less reliable of the
 two: the same PS1 card ships as `.mcr`, `.mcd`, `.bin` and `.srm`, and that last one is also what
 most libretro cores call a flat cartridge save.
+
+Saturn is the one card whose block size is not a property of its format: the console's internal
+memory allocates in 64-byte blocks and a Backup RAM Cart in 512-byte ones. The volume states which
+— `BackUpRam Format` repeats to fill block 0 exactly, so the repeat count is the block size over
+sixteen — so a dump of either is read without being told which it is. A Saturn save also carries its own entry, and
+its own list of the blocks it occupies, at the head of its first block rather than in a directory
+region — so a writer renumbers that list while the entry ahead of it rides as an ordinary
+`dirent`.
 
 A backup RAM is the one flat save that names itself. A volume ends in a 64-byte footer whose
 second half never varies — the volume name and the free-block and file counts are in the first

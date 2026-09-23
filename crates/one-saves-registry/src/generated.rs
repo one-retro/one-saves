@@ -1471,35 +1471,35 @@ pub(crate) static ROLE_PREFIXES: [RolePrefix; 3] = [
 pub(crate) static CARD_FORMATS: [CardFormat; 7] = [
     CardFormat {
         name: "ps1-mc",
-        dirent_len: Some(128),
+        dirent_len: 128,
         block_size: 8192,
         notes: "The 128 is one directory frame, and a block is 64 of them.",
     },
     CardFormat {
         name: "ps2-mc",
-        dirent_len: Some(512),
+        dirent_len: 512,
         block_size: 1024,
         notes: "One entry for the save's directory, one per file inside it. A block is a cluster of two 512-byte pages.",
     },
     CardFormat {
         name: "n64-cpak",
-        dirent_len: Some(32),
+        dirent_len: 32,
         block_size: 256,
         notes: "The pak's own word for a block is a page.",
     },
-    CardFormat { name: "gc-mc", dirent_len: Some(64), block_size: 8192, notes: "" },
-    CardFormat { name: "vmu", dirent_len: Some(32), block_size: 512, notes: "" },
+    CardFormat { name: "gc-mc", dirent_len: 64, block_size: 8192, notes: "" },
+    CardFormat { name: "vmu", dirent_len: 32, block_size: 512, notes: "" },
     CardFormat {
         name: "neogeo-mc",
-        dirent_len: Some(4),
+        dirent_len: 4,
         block_size: 64,
         notes: "Cards run from 2 KiB to 16 KiB and every one of them uses the same block.",
     },
     CardFormat {
         name: "saturn-bup",
-        dirent_len: None,
+        dirent_len: 30,
         block_size: 64,
-        notes: "The entry lives in the first block of the save itself, so the key is absent. The 64 is the console's internal memory; a backup cartridge is a separate device carrying its own.",
+        notes: "The entry sits at the head of the save's own first block rather than in a directory region, and the block list that follows it is the writer's. The 64 is the console's internal memory; a backup cartridge is a separate device carrying its own.",
     },
 ];
 

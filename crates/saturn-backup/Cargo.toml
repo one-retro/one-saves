@@ -1,0 +1,20 @@
+[package]
+name = "saturn-backup"
+description = "Read and write Sega Saturn backup RAM: the console's internal memory and the Backup RAM Cart alike"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["encoding", "filesystem", "parser-implementations"]
+keywords = ["saturn", "sega", "backup", "emulation", "savegame"]
+readme = "README.md"
+# The integration tests read cards from the workspace's `data/saves`, which is not part of
+# this crate. They stay behind rather than shipping a copy of a 512 KiB cartridge per card.
+exclude = ["tests"]
+
+[dependencies]
+
+[lints]
+workspace = true

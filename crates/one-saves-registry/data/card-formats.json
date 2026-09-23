@@ -37,8 +37,8 @@
   },
   {
     "format": "saturn-bup",
-    "dirent_len": null,
+    "dirent_len": 30,
     "block_size": 64,
-    "notes": "The entry lives in the first block of the save itself, so the key is absent. The 64 is the console's internal memory; a backup cartridge is a separate device carrying its own."
+    "notes": "The entry sits at the head of the save's own first block rather than in a directory region, and the block list that follows it is the writer's. The 64 is the console's internal memory; a backup cartridge is a separate device carrying its own."
   }
 ]

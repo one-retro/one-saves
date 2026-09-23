@@ -147,10 +147,10 @@ pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(),
         "CardFormat",
         &data.card_formats,
         |f| {
-            let dirent = f.dirent_len.map_or_else(|| "None".to_owned(), |n| format!("Some({n})"));
             format!(
-                "CardFormat {{ name: {}, dirent_len: {dirent}, block_size: {}, notes: {} }}",
+                "CardFormat {{ name: {}, dirent_len: {}, block_size: {}, notes: {} }}",
                 lit(&f.format),
+                f.dirent_len,
                 f.block_size,
                 lit(&f.notes)
             )

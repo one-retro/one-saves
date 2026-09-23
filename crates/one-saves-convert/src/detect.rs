@@ -33,6 +33,12 @@ pub enum Format {
     Ps2Card,
     /// A Neo Geo memory card image.
     NeoGeoCard,
+    /// A Sega Saturn backup RAM: the console's internal memory, or a Backup RAM Cart.
+    ///
+    /// One format over two media. The block size is the volume's rather than the format's — 64
+    /// bytes inside the console, 512 on a 512 KiB cart — so a reader takes it off the volume's
+    /// own signature instead of the table.
+    SaturnBup,
 }
 
 impl Format {
@@ -48,6 +54,7 @@ impl Format {
             Format::Vmu => "Dreamcast VMU",
             Format::Ps2Card => "PS2 memory card",
             Format::NeoGeoCard => "Neo Geo memory card",
+            Format::SaturnBup => "Saturn backup RAM",
         }
     }
 
@@ -64,6 +71,7 @@ impl Format {
             Format::Vmu => Some("vmu"),
             Format::Ps2Card => Some("ps2-mc"),
             Format::NeoGeoCard => Some("neogeo-mc"),
+            Format::SaturnBup => Some("saturn-bup"),
             Format::Bundle | Format::Raw => None,
         }
     }
@@ -80,6 +88,7 @@ impl Format {
             // One system, not two: the MVS cabinet and the AES console take the same card and read
             // each other's saves, which is the whole point of it.
             Format::NeoGeoCard => Some("neogeo"),
+            Format::SaturnBup => Some("saturn"),
             Format::Bundle | Format::Raw => None,
         }
     }
@@ -92,6 +101,11 @@ impl Format {
     pub const fn default_role(self) -> &'static str {
         match self {
             Format::NeoGeoCard => "neogeo-card",
+            // A Saturn keeps its saves in the console itself, and a Backup RAM Cart extends that
+            // rather than replacing it. Neither is a numbered card slot, and a cartridge dumped
+            // by itself says nothing about which it was, so `ram-cart` stays the caller's to
+            // state.
+            Format::SaturnBup => "internal",
             _ => "memcard-1",
         }
     }
@@ -108,6 +122,7 @@ impl Format {
             Format::Vmu => "bin",
             Format::Ps2Card => "ps2",
             Format::NeoGeoCard => "neo",
+            Format::SaturnBup => "bkr",
         }
     }
 
@@ -126,12 +141,14 @@ impl Format {
             Format::Vmu => cfg!(feature = "vmu"),
             Format::Ps2Card => cfg!(feature = "ps2"),
             Format::NeoGeoCard => cfg!(feature = "neogeo"),
+            Format::SaturnBup => cfg!(feature = "saturn"),
         }
     }
 
     /// The feature that supplies this format, for an error that has to name one.
     pub(crate) const fn feature(self) -> &'static str {
         match self {
+            Format::SaturnBup => "saturn",
             Format::Bundle | Format::Raw => "",
             Format::Ps1Card => "ps1",
             Format::N64Pak => "n64",
@@ -153,9 +170,17 @@ impl Format {
     /// knows and was not compiled to write — see [`is_supported`](Self::is_supported).
     #[must_use]
     pub fn from_card_format(slug: &str) -> Option<Self> {
-        [Format::Ps1Card, Format::N64Pak, Format::GcCard, Format::Vmu, Format::Ps2Card, Format::NeoGeoCard]
-            .into_iter()
-            .find(|format| format.card_format() == Some(slug))
+        [
+            Format::Ps1Card,
+            Format::N64Pak,
+            Format::GcCard,
+            Format::Vmu,
+            Format::Ps2Card,
+            Format::NeoGeoCard,
+            Format::SaturnBup,
+        ]
+        .into_iter()
+        .find(|format| format.card_format() == Some(slug))
     }
 
     /// The format a name denotes, for `--from` and `--to`.
@@ -176,6 +201,10 @@ impl Format {
             "vmu" | "dreamcast" => Some(Format::Vmu),
             "ps2" | "ps2-mc" | "psu" => Some(Format::Ps2Card),
             "neogeo" | "neogeo-mc" | "neo" | "mvs" | "aes" => Some(Format::NeoGeoCard),
+            // `bkr` is the console's internal memory and `bcr` a Backup RAM Cart. One format,
+            // two capacities; `.bup` is deliberately absent, being a single save rather than a
+            // card.
+            "saturn" | "saturn-bup" | "bkr" | "bcr" => Some(Format::SaturnBup),
             _ => None,
         }
     }
@@ -210,6 +239,13 @@ pub fn detect(bytes: &[u8], extension: &str) -> Result<Format> {
     // and the largest Backup RAM Cart is exactly the size of the smallest GameCube card.
     if raw::is_segacd_bram(bytes) {
         return Ok(Format::Raw);
+    }
+    // A Saturn volume carries an exact signature too, and it is weighed up here for the same
+    // reason: the console's internal memory is 32 KiB, which is exactly a Controller Pak's
+    // length, and the pak's test is a plausibility check a Saturn dump could pass.
+    #[cfg(feature = "saturn")]
+    if saturn_backup::detect(bytes) {
+        return Ok(Format::SaturnBup);
     }
     #[cfg(feature = "ps1")]
     if ps1_memcard::detect(bytes) {
@@ -247,6 +283,7 @@ pub fn detect(bytes: &[u8], extension: &str) -> Result<Format> {
         "raw" | "gcp" => Ok(Format::GcCard),
         "ps2" => Ok(Format::Ps2Card),
         "neo" => Ok(Format::NeoGeoCard),
+        "bkr" | "bcr" => Ok(Format::SaturnBup),
         _ if raw::is_raw_extension(&lowered) => Ok(Format::Raw),
         _ => Err(Error::Undetected),
     }
@@ -324,28 +361,85 @@ mod tests {
         assert_eq!(Format::Raw.card_format(), None);
     }
 
+    /// Every card format, whether or not anything reads it.
+    const CARD_FORMATS: [Format; 7] = [
+        Format::Ps1Card,
+        Format::N64Pak,
+        Format::GcCard,
+        Format::Vmu,
+        Format::Ps2Card,
+        Format::NeoGeoCard,
+        Format::SaturnBup,
+    ];
+
     #[test]
     fn every_card_format_names_a_slug_a_system_and_an_extension() {
         // The four card properties are parallel, and a variant added with one of them missing is
         // the mistake this catches.
-        for format in [
-            Format::Ps1Card,
-            Format::N64Pak,
-            Format::GcCard,
-            Format::Vmu,
-            Format::Ps2Card,
-            Format::NeoGeoCard,
-        ] {
+        for format in CARD_FORMATS {
             assert!(format.card_format().is_some(), "{format:?} has no card format slug");
             assert!(!format.default_role().is_empty(), "{format:?} has no default role");
             assert!(format.system().is_some(), "{format:?} has no system slug");
             assert!(!format.extension().is_empty(), "{format:?} has no extension");
-            assert!(!format.feature().is_empty(), "{format:?} has no feature");
+            let slug = format.card_format().expect("checked above");
+            assert_eq!(Format::from_card_format(slug), Some(format), "{slug} does not resolve back");
         }
         for format in [Format::Bundle, Format::Raw] {
             assert_eq!(format.card_format(), None);
             assert!(format.is_supported(), "{format:?} is not behind a feature");
         }
+    }
+
+    #[test]
+    fn every_card_format_names_the_feature_that_supplies_it() {
+        // Seven card formats, each behind a feature of its own, and the refusal for one that is
+        // off names it. A variant added without one is the mistake this catches.
+        for format in CARD_FORMATS {
+            assert!(!format.feature().is_empty(), "{format:?} has no feature");
+        }
+        assert_eq!(Format::SaturnBup.feature(), "saturn");
+    }
+
+    /// A formatted Saturn volume of `size` bytes, allocating in blocks of `block`.
+    #[cfg(feature = "saturn")]
+    fn saturn(size: usize, block: usize) -> Vec<u8> {
+        let mut out = vec![0u8; size];
+        for offset in (0..block).step_by(saturn_backup::MAGIC.len()) {
+            out[offset..offset + saturn_backup::MAGIC.len()].copy_from_slice(saturn_backup::MAGIC);
+        }
+        out
+    }
+
+    #[test]
+    #[cfg(feature = "saturn")]
+    fn a_saturn_volume_is_recognised_at_either_block_size() {
+        // The console's 32 KiB in 64-byte blocks and a 512 KiB cart in 512-byte ones. Same
+        // signature, and the repeat count is the only thing that tells them apart.
+        assert_eq!(detect(&saturn(32_768, 64), "").unwrap(), Format::SaturnBup);
+        assert_eq!(detect(&saturn(524_288, 512), "").unwrap(), Format::SaturnBup);
+        assert_eq!(detect(&saturn(32_768, 64), "srm").unwrap(), Format::SaturnBup);
+    }
+
+    #[test]
+    #[cfg(feature = "saturn")]
+    fn a_saturn_volume_is_not_taken_for_a_controller_pak() {
+        // 32 KiB is exactly a Controller Pak's length and the pak's test is a plausibility check,
+        // so the signature has to be weighed first. The same trap the Sega CD check sits in front
+        // of, and the reason a `.mpk` name does not win either.
+        assert_eq!(detect(&saturn(32_768, 64), "").unwrap(), Format::SaturnBup);
+        assert_eq!(detect(&saturn(32_768, 64), "mpk").unwrap(), Format::SaturnBup);
+    }
+
+    #[test]
+    fn a_saturn_volume_resolves_by_name_whatever_this_build_can_read() {
+        // Beetle Saturn writes `.srm` for the internal memory and `.bcr` for a cart; standalone
+        // Mednafen writes `.bkr`. Only the last two are unambiguous, so `.srm` stays a flat save
+        // by name and is settled by the signature above.
+        assert_eq!(Format::from_name("saturn"), Some(Format::SaturnBup));
+        assert_eq!(Format::from_name("saturn-bup"), Some(Format::SaturnBup));
+        assert_eq!(detect(&[0u8; 4], "bkr").unwrap(), Format::SaturnBup);
+        assert_eq!(detect(&[0u8; 4], "bcr").unwrap(), Format::SaturnBup);
+        assert_eq!(Format::SaturnBup.is_supported(), cfg!(feature = "saturn"));
     }
 
     #[test]

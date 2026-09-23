@@ -69,7 +69,7 @@ pub struct VendorEntry {
 #[derive(Serialize, Deserialize)]
 pub struct CardFormat {
     pub format: String,
-    pub dirent_len: Option<usize>,
+    pub dirent_len: usize,
     /// The format's block size in bytes, which 0.2 added and every format has.
     pub block_size: usize,
     pub notes: String,
@@ -269,12 +269,7 @@ fn card_formats(page: &str) -> Fallible<Vec<CardFormat>> {
             let dirent = row[1].trim();
             out.push(CardFormat {
                 format: one_code(&row[0])?,
-                // Saturn keeps its entry inside the save's first block, so it has no length.
-                dirent_len: if dirent == "none" {
-                    None
-                } else {
-                    Some(dirent.parse().map_err(|_| format!("{dirent:?} is not a dirent length"))?)
-                },
+                dirent_len: dirent.parse().map_err(|_| format!("{dirent:?} is not a dirent length"))?,
                 block_size: {
                     let block = row[2].trim();
                     block.parse().map_err(|_| format!("{block:?} is not a block size"))?

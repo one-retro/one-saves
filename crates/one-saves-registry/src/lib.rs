@@ -169,9 +169,10 @@ pub struct CardFormat {
     pub name: &'static str,
     /// How many bytes this format's `dirent` runs to.
     ///
-    /// `None` for `saturn-bup`, which keeps its entry inside the save's first block and so omits
-    /// the key entirely.
-    pub dirent_len: Option<usize>,
+    /// Every listed format has one. `saturn-bup` was the exception until 0.3: its entry sits at
+    /// the head of the save's own first block rather than in a directory region, which changes
+    /// where a reader finds those thirty bytes and not whether they can be carried.
+    pub dirent_len: usize,
     /// The format's block size in bytes: the unit a card allocates a save in.
     ///
     /// For every format but one this is a property of the format, and reading it is enough.
@@ -547,14 +548,15 @@ mod tests {
     #[test]
     fn dirent_lengths_are_what_the_memory_cards_spec_fixes() {
         for (name, len) in [
-            ("ps1-mc", Some(128)),
-            ("ps2-mc", Some(512)),
-            ("n64-cpak", Some(32)),
-            ("gc-mc", Some(64)),
-            ("vmu", Some(32)),
-            ("neogeo-mc", Some(4)),
-            // Saturn keeps its entry inside the save's first block, so the key is absent.
-            ("saturn-bup", None),
+            ("ps1-mc", 128),
+            ("ps2-mc", 512),
+            ("n64-cpak", 32),
+            ("gc-mc", 64),
+            ("vmu", 32),
+            ("neogeo-mc", 4),
+            // Saturn's entry sits at the head of the save's own first block; the block list
+            // after it is the writer's, and the thirty bytes ahead of it are not.
+            ("saturn-bup", 30),
         ] {
             assert_eq!(card_format(name).unwrap().dirent_len, len, "{name}");
         }

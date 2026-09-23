@@ -33,6 +33,7 @@ n64 = ["one-saves-convert/n64"]
 neogeo = ["one-saves-convert/neogeo"]
 ps1 = ["one-saves-convert/ps1"]
 ps2 = ["one-saves-convert/ps2"]
+saturn = ["one-saves-convert/saturn"]
 vmu = ["one-saves-convert/vmu"]
 # `--dat FILE`. Unlike in the library, this one needs `rom`: the catalog is looked up by the ROM's
 # digest, so there is nothing for `--dat` to resolve without `--rom`.

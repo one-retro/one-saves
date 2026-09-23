@@ -38,8 +38,8 @@ binary.
 
 | Feature | What it carries | What comes off |
 | ------- | --------------- | -------------- |
-| `cards` | all six card formats | the six crates below |
-| `ps1` `n64` `gc` `vmu` `ps2` `neogeo` | one card format each | that format's crate, and nothing else |
+| `cards` | all seven card formats | the seven crates below |
+| `ps1` `n64` `gc` `vmu` `ps2` `neogeo` `saturn` | one card format each | that format's crate, and nothing else |
 | `dat` | `--dat FILE` | `datary` and the XML reader, derive macro and proc-macro chain under it |
 | `dat-cmpro` | the ClrMamePro syntax for `--dat` | `winnow` |
 | `rom` | `--rom FILE` | `crc32fast`, `md-5`, `sha1` |

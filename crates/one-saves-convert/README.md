@@ -46,8 +46,8 @@ have no use for — two compression libraries and a set of atomic refcounts.
 
 | Feature | What it is | What it brings |
 | ------- | ---------- | -------------- |
-| `cards` | All six card formats at once | the six below |
-| `ps1` `n64` `gc` `vmu` `ps2` `neogeo` | One card format each | that format's crate, and nothing else |
+| `cards` | All seven card formats at once | the seven below |
+| `ps1` `n64` `gc` `vmu` `ps2` `neogeo` `saturn` | One card format each | that format's crate, and nothing else |
 | `dat` | The `dat` module: resolving a digest through a DAT catalog | `datary`, and the XML reader, derive macro and proc-macro chain under it |
 | `dat-cmpro` | The ClrMamePro syntax as well as Logiqx XML | `winnow` |
 | `rom` | The `rom` module: ROM headers and digests | `crc32fast`, `md-5`, `sha1`, `sha2` |

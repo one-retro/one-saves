@@ -24,6 +24,7 @@ n64-cpak = { workspace = true, optional = true }
 neogeo-memcard = { workspace = true, optional = true }
 ps1-memcard = { workspace = true, optional = true }
 ps2-memcard = { workspace = true, optional = true }
+saturn-backup = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
 encoding_rs = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
@@ -37,12 +38,13 @@ datary = { workspace = true, optional = true }
 default = ["cards", "dat", "dat-cmpro", "rom", "shift-jis", "zstd"]
 # Every card format. Each is a crate of its own and an adapter here; none of them brings anything
 # from outside the workspace, so what a format costs is its own code and nothing else.
-cards = ["gc", "n64", "neogeo", "ps1", "ps2", "vmu"]
+cards = ["gc", "n64", "neogeo", "ps1", "ps2", "saturn", "vmu"]
 gc = ["dep:gc-memcard"]
 n64 = ["dep:n64-cpak"]
 neogeo = ["dep:neogeo-memcard"]
 ps1 = ["dep:ps1-memcard"]
 ps2 = ["dep:ps2-memcard"]
+saturn = ["dep:saturn-backup"]
 vmu = ["dep:dreamcast-vmu"]
 # Reading DAT catalogs, which is where this crate's weight is: `datary` brings an XML reader, a
 # derive macro and the proc-macro chain under it. A converter that is handed a game's identity, or

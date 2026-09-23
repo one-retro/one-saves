@@ -12,6 +12,7 @@ members = [
     "crates/neogeo-memcard",
     "crates/ps1-memcard",
     "crates/ps2-memcard",
+    "crates/saturn-backup",
     "xtask",
 ]
 
@@ -44,6 +45,7 @@ n64-cpak = { version = "0.3.0", path = "crates/n64-cpak" }
 neogeo-memcard = { version = "0.3.0", path = "crates/neogeo-memcard" }
 ps1-memcard = { version = "0.3.0", path = "crates/ps1-memcard" }
 ps2-memcard = { version = "0.3.0", path = "crates/ps2-memcard" }
+saturn-backup = { version = "0.3.0", path = "crates/saturn-backup" }
 
 dcbor = "0.25"
 sha1 = "0.11"
