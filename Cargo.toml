@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 # 1.88 is the floor `dcbor` imposes: it uses let-chains and declares no rust-version
 # of its own, so ours has to state the real one.
@@ -33,19 +33,19 @@ keywords = ["1saves", "emulation", "retro", "savegame", "cbor"]
 # `default-features = false` on the two crates that carry optional weight, so a member decides
 # what it pays for rather than inheriting it. Both re-expose what they need as their own features,
 # and both keep it on by default; see each crate's README for the list.
-one-saves = { version = "0.3.0", path = "crates/one-saves", default-features = false }
-one-saves-registry = { version = "0.3.0", path = "crates/one-saves-registry" }
-one-saves-convert = { version = "0.3.0", path = "crates/one-saves-convert", default-features = false }
+one-saves = { version = "0.3.1", path = "crates/one-saves", default-features = false }
+one-saves-registry = { version = "0.3.1", path = "crates/one-saves-registry" }
+one-saves-convert = { version = "0.3.1", path = "crates/one-saves-convert", default-features = false }
 # One crate per card filesystem. None of them depends on anything, in this workspace or outside it,
 # so a consumer that only wants to read a card takes one and none of the container above it. They
 # still share the workspace version: nothing here is released without the rest.
-dreamcast-vmu = { version = "0.3.0", path = "crates/dreamcast-vmu" }
-gc-memcard = { version = "0.3.0", path = "crates/gc-memcard" }
-n64-cpak = { version = "0.3.0", path = "crates/n64-cpak" }
-neogeo-memcard = { version = "0.3.0", path = "crates/neogeo-memcard" }
-ps1-memcard = { version = "0.3.0", path = "crates/ps1-memcard" }
-ps2-memcard = { version = "0.3.0", path = "crates/ps2-memcard" }
-saturn-backup = { version = "0.3.0", path = "crates/saturn-backup" }
+dreamcast-vmu = { version = "0.3.1", path = "crates/dreamcast-vmu" }
+gc-memcard = { version = "0.3.1", path = "crates/gc-memcard" }
+n64-cpak = { version = "0.3.1", path = "crates/n64-cpak" }
+neogeo-memcard = { version = "0.3.1", path = "crates/neogeo-memcard" }
+ps1-memcard = { version = "0.3.1", path = "crates/ps1-memcard" }
+ps2-memcard = { version = "0.3.1", path = "crates/ps2-memcard" }
+saturn-backup = { version = "0.3.1", path = "crates/saturn-backup" }
 
 dcbor = "0.25"
 sha1 = "0.11"
