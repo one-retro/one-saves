@@ -21,6 +21,14 @@ pub enum Error {
     },
     /// A save with no bytes, which occupies no blocks and so cannot be filed.
     EmptySave(String),
+    /// The volume is compressed, and this crate does not decompress.
+    ///
+    /// Standalone Mednafen gzips the Backup RAM Cart it writes. Inflating it gives an ordinary
+    /// volume; doing so is the caller's, because a crate that depends on nothing should not
+    /// acquire a compression library to read a memory card.
+    Compressed,
+    /// A file that is not the SMPC's twelve bytes of non-volatile state.
+    NotSmpc(usize),
     /// A save whose name is not one the console can hold.
     ///
     /// The field is eleven bytes of the console's own character set, and a name that does not fit
@@ -40,6 +48,13 @@ impl fmt::Display for Error {
                 write!(f, "these saves need {needed} blocks and the volume has {available}")
             }
             Error::EmptySave(name) => write!(f, "the save `{name}` has no bytes"),
+            Error::Compressed => f.write_str(
+                "this volume is gzip-compressed, as standalone Mednafen writes a Backup RAM Cart; \
+                 decompress it first",
+            ),
+            Error::NotSmpc(len) => {
+                write!(f, "the SMPC's non-volatile state is 12 bytes, and this is {len}")
+            }
             Error::BadName(name) => {
                 write!(f, "`{name}` is not a name a save can carry: eleven bytes at the most")
             }

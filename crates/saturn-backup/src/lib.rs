@@ -59,10 +59,19 @@
 //!
 //! # What is reserved
 //!
-//! Blocks 0 and 1. Block 0 is the signature; block 1 is left alone, and the console allocates
-//! from block 2 on both the internal memory and a cart. Nothing in the volume says so — it is
-//! what two real volumes at two block sizes do, which is why [`Geometry::FIRST_DATA_BLOCK`] is
-//! stated here rather than derived.
+//! Blocks 0 and 1. Block 0 is the signature; block 1 holds nothing and is never allocated.
+//!
+//! Nothing in a volume says so, and it is not a guess: the backup library reserves two blocks
+//! outright. Yabause's HLE BIOS, which reimplements that library, scans for saves from
+//! `2 * blocksize` and reports free space as `(size / blocksize) - 2 - usedblocks` — the same
+//! `- 2` in both the finder and the allocator. What block 1 is *for* is not recorded anywhere;
+//! the library simply never hands it out.
+//!
+//! # The console's own clock is not in here
+//!
+//! A Saturn keeps its clock in the SMPC rather than in backup RAM, and an emulator writes that
+//! beside the volume as a separate file. It holds no saves and is not part of this filesystem,
+//! but dropping it loses the console's clock and its language setting, so [`smpc`] reads it.
 //!
 //! # Not the `.BUP` file format
 //!
@@ -74,9 +83,35 @@
 
 mod build;
 mod error;
+pub mod smpc;
 
 pub use build::BackupBuilder;
 pub use error::{Error, Result};
+pub use smpc::Smpc;
+
+/// What a gzip stream opens with.
+///
+/// Standalone Mednafen compresses the Backup RAM Cart it writes and leaves the internal memory
+/// alone, so a `.bcr` from it is a gzip member rather than a volume. With the `gzip` feature such
+/// a file is inflated and read; without it the shape is recognised and refused in those words,
+/// rather than failing as though the bytes were malformed.
+pub const GZIP_MAGIC: [u8; 2] = [0x1F, 0x8B];
+
+/// What an unmapped byte reads as in the address space a wide dump captures.
+///
+/// The memory sits on the low half of a 16-bit bus, so the even addresses answer to nothing and
+/// read back as open bus. Every wide dump seen holds `0xFF` in all of them.
+pub const WIDE_FILLER: u8 = 0xFF;
+
+/// How a volume's bytes arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Container {
+    /// The data alone. Mednafen and its libretro fork write this.
+    Packed,
+    /// The address space the 68000 sees: each byte of data on an odd address, behind the
+    /// [`WIDE_FILLER`] an even one reads. Twice the length. Yabause writes this.
+    Wide,
+}
 
 /// The signature a formatted volume opens with, repeated to fill block 0.
 pub const MAGIC: &[u8; 16] = b"BackUpRam Format";
@@ -104,11 +139,20 @@ pub const EPOCH_1980: i64 = 315_532_800;
 
 /// The block sizes a volume is laid out in, smallest first.
 ///
-/// The console's internal memory uses the first and a 512 KiB cart the fourth. The rest are here
-/// because the block size scales with the medium and these are the steps it scales in; a volume
-/// states which it uses, so this list is only ever a search space for
-/// [`Geometry::for_data_capacity`], never an authority.
+/// Three of these are real. The backup library gives the console's own memory 64-byte blocks, a
+/// Backup RAM Cart of 512 KiB, 1 MiB or 2 MiB 512-byte ones, and the 4 MiB cart 1024-byte ones —
+/// the cart's id says which, and Yabause's HLE BIOS spells the whole table out in `GetDeviceStats`.
+/// The others are here only to widen the search [`Geometry::for_data_capacity`] does, since a
+/// volume states its own block size and this list is never the authority on one.
 pub const BLOCK_SIZES: [usize; 6] = [64, 128, 256, 512, 1024, 2048];
+
+/// Every geometry the backup library lays out, as `(size, block)`.
+///
+/// The console's internal memory, then the four Backup RAM Cart sizes. Taken from the same
+/// `GetDeviceStats`: a cart's length is `0x40000 << (id & 0x0F)` and its block is 1024 for the
+/// 4 MiB one and 512 for the rest.
+pub const GEOMETRIES: [(usize, usize); 5] =
+    [(32_768, 64), (524_288, 512), (1_048_576, 512), (2_097_152, 512), (4_194_304, 1024)];
 
 /// The block size these bytes state, from how many times the signature repeats.
 ///
@@ -139,6 +183,9 @@ pub struct Geometry {
 
 impl Geometry {
     /// The first block a save can occupy. Blocks 0 and 1 are the volume's.
+    ///
+    /// The backup library reserves two and says so twice over: it looks for saves from
+    /// `2 * blocksize` and counts free space as `(size / blocksize) - 2 - usedblocks`.
     pub const FIRST_DATA_BLOCK: usize = 2;
 
     /// The layout of the volume in these bytes, or `None` when they are not one.
@@ -201,6 +248,20 @@ impl Geometry {
         Some(Geometry { size, block, blocks })
     }
 
+    /// The console's own backup memory: 32 KiB, allocated in 64-byte blocks.
+    pub const INTERNAL: (usize, usize) = (32_768, 64);
+
+    /// Whether this is the console's own memory rather than a Backup RAM Cart.
+    ///
+    /// Nothing in a volume names the medium it sits on. What tells them apart is that the
+    /// console's is fixed — 32 KiB in 64-byte blocks, on every Saturn — and a cart is larger in
+    /// larger blocks. So the geometry answers it, and a caller only has to say when reading a
+    /// volume that is neither.
+    #[must_use]
+    pub const fn is_internal(self) -> bool {
+        self.size == Geometry::INTERNAL.0 && self.block == Geometry::INTERNAL.1
+    }
+
     /// How many bytes of a block are not its tag.
     #[must_use]
     pub const fn content(self) -> usize {
@@ -243,8 +304,15 @@ impl Geometry {
 pub struct Save {
     /// The block its entry sits in, which is the first block it occupies.
     ///
-    /// Read only: a [`BackupBuilder`] allocates for itself.
+    /// Read only: a [`BackupBuilder`] allocates for itself unless told where to put a save.
     pub block: usize,
+    /// Every block it occupies, in the order its own list names them.
+    ///
+    /// `blocks[0]` is [`block`](Self::block). Empty for a save built by hand rather than read off
+    /// a volume, which is what tells a builder to allocate rather than to put it back where it
+    /// was — and putting it back is the difference between rebuilding a fragmented volume and
+    /// quietly tidying it into runs.
+    pub blocks: Vec<usize>,
     /// The name the console lists it under, such as `PANDRA_3_01`.
     pub name: String,
     /// The comment beside the name, such as `AZEL#1Lv01`.
@@ -285,6 +353,9 @@ impl Save {
 #[derive(Debug, Clone)]
 pub struct BackupRam {
     image: Vec<u8>,
+    data: Vec<u8>,
+    container: Container,
+    compressed: bool,
     geometry: Geometry,
     saves: Vec<Save>,
 }
@@ -292,23 +363,43 @@ pub struct BackupRam {
 impl BackupRam {
     /// Reads a volume: the console's internal memory, or a Backup RAM Cart.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        let geometry = match Geometry::of(bytes) {
-            Some(geometry) => geometry,
-            // Told apart so the caller learns which it was: a volume that opens with the
-            // signature and does not divide into blocks is a different complaint from one that
-            // never carried a signature at all.
-            None if starts_with_magic(bytes) => return Err(Error::WrongLength(bytes.len())),
-            None => return Err(Error::NotBackupRam),
-        };
+        // Told apart so the caller learns which it was: a volume that opens with the signature and
+        // does not divide into blocks is a different complaint from one that never carried a
+        // signature at all, in either container.
+        let inflated = inflate(bytes)?;
+        let compressed = inflated.is_some();
+        let stored = inflated.as_deref().unwrap_or(bytes);
+        let (container, data) = strip_container(stored).ok_or(Error::NotBackupRam)?;
+        let geometry = Geometry::of(&data).ok_or(Error::WrongLength(stored.len()))?;
 
         let mut saves = Vec::new();
         for block in Geometry::FIRST_DATA_BLOCK..geometry.blocks {
-            if tag_of(bytes, geometry, block) != SAVE_TAG {
+            if tag_of(&data, geometry, block) != SAVE_TAG {
                 continue;
             }
-            saves.push(read_save(bytes, geometry, block)?);
+            saves.push(read_save(&data, geometry, block)?);
         }
-        Ok(BackupRam { image: bytes.to_vec(), geometry, saves })
+        Ok(BackupRam { image: bytes.to_vec(), data, container, compressed, geometry, saves })
+    }
+
+    /// What the volume arrived in.
+    #[must_use]
+    pub fn container(&self) -> Container {
+        self.container
+    }
+
+    /// Whether it arrived gzipped, inside that container.
+    ///
+    /// Always false without the `gzip` feature, which refuses such a file rather than reading it.
+    #[must_use]
+    pub fn compressed(&self) -> bool {
+        self.compressed
+    }
+
+    /// The volume's data, packed, whatever container it arrived in.
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
     /// Every save on the volume, in block order.
@@ -323,7 +414,10 @@ impl BackupRam {
         self.saves
     }
 
-    /// The volume as it was read.
+    /// The volume exactly as it was read, container and all.
+    ///
+    /// [`data`](Self::data) is the same volume packed. This one is what a caller keeping a
+    /// whole-volume copy should keep, since it is the bytes that were actually on disk.
     #[must_use]
     pub fn image(&self) -> &[u8] {
         &self.image
@@ -347,20 +441,71 @@ impl BackupRam {
     /// block 1 survives a round trip.
     #[must_use]
     pub fn system_area(&self) -> &[u8] {
-        &self.image[..Geometry::FIRST_DATA_BLOCK * self.geometry.block]
+        &self.data[..Geometry::FIRST_DATA_BLOCK * self.geometry.block]
     }
 }
 
-/// Whether these bytes open with the signature, whatever else is wrong with them.
-#[must_use]
-fn starts_with_magic(bytes: &[u8]) -> bool {
-    bytes.len() >= MAGIC.len() && &bytes[..MAGIC.len()] == MAGIC
-}
-
-/// Whether these bytes are a backup RAM volume this crate can lay out.
+/// Whether these bytes are a backup RAM volume this crate can lay out, in either container.
 #[must_use]
 pub fn detect(bytes: &[u8]) -> bool {
-    Geometry::of(bytes).is_some()
+    let inflated = inflate(bytes).ok().flatten();
+    let stored = inflated.as_deref().unwrap_or(bytes);
+    matches!(strip_container(stored), Some((_, data)) if Geometry::of(&data).is_some())
+}
+
+/// Finds the volume's data inside whatever container it arrived in.
+///
+/// The data comes back packed whatever the container did to it, which is the form everything
+/// below works in: a block number means the same thing either way, and only the bytes on the way
+/// in and out differ.
+#[must_use]
+pub fn strip_container(bytes: &[u8]) -> Option<(Container, Vec<u8>)> {
+    if block_size(bytes).is_some() {
+        return Some((Container::Packed, bytes.to_vec()));
+    }
+    // A wide dump is twice the length with the data on the odd addresses. Checked second because
+    // a packed volume is never mistakable for one: the signature would have to survive having
+    // every other byte of it thrown away.
+    if bytes.len() >= 2 && bytes.len().is_multiple_of(2) {
+        let packed: Vec<u8> = bytes[1..].iter().step_by(2).copied().collect();
+        if block_size(&packed).is_some() {
+            return Some((Container::Wide, packed));
+        }
+    }
+    None
+}
+
+/// Inflates a gzip member, or `Ok(None)` for bytes that are not one.
+///
+/// Without the `gzip` feature a gzip member is [`Compressed`](Error::Compressed) instead: the
+/// shape is still recognised, so the refusal names the container rather than blaming the bytes.
+#[cfg(feature = "gzip")]
+fn inflate(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    use std::io::Read;
+
+    if !bytes.starts_with(&GZIP_MAGIC) {
+        return Ok(None);
+    }
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(bytes)
+        .read_to_end(&mut out)
+        .map_err(|e| Error::Corrupt(format!("the gzip member does not inflate: {e}")))?;
+    Ok(Some(out))
+}
+
+#[cfg(not(feature = "gzip"))]
+#[allow(clippy::unnecessary_wraps)]
+fn inflate(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    if bytes.starts_with(&GZIP_MAGIC) {
+        return Err(Error::Compressed);
+    }
+    Ok(None)
+}
+
+/// Lays packed data back out as the address space a wide dump captures.
+#[must_use]
+pub fn widen(packed: &[u8]) -> Vec<u8> {
+    packed.iter().flat_map(|&byte| [WIDE_FILLER, byte]).collect()
 }
 
 /// One block's tag.
@@ -394,6 +539,11 @@ fn read_save(bytes: &[u8], geometry: Geometry, first: usize) -> Result<Save> {
     let mut listed = vec![first];
     let mut at = 0usize;
     loop {
+        // Defensive, and not reachable by a volume that gets this far: every entry adds a whole
+        // block of content to the stream and consumes two bytes of it, so a list cannot outrun
+        // what it names. What a runaway list actually hits is one of the two checks below, when
+        // it reaches a block outside the volume or one it has already named. The bound stays
+        // because the alternative is indexing on the strength of that argument.
         if at + 2 > stream.len() {
             return Err(Error::Corrupt(format!(
                 "the block list in block {first} runs off the end of the blocks it names"
@@ -424,6 +574,7 @@ fn read_save(bytes: &[u8], geometry: Geometry, first: usize) -> Result<Save> {
     }
     Ok(Save {
         block: first,
+        blocks: listed,
         name,
         comment,
         language,
@@ -457,6 +608,25 @@ mod tests {
         assert_eq!(Geometry::of(&cart).map(|g| g.block), Some(512));
         assert_eq!(Geometry::of(&internal).map(|g| g.blocks), Some(512));
         assert_eq!(Geometry::of(&cart).map(|g| g.blocks), Some(1024));
+    }
+
+    #[test]
+    fn every_geometry_the_library_lays_out_is_recovered_from_its_capacity() {
+        // The inverse the specification flags as the open question for 0.3, checked against all
+        // five real geometries rather than the two there are dumps for. None of them collides:
+        // the volume's own length being a power of two is what keeps each capacity to one answer.
+        for (size, block) in GEOMETRIES {
+            let geometry = Geometry::new(size, block).expect("a real geometry");
+            let recovered = Geometry::for_data_capacity(geometry.data_capacity());
+            assert_eq!(recovered, Some(geometry), "{size} bytes in {block}-byte blocks");
+            assert!(BLOCK_SIZES.contains(&block), "{block} is not in the search space");
+        }
+        // And the two the fixtures confirm, by the figures a card map carries.
+        assert_eq!(Geometry::for_data_capacity(32_640).map(|g| g.block), Some(64));
+        assert_eq!(Geometry::for_data_capacity(523_264).map(|g| g.block), Some(512));
+        // The 4 MiB cart is the one whose block size is not 512, so it is the one a search that
+        // assumed the common case would get wrong.
+        assert_eq!(Geometry::for_data_capacity(4_192_256).map(|g| g.block), Some(1024));
     }
 
     #[test]

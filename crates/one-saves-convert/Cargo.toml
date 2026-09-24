@@ -45,6 +45,14 @@ neogeo = ["dep:neogeo-memcard"]
 ps1 = ["dep:ps1-memcard"]
 ps2 = ["dep:ps2-memcard"]
 saturn = ["dep:saturn-backup"]
+# Inflating a Saturn volume that arrived gzipped, which is how standalone Mednafen writes a Backup
+# RAM Cart. Off by default for the reason `icon` is: it pulls a compression library, and a build
+# that never meets one of those files should not carry a deflate implementation to prove it. Off,
+# such a file is named and refused in those words rather than misread.
+#
+# It costs nothing on top of `archive`, though: `zip` already depends on flate2, and this asks for
+# the same backend, so the two share one inflater. Alone it is flate2 and zlib-rs and nothing else.
+saturn-gzip = ["saturn", "saturn-backup/gzip"]
 vmu = ["dep:dreamcast-vmu"]
 # Reading DAT catalogs, which is where this crate's weight is: `datary` brings an XML reader, a
 # derive macro and the proc-macro chain under it. A converter that is handed a game's identity, or

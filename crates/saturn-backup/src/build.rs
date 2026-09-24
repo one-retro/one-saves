@@ -1,8 +1,8 @@
 //! Writing a volume out of a set of saves.
 
 use crate::{
-    BackupRam, COMMENT_LEN, CONTINUATION_TAG, ENTRY_LEN, Error, Geometry, MAGIC, NAME_LEN, Result, SAVE_TAG,
-    Save, TAG_LEN,
+    BackupRam, COMMENT_LEN, CONTINUATION_TAG, Container, ENTRY_LEN, Error, Geometry, MAGIC, NAME_LEN, Result,
+    SAVE_TAG, Save, TAG_LEN, widen,
 };
 
 /// Builds a backup RAM image from saves.
@@ -19,8 +19,10 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct BackupBuilder {
     geometry: Geometry,
-    saves: Vec<Save>,
+    /// Each save, and the blocks it was pinned to if a caller placed it.
+    saves: Vec<(Save, Option<Vec<usize>>)>,
     system_area: Option<Vec<u8>>,
+    container: Container,
 }
 
 impl BackupBuilder {
@@ -34,16 +36,30 @@ impl BackupBuilder {
             geometry: Geometry::new(size, block).ok_or(Error::WrongLength(size))?,
             saves: Vec::new(),
             system_area: None,
+            container: Container::Packed,
         })
     }
 
-    /// A builder set up to rebuild the volume this was read from.
+    /// A builder set up to rebuild the volume this was read from, layout and all.
+    ///
+    /// Each save goes back on the blocks it came off, so a volume a console fragmented rebuilds
+    /// as that console left it rather than being tidied into runs. Allocating afresh is what
+    /// [`new`](Self::new) plus [`add`](Self::add) is for.
     #[must_use]
     pub fn from_volume(volume: &BackupRam) -> Self {
         BackupBuilder {
             geometry: volume.geometry(),
-            saves: volume.saves().to_vec(),
+            saves: volume
+                .saves()
+                .iter()
+                .cloned()
+                .map(|save| {
+                    let placed = (!save.blocks.is_empty()).then(|| save.blocks.clone());
+                    (save, placed)
+                })
+                .collect(),
             system_area: Some(volume.system_area().to_vec()),
+            container: volume.container(),
         }
     }
 
@@ -56,14 +72,44 @@ impl BackupBuilder {
         self
     }
 
-    /// Adds a save. Its `block` is ignored: the builder allocates.
-    pub fn add(&mut self, save: Save) -> &mut Self {
-        self.saves.push(save);
+    /// Writes the volume out in this container rather than packed.
+    pub fn container(&mut self, container: Container) -> &mut Self {
+        self.container = container;
         self
     }
 
-    /// Writes the volume out.
+    /// Adds a save. Its `block` is ignored: the builder allocates.
+    pub fn add(&mut self, save: Save) -> &mut Self {
+        self.saves.push((save, None));
+        self
+    }
+
+    /// Adds a save on exactly these blocks, in this order.
+    ///
+    /// The allocator hands out runs, which is always a valid answer and never the only one: the
+    /// block list exists so a save's blocks need not be adjacent, and a console that has had a
+    /// save deleted out of the middle of its volume will fill the hole. This is how to write that
+    /// layout deliberately — to reproduce a volume off a console that fragmented, or to build one
+    /// for a reader to be tested against.
+    ///
+    /// The first block is where the entry goes. [`build`](Self::build) checks the run is long
+    /// enough for the save and that no two saves overlap.
+    pub fn add_at(&mut self, save: Save, blocks: impl Into<Vec<usize>>) -> &mut Self {
+        self.saves.push((save, Some(blocks.into())));
+        self
+    }
+
+    /// Writes the volume out, in whatever container was asked for.
     pub fn build(&self) -> Result<Vec<u8>> {
+        let packed = self.build_packed()?;
+        Ok(match self.container {
+            Container::Packed => packed,
+            Container::Wide => widen(&packed),
+        })
+    }
+
+    /// Writes the volume's data, whatever container the result is going into.
+    fn build_packed(&self) -> Result<Vec<u8>> {
         let g = self.geometry;
         let mut out = vec![0u8; g.size];
         match &self.system_area {
@@ -79,8 +125,32 @@ impl BackupBuilder {
             }
         }
 
+        // Blocks a placed save has claimed, so the allocator works around them and two placed
+        // saves cannot be put on top of each other.
+        let mut taken = vec![false; g.blocks];
+        for slot in taken.iter_mut().take(Geometry::FIRST_DATA_BLOCK) {
+            *slot = true;
+        }
+        for (save, placed) in &self.saves {
+            let Some(blocks) = placed else { continue };
+            for &block in blocks {
+                if block >= g.blocks {
+                    return Err(Error::Corrupt(format!(
+                        "`{}` was placed on block {block}, past the volume's {}",
+                        save.name, g.blocks
+                    )));
+                }
+                if std::mem::replace(&mut taken[block], true) {
+                    return Err(Error::Corrupt(format!(
+                        "`{}` was placed on block {block}, which another save holds",
+                        save.name
+                    )));
+                }
+            }
+        }
+
         let mut next = Geometry::FIRST_DATA_BLOCK;
-        for save in &self.saves {
+        for (save, placed) in &self.saves {
             if save.data.is_empty() {
                 return Err(Error::EmptySave(save.name.clone()));
             }
@@ -88,19 +158,34 @@ impl BackupBuilder {
                 return Err(Error::BadName(save.name.clone()));
             }
             let needed = g.blocks_for(save.data.len());
-            if next + needed > g.blocks {
-                return Err(Error::Full {
-                    needed: next - Geometry::FIRST_DATA_BLOCK + needed,
-                    available: g.blocks - Geometry::FIRST_DATA_BLOCK,
-                });
-            }
 
-            // Blocks are handed out as a run. Nothing about the format requires that — the list
-            // is a list precisely so they need not be adjacent — but a run is always a valid
-            // answer, and a reader follows the numbers either way.
-            let blocks: Vec<usize> = (next..next + needed).collect();
+            let blocks = match placed {
+                Some(blocks) if blocks.len() < needed => {
+                    return Err(Error::Full { needed, available: blocks.len() });
+                }
+                Some(blocks) => blocks[..needed].to_vec(),
+                // Nothing requires a run — the list is a list precisely so blocks need not be
+                // adjacent — but a run is always a valid answer, and a reader follows the numbers
+                // either way. Blocks a placed save claimed are stepped over.
+                None => {
+                    let mut run = Vec::with_capacity(needed);
+                    while run.len() < needed {
+                        if next >= g.blocks {
+                            return Err(Error::Full {
+                                needed,
+                                available: taken.iter().filter(|t| !**t).count(),
+                            });
+                        }
+                        if !taken[next] {
+                            taken[next] = true;
+                            run.push(next);
+                        }
+                        next += 1;
+                    }
+                    run
+                }
+            };
             write_save(&mut out, g, save, &blocks);
-            next += needed;
         }
         Ok(out)
     }
@@ -156,6 +241,7 @@ mod tests {
     fn save(name: &str, data: Vec<u8>) -> Save {
         Save {
             block: 0,
+            blocks: Vec::new(),
             name: name.to_owned(),
             comment: "hello".to_owned(),
             language: 1,
@@ -264,6 +350,77 @@ mod tests {
         assert!(matches!(named.build(), Err(Error::BadName(_))));
 
         assert!(matches!(BackupBuilder::new(100, 64), Err(Error::WrongLength(100))));
+    }
+
+    #[test]
+    fn a_placed_save_must_fit_where_it_is_put() {
+        // `add_at` is the caller doing the allocator's job, so the checks the allocator does for
+        // itself have to be done on its behalf. A run too short would otherwise write a save's
+        // tail over whatever came next.
+        let mut short = BackupBuilder::new(32_768, 64).expect("a real geometry");
+        short.add_at(save("SHORT", vec![1u8; 1276]), vec![2, 3, 4]);
+        assert!(matches!(short.build(), Err(Error::Full { needed: 23, available: 3 })));
+
+        let mut past = BackupBuilder::new(32_768, 64).expect("a real geometry");
+        past.add_at(save("PAST", vec![1u8; 32]), vec![2, 9999]);
+        let error = past.build().expect_err("block 9999 is not on a 512-block volume");
+        assert!(matches!(error, Error::Corrupt(_)), "{error:?}");
+        assert!(error.to_string().contains("9999"), "{error}");
+    }
+
+    #[test]
+    fn two_placed_saves_cannot_claim_the_same_block() {
+        // The one mistake `add_at` makes easy, and the one whose result would look like a working
+        // volume: the second save's bytes land on the first's blocks and both read back wrong.
+        let mut builder = BackupBuilder::new(32_768, 64).expect("a real geometry");
+        builder.add_at(save("FIRST", vec![1u8; 64]), vec![2, 3, 4]);
+        builder.add_at(save("SECOND", vec![2u8; 64]), vec![4, 5, 6]);
+        let error = builder.build().expect_err("block 4 is claimed twice");
+        assert!(matches!(error, Error::Corrupt(_)), "{error:?}");
+        assert!(error.to_string().contains("another save holds"), "{error}");
+    }
+
+    #[test]
+    fn the_allocator_steps_over_blocks_a_placed_save_claimed() {
+        // Mixing the two: one save pinned, one left to the builder. The builder must not hand out
+        // what the pinned one is sitting on, which is the case a volume with a hole in it needs.
+        let mut builder = BackupBuilder::new(32_768, 64).expect("a real geometry");
+        builder.add_at(save("PINNED", vec![7u8; 28]), vec![2]);
+        builder.add(save("FLOATING", vec![8u8; 200]));
+        let volume = BackupRam::parse(&builder.build().expect("writes")).expect("reads");
+
+        let pinned = volume.saves().iter().find(|s| s.name == "PINNED").expect("there");
+        let floating = volume.saves().iter().find(|s| s.name == "FLOATING").expect("there");
+        assert_eq!(pinned.blocks, vec![2]);
+        assert!(!floating.blocks.contains(&2), "the allocator stepped over it");
+        assert_eq!(pinned.data, vec![7u8; 28]);
+        assert_eq!(floating.data, vec![8u8; 200]);
+    }
+
+    #[test]
+    fn a_save_that_overruns_the_blocks_it_names_is_refused() {
+        // Two ways a volume can lie about itself, both of which would otherwise read past the end
+        // of what the save actually holds.
+        let mut builder = BackupBuilder::new(32_768, 64).expect("a real geometry");
+        builder.add(save("HONEST", vec![5u8; 600]));
+        let good = builder.build().expect("writes");
+        let g = Geometry::new(32_768, 64).expect("a real geometry");
+
+        // A length field far past what its blocks can hold.
+        let mut lying = good.clone();
+        let at = Geometry::FIRST_DATA_BLOCK * g.block + 0x1E;
+        lying[at..at + 4].copy_from_slice(&30_000u32.to_be_bytes());
+        let error = BackupRam::parse(&lying).expect_err("it cannot hold that");
+        assert!(matches!(error, Error::Corrupt(_)), "{error:?}");
+        assert!(error.to_string().contains("30000"), "{error}");
+
+        // A list entry pointing outside the volume.
+        let mut astray = good;
+        let list = Geometry::FIRST_DATA_BLOCK * g.block + ENTRY_LEN;
+        astray[list..list + 2].copy_from_slice(&600u16.to_be_bytes());
+        let error = BackupRam::parse(&astray).expect_err("block 600 is not on a 512-block volume");
+        assert!(matches!(error, Error::Corrupt(_)), "{error:?}");
+        assert!(error.to_string().contains("600"), "{error}");
     }
 
     #[test]

@@ -53,6 +53,11 @@ sha2 = "0.11"
 md-5 = "0.11"
 crc32fast = "1.4"
 zstd = "0.13"
+# Gzip, for the one producer that compresses what it writes: standalone Mednafen gzips a Saturn
+# Backup RAM Cart and leaves the internal memory plain. `zlib-rs` rather than the `rust_backend`
+# default: both are pure Rust, and this is the one `zip` already asks flate2 for, so a build that
+# reads archives carries no second inflater to also read a Saturn cart.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 # Encoding only, and only for `x.1sav.icon`: a console icon is decoded to pixels here and a
 # consumer should need no decoder of its own. Optional, because a converter that does not carry
 # icons should not compile a deflate implementation to do it.

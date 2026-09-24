@@ -1,6 +1,6 @@
 [package]
 name = "saturn-backup"
-description = "Read and write Sega Saturn backup RAM: the console's internal memory and the Backup RAM Cart alike"
+description = "Read and write Sega Saturn backup RAM — internal memory and Backup RAM Cart — and the SMPC clock beside it"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,17 @@ readme = "README.md"
 exclude = ["tests"]
 
 [dependencies]
+flate2 = { workspace = true, optional = true }
+
+[features]
+default = []
+# Inflating a volume that arrived gzipped, which is how standalone Mednafen writes a Backup RAM
+# Cart. Off, such a file is recognised and refused in those words rather than read as a broken
+# volume, so the only thing the feature buys is not having to decompress it yourself.
+#
+# flate2 on the `zlib-rs` backend: pure Rust, and the one the `zip` crate already asks for, so a
+# consumer that reads zip archives too carries a single inflater rather than two.
+gzip = ["dep:flate2"]
 
 [lints]
 workspace = true

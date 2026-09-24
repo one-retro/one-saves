@@ -61,6 +61,16 @@ test-features:
     cargo clippy -p one-saves-convert --all-targets --no-default-features --features gc
     cargo clippy -p one-saves-convert --all-targets --no-default-features --features vmu
     cargo test -p one-saves-convert --no-default-features --features neogeo
+    # Saturn twice, because it is the one card format with a feature of its own underneath it.
+    # Without `saturn-gzip` a compressed cart is named and refused; with it, inflated and read.
+    # Both arms carry behaviour, and `just test` runs --all-features, which only ever sees the
+    # second — so the first is only reached from here.
+    cargo test -p one-saves-convert --no-default-features --features saturn
+    cargo test -p one-saves-convert --no-default-features --features saturn-gzip
+    # The same split one layer down, where the refusal is actually written. `saturn-backup` is the
+    # only card crate with a feature, so it is the only one that needs its own line.
+    cargo test -p saturn-backup
+    cargo test -p saturn-backup --features gzip
     # The default build, which `lint` does not reach: it runs --all-features, and what a user gets
     # by installing this is neither that nor --no-default-features. `icon` is the one off by
     # default that other code reads around, so this is the arm where an unread constant shows up.
@@ -70,6 +80,7 @@ test-features:
     cargo clippy -p one-saves-cli --all-targets --no-default-features
     cargo clippy -p one-saves-cli --all-targets --no-default-features --features rom
     cargo clippy -p one-saves-cli --all-targets --no-default-features --features cards
+    cargo clippy -p one-saves-cli --all-targets --no-default-features --features saturn-gzip
 
 # Format the tree.
 fmt:

@@ -34,6 +34,9 @@ neogeo = ["one-saves-convert/neogeo"]
 ps1 = ["one-saves-convert/ps1"]
 ps2 = ["one-saves-convert/ps2"]
 saturn = ["one-saves-convert/saturn"]
+# Reading a Saturn cart that standalone Mednafen gzipped. Off by default, like the library's: it
+# is the one card format whose producer compresses, and the deflate implementation is real weight.
+saturn-gzip = ["saturn", "one-saves-convert/saturn-gzip"]
 vmu = ["one-saves-convert/vmu"]
 # `--dat FILE`. Unlike in the library, this one needs `rom`: the catalog is looked up by the ROM's
 # digest, so there is nothing for `--dat` to resolve without `--rom`.
