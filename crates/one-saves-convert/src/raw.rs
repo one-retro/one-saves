@@ -301,8 +301,8 @@ mod tests {
         };
         let bundle = wrap(&vec![7u8; 32768], &options).expect("wraps");
 
-        assert!(bundle.header.extensions.contains_key(&crate::rtc::rtc_key()));
-        assert!(bundle.header.extensions.contains_key(&crate::rtc::mbc3_key()));
+        assert!(bundle.header.extensions.get::<one_saves::extension::Rtc>().is_some());
+        assert!(bundle.header.extensions.get::<one_saves::extension::RtcMbc3>().is_some());
         // The save itself is untouched: a sidecar was never part of it.
         assert_eq!(bundle.parts.len(), 1);
         assert_eq!(bundle.parts[0].payload.len(), 32_768);
@@ -416,8 +416,8 @@ mod tests {
         assert_eq!(bundle.parts[0].payload.len(), 32_768);
 
         // Both keys land on the header: the portable instant and the footer's own bytes.
-        assert!(bundle.header.extensions.contains_key(&crate::rtc::rtc_key()));
-        assert!(bundle.header.extensions.contains_key(&crate::rtc::mbc3_key()));
+        assert!(bundle.header.extensions.get::<one_saves::extension::Rtc>().is_some());
+        assert!(bundle.header.extensions.get::<one_saves::extension::RtcMbc3>().is_some());
         bundle.validate().expect("valid bundle");
     }
 

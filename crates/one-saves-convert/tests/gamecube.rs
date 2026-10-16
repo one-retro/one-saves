@@ -9,8 +9,10 @@
 
 #![cfg(feature = "gc")]
 
-use one_saves::dcbor::CBOR;
-use one_saves::{Bundle, ReverseDnsName};
+use one_saves::Bundle;
+#[cfg(feature = "icon")]
+use one_saves::extension::Icon;
+use one_saves::extension::Label;
 use one_saves_convert::{CardOptions, Format};
 
 /// Wraps a `.gci` — a 64-byte directory entry and the save's payload — as a one-save card.
@@ -73,27 +75,22 @@ fn a_gamecube_save_carries_its_icon_and_banner_as_png() {
         // The picture belongs to the save, so it is in the header of the bundle that is the save
         // and not on the card's part naming it: it has to survive the save being sliced out.
         let save = Bundle::from_slice(&bundle.parts[0].bytes().expect("the nested bundle")).expect("a save");
-        let key = ReverseDnsName::parse("x.1sav.icon").expect("well-formed");
         assert!(
-            !bundle.parts[0].extensions.contains_key(&key),
+            bundle.parts[0].extensions.get::<Icon>().is_none(),
             "{path}: the icon does not ride on the card's part"
         );
-        let icon = save.header.extensions.get(&key).expect("a decoded icon");
-        let map = icon.as_map().expect("an icon map");
+        let icon = save.header.extensions.get::<Icon>().expect("a decoded icon");
+        assert_eq!(icon.frames.len(), 1, "{path}: both saves keep a still icon");
 
-        let frames = map.get::<u64, CBOR>(0).expect("frames");
-        let frames = frames.as_array().expect("frames are an array");
-        assert_eq!(frames.len(), 1, "{path}: both saves keep a still icon");
-
-        let frame = frames[0].as_array().expect("a frame is a reading and maybe a hold");
-        let (w, h, px) = pixels(frame[0].as_byte_string().expect("a PNG"));
+        let frame = &icon.frames[0];
+        let (w, h, px) = pixels(&frame.png);
         assert_eq!((w, h), (32, 32), "{path}: an icon is 32x32");
         assert_eq!(digest(&px), frame_digest, "{path}: icon pixels");
         // Three twelfths of a second, which is what the entry's `anim_speed` asks for.
-        assert_eq!(i64::try_from(frame[1].clone()).expect("a hold"), 250, "{path}");
+        assert_eq!(frame.hold_ms, Some(250), "{path}");
 
-        let banner = map.get::<u64, CBOR>(1).expect("a banner");
-        let (w, h, px) = pixels(banner.as_byte_string().expect("a PNG"));
+        let banner = icon.banner.as_ref().expect("a banner");
+        let (w, h, px) = pixels(banner);
         assert_eq!((w, h), (96, 32), "{path}: a banner is 96x32");
         assert_eq!(digest(&px), banner_digest, "{path}: banner pixels");
     }
@@ -115,15 +112,14 @@ fn a_gamecube_save_is_labelled_by_the_lines_the_console_shows() {
             .expect("reads the card");
         let save = Bundle::from_slice(&bundle.parts[0].bytes().expect("nested")).expect("a save");
 
-        let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
-        let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");
-        assert_eq!(map.get::<u64, CBOR>(0).unwrap().as_text().unwrap(), title, "{path}");
-        assert_eq!(map.get::<u64, CBOR>(1).unwrap().as_text().unwrap(), detail, "{path}");
+        let label = save.header.extensions.get::<Label>().expect("a label");
+        assert_eq!(label.title, title, "{path}");
+        assert_eq!(label.detail.as_deref(), Some(detail), "{path}");
 
         // The padding a fixed-width field pads with goes; the text itself is untouched.
         assert!(!title.ends_with(' '), "trimmed");
         // And it is the save's, so it is in the save's header rather than on the card's part.
-        assert!(!bundle.parts[0].extensions.contains_key(&key), "{path}");
+        assert!(bundle.parts[0].extensions.get::<Label>().is_none(), "{path}");
     }
 }
 

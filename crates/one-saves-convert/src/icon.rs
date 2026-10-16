@@ -12,41 +12,20 @@
 //!
 //! [`x.1sav.icon`]: https://docs.1retro.com/specifications/extensions/x.1sav.icon/
 
-use one_saves::ReverseDnsName;
-use one_saves::dcbor::{CBOR, Map};
-
-/// The `x.1sav.icon` key.
-pub(crate) fn icon_key() -> ReverseDnsName {
-    ReverseDnsName::parse("x.1sav.icon").expect("a spec name is well-formed")
-}
-
-/// One frame, and how long it shows before the next.
-pub(crate) struct Frame {
-    /// The frame as a PNG.
-    pub png: Vec<u8>,
-    /// How long it shows, where the format says. A still icon says nothing.
-    pub hold_ms: Option<u64>,
-}
+use one_saves::extension::{Icon, IconFrame};
 
 /// The `x.1sav.icon` value: the frames in display order, and a banner where a format keeps one.
-pub(crate) fn value(frames: Vec<Frame>, banner: Option<Vec<u8>>) -> Option<CBOR> {
+///
+/// `None` for a save with no frame to show, since the key carries at least one.
+pub(crate) fn value(frames: Vec<IconFrame>, banner: Option<Vec<u8>>) -> Option<Icon> {
     if frames.is_empty() {
         return None;
     }
-    let frames: Vec<CBOR> = frames
-        .into_iter()
-        .map(|frame| match frame.hold_ms {
-            Some(hold) => vec![CBOR::to_byte_string(frame.png), CBOR::from(hold)].into(),
-            None => vec![CBOR::to_byte_string(frame.png)].into(),
-        })
-        .collect();
-
-    let mut map = Map::new();
-    map.insert(0u64, frames);
-    if let Some(banner) = banner {
-        map.insert(1u64, CBOR::to_byte_string(banner));
-    }
-    Some(map.into())
+    let icon = Icon::new(frames);
+    Some(match banner {
+        Some(banner) => icon.banner(banner),
+        None => icon,
+    })
 }
 
 /// Straight-alpha RGBA, eight bits a channel, which is what a PNG here carries.

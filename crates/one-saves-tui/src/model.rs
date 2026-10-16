@@ -10,7 +10,8 @@
 
 use std::path::{Path, PathBuf};
 
-use one_saves::{Bundle, PartKind, ReverseDnsName};
+use one_saves::extension::{Icon, Label};
+use one_saves::{Bundle, PartKind};
 use one_saves_convert::{CardOptions, Format, card, detect};
 
 /// What went wrong, in terms a person reading a status line can act on.
@@ -294,30 +295,12 @@ fn blocks_of(save: &Bundle, block: u64) -> u64 {
 
 /// The title and detail a save calls itself, from `x.1sav.label`.
 fn read_label(save: &Bundle) -> Option<(String, Option<String>)> {
-    let key = ReverseDnsName::parse("x.1sav.label").ok()?;
-    let map = save.header.extensions.get(&key)?.as_map()?;
-    let title = map.get::<u64, one_saves::dcbor::CBOR>(0)?.as_text()?.to_owned();
-    let detail =
-        map.get::<u64, one_saves::dcbor::CBOR>(1).and_then(|value| value.as_text().map(ToOwned::to_owned));
-    Some((title, detail))
+    let label = save.header.extensions.get::<Label>()?;
+    Some((label.title.clone(), label.detail.clone()))
 }
 
 /// The save's icon frames, from `x.1sav.icon`, in display order.
 fn read_icon(save: &Bundle) -> Vec<IconFrame> {
-    let Ok(key) = ReverseDnsName::parse("x.1sav.icon") else { return Vec::new() };
-    let Some(map) = save.header.extensions.get(&key).and_then(|value| value.as_map()) else {
-        return Vec::new();
-    };
-    let Some(frames) = map.get::<u64, one_saves::dcbor::CBOR>(0) else { return Vec::new() };
-    let Some(frames) = frames.as_array() else { return Vec::new() };
-    frames
-        .iter()
-        .filter_map(|frame| {
-            let frame = frame.as_array()?;
-            Some(IconFrame {
-                png: frame.first()?.as_byte_string()?.to_vec(),
-                hold_ms: frame.get(1).and_then(|hold| u64::try_from(hold.clone()).ok()),
-            })
-        })
-        .collect()
+    let Some(icon) = save.header.extensions.get::<Icon>() else { return Vec::new() };
+    icon.frames.iter().map(|frame| IconFrame { png: frame.png.clone(), hold_ms: frame.hold_ms }).collect()
 }

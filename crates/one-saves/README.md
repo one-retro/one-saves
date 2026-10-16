@@ -23,6 +23,9 @@ println!("content hash: {}", bundle.content_hash()?);
   nothing on it is still a card, and a collection is recognised by what it lacks.
 - **Hashes** a bundle two ways. The *file hash* identifies this exact file; the *content hash* is
   a pure function of what the bundle says, and is what a content-addressable store keys on.
+- **Types the extension keys the specification defines** — a clock reading, a label, an icon, a
+  directory's dates — so a caller asks `extensions.get::<Label>()` rather than walking CBOR. A
+  producer's own key is a type implementing the same `Extension` trait.
 - **Round-trips what it does not understand**: an extension key from a producer you have never
   heard of, and an integer key from a later minor version, both survive unchanged. Decoding and
   re-encoding gives back the bytes it was handed, for every file it accepts.

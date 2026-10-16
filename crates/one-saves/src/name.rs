@@ -11,6 +11,7 @@
 
 use core::fmt;
 use core::str::FromStr;
+use std::borrow::Cow;
 
 /// Why a string is not a well-formed name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,44 +172,80 @@ impl AsRef<str> for Slug {
 /// Nothing checks that the domain exists, resolves, or still belongs to the producer that minted
 /// the name. The convention buys uniqueness, not authentication.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ReverseDnsName(String);
+pub struct ReverseDnsName(Cow<'static, str>);
 
 impl ReverseDnsName {
     /// Parses a reverse-DNS name, checking the whole grammar.
     pub fn parse(text: &str) -> Result<Self, NameError> {
         Self::check(text)?;
-        Ok(ReverseDnsName(text.to_owned()))
+        Ok(ReverseDnsName(Cow::Owned(text.to_owned())))
+    }
+
+    /// A name written into the program, checked when it is compiled.
+    ///
+    /// Meant for a `const`, which is how an [`Extension`](crate::Extension) names its key: a
+    /// malformed name there fails the build rather than a run.
+    ///
+    /// ```
+    /// # use one_saves::name::ReverseDnsName;
+    /// const KEY: ReverseDnsName = ReverseDnsName::from_static("io.mgba.rtc");
+    /// assert_eq!(KEY.as_str(), "io.mgba.rtc");
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// When `text` is not well-formed, which in a `const` is a compile error.
+    #[must_use]
+    pub const fn from_static(text: &'static str) -> Self {
+        match Self::check(text) {
+            Ok(()) => ReverseDnsName(Cow::Borrowed(text)),
+            Err(_) => panic!("not a well-formed reverse-DNS name"),
+        }
     }
 
     /// Checks the grammar without allocating.
-    pub fn check(text: &str) -> Result<(), NameError> {
-        if text.is_empty() {
+    ///
+    /// A `const fn`, so that [`from_static`](ReverseDnsName::from_static) runs the very same rules
+    /// at compile time; that is why it walks bytes rather than splitting.
+    pub const fn check(text: &str) -> Result<(), NameError> {
+        let bytes = text.as_bytes();
+        if bytes.is_empty() {
             return Err(NameError::Empty);
         }
-        if text.len() > MAX_REVERSE_DNS_LEN {
+        if bytes.len() > MAX_REVERSE_DNS_LEN {
             return Err(NameError::TooLong);
         }
-        let mut labels = text.split('.');
-        let top = labels.next().ok_or(NameError::NotEnoughLabels)?;
+        let mut end = 0;
+        while end < bytes.len() && bytes[end] != b'.' {
+            end += 1;
+        }
 
         // The first label is the reversed top-level domain, so it is letters only and two or
         // more of them. `x` is the one exception: a single-letter TLD cannot exist, which is
         // what makes the tree safe to reserve for producers with no domain.
         let top_is_valid =
-            top == "x" || ((2..=63).contains(&top.len()) && top.bytes().all(|b| b.is_ascii_lowercase()));
+            if end == 1 { bytes[0] == b'x' } else { end >= 2 && end <= 63 && all_lowercase(bytes, end) };
         if !top_is_valid {
             return Err(NameError::MalformedTopLevel);
         }
-
-        let mut count = 0;
-        for label in labels {
-            count += 1;
-            check_label(label)?;
-        }
-        if count == 0 {
+        if end == bytes.len() {
             return Err(NameError::NotEnoughLabels);
         }
-        Ok(())
+
+        let mut start = end + 1;
+        loop {
+            let mut stop = start;
+            while stop < bytes.len() && bytes[stop] != b'.' {
+                stop += 1;
+            }
+            if let Err(error) = check_label(bytes, start, stop) {
+                return Err(error);
+            }
+            if stop == bytes.len() {
+                return Ok(());
+            }
+            start = stop + 1;
+        }
     }
 
     /// The name as a string.
@@ -219,7 +256,7 @@ impl ReverseDnsName {
 
     /// The labels, in written order, so `io.mgba.rtc` yields `io`, `mgba`, `rtc`.
     pub fn labels(&self) -> impl Iterator<Item = &str> {
-        self.0.split('.')
+        self.as_str().split('.')
     }
 
     /// Whether this name sits at or below `prefix` in the tree.
@@ -256,28 +293,68 @@ impl ReverseDnsName {
     /// Whether this name is in the `x` tree, reserved for producers with no domain to reverse.
     #[must_use]
     pub fn is_x_tree(&self) -> bool {
-        self.0 == "x" || self.0.starts_with("x.")
+        let text = self.as_str();
+        text == "x" || text.starts_with("x.")
     }
 }
 
-/// Checks one non-leading label: 1 to 63 bytes of `[a-z0-9-]`, not starting or ending with `-`.
-fn check_label(label: &str) -> Result<(), NameError> {
-    if label.is_empty() || label.len() > 63 {
+/// Whether the first `end` bytes are all `[a-z]`.
+const fn all_lowercase(bytes: &[u8], end: usize) -> bool {
+    let mut index = 0;
+    while index < end {
+        if !bytes[index].is_ascii_lowercase() {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+/// Checks one non-leading label, `bytes[start..stop]`: 1 to 63 bytes of `[a-z0-9-]`, not starting
+/// or ending with `-`.
+const fn check_label(bytes: &[u8], start: usize, stop: usize) -> Result<(), NameError> {
+    let len = stop - start;
+    if len == 0 || len > 63 {
         return Err(NameError::MalformedLabel);
     }
-    for (index, byte) in label.bytes().enumerate() {
-        match byte {
+    let mut index = start;
+    while index < stop {
+        match bytes[index] {
             b'a'..=b'z' | b'0'..=b'9' | b'-' => {}
-            _ => {
-                let character = label[index..].chars().next().unwrap_or('\u{fffd}');
-                return Err(NameError::InvalidCharacter(character));
-            }
+            _ => return Err(NameError::InvalidCharacter(char_at(bytes, index))),
         }
+        index += 1;
     }
-    if label.starts_with('-') || label.ends_with('-') {
+    if bytes[start] == b'-' || bytes[stop - 1] == b'-' {
         return Err(NameError::MalformedLabel);
     }
     Ok(())
+}
+
+/// The character starting at `index`, decoded by hand because `str::chars` is not `const`.
+///
+/// `index` is always a boundary: every byte before it in its label was ASCII, and a label starts
+/// just after a `.`. The bytes came from a `str`, so the sequence is well-formed.
+const fn char_at(bytes: &[u8], index: usize) -> char {
+    let lead = bytes[index] as u32;
+    let (len, mut code) = if lead < 0x80 {
+        (1, lead)
+    } else if lead >> 5 == 0b110 {
+        (2, lead & 0x1f)
+    } else if lead >> 4 == 0b1110 {
+        (3, lead & 0x0f)
+    } else {
+        (4, lead & 0x07)
+    };
+    let mut offset = 1;
+    while offset < len {
+        code = (code << 6) | (bytes[index + offset] as u32 & 0x3f);
+        offset += 1;
+    }
+    match char::from_u32(code) {
+        Some(character) => character,
+        None => '\u{fffd}',
+    }
 }
 
 impl FromStr for ReverseDnsName {
@@ -295,7 +372,7 @@ impl fmt::Display for ReverseDnsName {
 
 impl AsRef<str> for ReverseDnsName {
     fn as_ref(&self) -> &str {
-        &self.0
+        self.as_str()
     }
 }
 
@@ -394,6 +471,34 @@ mod tests {
         for text in ["hasheous", "io.mgba_rtc", "IO.mgba", "q.vendor", "io..mgba", "io.mgba.", ".io.mgba"] {
             assert!(ReverseDnsName::parse(text).is_err(), "{text:?} should not parse");
         }
+    }
+
+    #[test]
+    fn a_malformed_name_says_what_is_wrong_with_it() {
+        // One `const fn` checks the grammar, at compile time for `from_static` and at run time
+        // for `parse`, so these pin what each malformation reports in both.
+        for (text, error) in [
+            ("", NameError::Empty),
+            ("hasheous", NameError::NotEnoughLabels),
+            ("IO.mgba", NameError::MalformedTopLevel),
+            (".io.mgba", NameError::MalformedTopLevel),
+            ("io..mgba", NameError::MalformedLabel),
+            ("io.mgba.", NameError::MalformedLabel),
+            ("io.-mgba", NameError::MalformedLabel),
+            ("io.mgba_rtc", NameError::InvalidCharacter('_')),
+            ("io.mgbä", NameError::InvalidCharacter('ä')),
+            ("io.m🎮", NameError::InvalidCharacter('🎮')),
+        ] {
+            assert_eq!(ReverseDnsName::parse(text), Err(error), "{text:?}");
+        }
+        assert_eq!(ReverseDnsName::parse(&format!("io.{}", "a".repeat(253))), Err(NameError::TooLong));
+    }
+
+    #[test]
+    fn a_static_name_is_the_name_it_spells() {
+        const KEY: ReverseDnsName = ReverseDnsName::from_static("x.1sav.rtc");
+        assert_eq!(KEY, ReverseDnsName::parse("x.1sav.rtc").unwrap());
+        assert!(KEY.is_x_tree());
     }
 
     #[test]

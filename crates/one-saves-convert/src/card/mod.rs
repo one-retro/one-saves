@@ -61,9 +61,7 @@ pub mod saturn;
 pub mod vmu;
 
 #[cfg(any(feature = "gc", feature = "ps2", feature = "saturn"))]
-use one_saves::ReverseDnsName;
-#[cfg(any(feature = "gc", feature = "ps2", feature = "saturn"))]
-use one_saves::dcbor::{CBOR, CBORCase, Map, Tag};
+use one_saves::extension::{Dirent, EntryTime};
 use one_saves::{Bundle, Part, PartKind, Slug};
 
 use crate::Format;
@@ -199,29 +197,6 @@ with_a_card_format! {
 
 }
 
-/// The `x.1sav.dirent` key: what a card's directory records about one save.
-#[cfg(any(feature = "gc", feature = "ps2", feature = "saturn"))]
-pub(crate) fn dirent_key() -> ReverseDnsName {
-    ReverseDnsName::parse("x.1sav.dirent").expect("a spec name is well-formed")
-}
-
-/// One reading, and the zone it was taken in where that is known.
-///
-/// The seconds are the wall clock the console showed, put on the Unix scale by reading that wall
-/// clock as though it were UTC. They are deliberately not an instant: a GameCube sets its clock in
-/// the IPL menu with no notion of a zone, so the number fixes a date and a time of day and says
-/// nothing about where on Earth that was. The offset, in seconds east of UTC, is what would close
-/// the gap — the instant is the reading minus the offset — and it is written only where a producer
-/// actually knows the zone, never filled in from where the *dump* happened.
-#[cfg(any(feature = "gc", feature = "ps2", feature = "saturn"))]
-fn entry_time(seconds: i64, utc_offset: Option<i32>) -> CBOR {
-    let reading = CBOR::from(CBORCase::Tagged(Tag::new(1u64, "epoch"), seconds.into()));
-    match utc_offset {
-        Some(offset) => vec![reading, CBOR::from(offset)].into(),
-        None => vec![reading].into(),
-    }
-}
-
 /// Days from 1970-01-01 to a civil date, by Howard Hinnant's algorithm.
 ///
 /// Spelled out rather than taken from a date crate: this is the only arithmetic of its kind here,
@@ -257,12 +232,15 @@ pub(crate) fn civil_seconds(year: u16, month: u8, day: u8, hour: u8, minute: u8,
 }
 
 /// The `x.1sav.dirent` value for an entry recording both a creation and a write.
+///
+/// `utc_offset` is the zone the console kept, where it keeps one, and never the zone the *dump*
+/// happened in.
 #[cfg(feature = "ps2")]
-pub(crate) fn created_and_modified(created: i64, modified: i64, utc_offset: Option<i32>) -> CBOR {
-    let mut map = Map::new();
-    map.insert(0u64, entry_time(created, utc_offset));
-    map.insert(1u64, entry_time(modified, utc_offset));
-    map.into()
+pub(crate) fn created_and_modified(created: i64, modified: i64, utc_offset: Option<i32>) -> Dirent {
+    Dirent {
+        created_at: Some(EntryTime { seconds: created, utc_offset }),
+        modified_at: Some(EntryTime { seconds: modified, utc_offset }),
+    }
 }
 
 /// The `x.1sav.dirent` value for an entry that records a write and no creation.
@@ -270,10 +248,8 @@ pub(crate) fn created_and_modified(created: i64, modified: i64, utc_offset: Opti
 /// GameCube is this shape, and so is Saturn: the entry dates the last write and nothing else,
 /// which is why the schema admits a map holding key 1 alone rather than making key 0 optional.
 #[cfg(any(feature = "gc", feature = "saturn"))]
-pub(crate) fn modified_only(seconds: i64, utc_offset: Option<i32>) -> CBOR {
-    let mut map = Map::new();
-    map.insert(1u64, entry_time(seconds, utc_offset));
-    map.into()
+pub(crate) fn modified_only(seconds: i64, utc_offset: Option<i32>) -> Dirent {
+    Dirent { created_at: None, modified_at: Some(EntryTime { seconds, utc_offset }) }
 }
 
 /// Parses a slug the specification defines, which is always well-formed.

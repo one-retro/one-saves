@@ -9,10 +9,9 @@ use dcbor::Simple;
 use dcbor::prelude::*;
 
 use crate::error::{Error, ErrorKind};
+use crate::extension::Extensions;
 use crate::hash::{HashAlgorithm, HashValue};
-use crate::model::{
-    Bundle, Card, Extensions, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys,
-};
+use crate::model::{Bundle, Card, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys};
 use crate::name::{Name, ReverseDnsName, Slug};
 use crate::shape::Shape;
 
@@ -92,7 +91,7 @@ impl Fields {
         for (key, value) in &self.texts {
             let name = ReverseDnsName::parse(key)
                 .map_err(|e| Error::at(format!("{path}[{key:?}]"), ErrorKind::Name(e)))?;
-            extensions.insert(name, value.clone());
+            extensions.insert_cbor(name, value.clone());
         }
         Ok(extensions)
     }
@@ -578,8 +577,8 @@ fn finish(mut map: Map, unknown: &UnknownKeys, extensions: &Extensions) -> CBOR 
     for (&key, value) in unknown {
         map.insert(key, value.clone());
     }
-    for (name, value) in extensions {
-        map.insert(name.as_str(), value.clone());
+    for (name, value) in extensions.iter() {
+        map.insert(name.as_str(), value);
     }
     map.into()
 }
