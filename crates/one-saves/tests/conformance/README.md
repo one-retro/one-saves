@@ -19,9 +19,9 @@ bundle deeper than the cap is rejected by a rule about structure rather than by 
 Build an over-deep bundle in your own tests and check that it is refused.
 
 **Whether an unknown value round-trips.** Several `valid` cases carry a name or key the spec expects a decoder not to
-recognise: `third-party-kind`, `part-extension-keys`, `game-ids` with an unknown resolver. Accepting them is only half
-the requirement. The other half is that re-encoding preserves them unchanged, which again is a round-trip test rather
-than an accept/reject one.
+recognise: `third-party-kind`, `part-extension-keys`, `game-extension-keys`, `game-ids` with an unknown resolver.
+Accepting them is only half the requirement. The other half is that re-encoding preserves them unchanged, which again is
+a round-trip test rather than an accept/reject one.
 
 ## Schemas
 

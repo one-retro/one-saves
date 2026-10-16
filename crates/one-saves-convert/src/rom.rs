@@ -199,6 +199,7 @@ pub fn game_from_rom(bytes: &[u8], filename: Option<&str>) -> Game {
         // Which system's release these hints identify, which the ROM header is exactly the thing
         // that knows. Distinct from the header's `system`, which says what will load the save.
         system: info.system.and_then(|slug| slug.parse().ok()),
+        extensions: one_saves::Extensions::new(),
         unknown: one_saves::UnknownKeys::new(),
     }
 }

@@ -68,7 +68,7 @@ fn corpus() {
 
     // A manifest this harness failed to read would otherwise pass by testing nothing.
     let (valid, invalid): (Vec<_>, Vec<_>) = cases.iter().partition(|c| c.expect_valid);
-    assert_eq!((valid.len(), invalid.len()), (27, 63), "the corpus is not the size it should be");
+    assert_eq!((valid.len(), invalid.len()), (28, 64), "the corpus is not the size it should be");
 
     for case in cases {
         let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
@@ -151,10 +151,10 @@ fn a_decoder_refuses_every_non_deterministic_encoding() {
 ///
 /// Several valid cases carry a name or key the spec expects a decoder *not* to recognise.
 /// Accepting them is only half the requirement; the other half is that re-encoding preserves
-/// them unchanged, which the round-trip above proves for these three by name.
+/// them unchanged, which the round-trip above proves for these four by name.
 #[test]
 fn unknown_names_and_keys_survive_a_round_trip() {
-    for name in ["third-party-kind", "part-extension-keys", "game-ids"] {
+    for name in ["third-party-kind", "part-extension-keys", "game-extension-keys", "game-ids"] {
         let path = corpus_dir().join(format!("valid/{name}.cbor"));
         let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {name}: {e}"));
         let bundle = Bundle::from_slice(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
