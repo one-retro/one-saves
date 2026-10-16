@@ -37,7 +37,7 @@ pub enum Strictness {
 struct Fields {
     /// Integer keys, which belong to the specification.
     ints: BTreeMap<i64, CBOR>,
-    /// Text keys, which belong to producers. Only the header and a part admit them.
+    /// Text keys, which belong to producers. Only the header, a part and `game` admit them.
     texts: Vec<(String, CBOR)>,
 }
 
@@ -309,7 +309,7 @@ fn decode_header(value: &CBOR, strictness: Strictness) -> Result<Header, Error> 
 fn decode_game(value: &CBOR, path: &str, strictness: Strictness) -> Result<Game, Error> {
     let map = want_map(value, path)?;
     let mut fields = Fields::split(map, path)?;
-    fields.no_extensions(path)?;
+    let extensions = fields.extensions(path)?;
 
     let mut game_id = BTreeMap::new();
     if let Some(ids) = fields.take(0) {
@@ -362,6 +362,7 @@ fn decode_game(value: &CBOR, path: &str, strictness: Strictness) -> Result<Game,
         serial,
         title,
         system,
+        extensions,
         unknown: fields.unknown(path, strictness)?,
     };
     // An optional container has exactly one encoding of empty, and that is not being there.
@@ -651,7 +652,7 @@ impl Game {
         if let Some(system) = &self.system {
             map.insert(5u64, system.as_str());
         }
-        finish(map, &self.unknown, &Extensions::new())
+        finish(map, &self.unknown, &self.extensions)
     }
 }
 

@@ -100,6 +100,14 @@ pub struct Game {
     /// Distinct from the header's [`system`](Header::system), which says what will load the bytes.
     /// The two answer different questions even where they agree.
     pub system: Option<Slug>,
+    /// Extension keys, flat alongside the integer ones: a clue none of the fields above names,
+    /// such as the revision byte a ROM header carries beside its serial.
+    ///
+    /// A key here describes the game and says nothing about this save, so two saves of one game
+    /// still carry the same hints. A clock reading stays on the header. A consumer matching
+    /// against a catalog skips a key it does not recognise, as it skips an unknown resolver in
+    /// [`game_id`](Game::game_id).
+    pub extensions: Extensions,
     /// Integer keys from a later minor version.
     pub unknown: UnknownKeys,
 }
@@ -114,6 +122,7 @@ impl Game {
             && self.serial.is_none()
             && self.title.is_none()
             && self.system.is_none()
+            && self.extensions.is_empty()
             && self.unknown.is_empty()
     }
 }
@@ -399,6 +408,16 @@ mod tests {
             assert_eq!(kind.as_str(), Some(text));
             assert!(!matches!(kind, PartKind::Other(_)), "{text} should be a known kind");
         }
+    }
+
+    #[test]
+    fn a_game_holding_only_an_extension_key_is_not_empty() {
+        // An empty `game` is malformed, and a map with a key in it is not empty, whichever
+        // namespace that key is in.
+        let mut game = Game::default();
+        assert!(game.is_empty());
+        game.extensions.insert(ReverseDnsName::parse("x.example.revision").unwrap(), CBOR::from(1u64));
+        assert!(!game.is_empty());
     }
 
     #[test]

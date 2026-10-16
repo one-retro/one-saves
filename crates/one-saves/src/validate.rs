@@ -7,7 +7,7 @@
 use crate::codec::Strictness;
 use crate::error::{Error, ErrorKind};
 use crate::hash::HashValue;
-use crate::model::{Bundle, Part, PartKind, Payload};
+use crate::model::{Bundle, Game, Part, PartKind, Payload};
 use crate::shape::Shape;
 
 impl Bundle {
@@ -56,7 +56,9 @@ impl Bundle {
 
         for (index, part) in self.parts.iter().enumerate() {
             let path = format!("parts[{index}]");
-            check_rom_hash_order(part, &path)?;
+            if let Some(game) = &part.game {
+                check_game(game, &format!("{path}.game"))?;
+            }
             // On every part, not only a `bundle` one: these keys describe a save, and a save is
             // the bundle rather than the part that carries it.
             check_key_placement(&part.extensions, &path)?;
@@ -70,7 +72,7 @@ impl Bundle {
             check_key_placement(&self.header.extensions, "header")?;
         }
         if let Some(game) = &self.header.game {
-            check_hashes(&game.rom_hashes, "header.game.rom_hashes")?;
+            check_game(game, "header.game")?;
         }
         Ok(())
     }
@@ -141,11 +143,13 @@ fn check_key_placement(extensions: &crate::Extensions, path: &str) -> Result<(),
     Ok(())
 }
 
-fn check_rom_hash_order(part: &Part, path: &str) -> Result<(), Error> {
-    if let Some(game) = &part.game {
-        check_hashes(&game.rom_hashes, &format!("{path}.game.rom_hashes"))?;
-    }
-    Ok(())
+/// Checks a `game` map, wherever it sits.
+///
+/// Its extension keys describe the game and nothing about one save of it, so a clock reading is
+/// out of place here even inside a save's own header: two saves of one game carry one `game`.
+fn check_game(game: &Game, path: &str) -> Result<(), Error> {
+    check_hashes(&game.rom_hashes, &format!("{path}.rom_hashes"))?;
+    check_key_placement(&game.extensions, path)
 }
 
 /// Hash values sort ascending by tag, and hold at most one entry per algorithm.
@@ -289,6 +293,26 @@ mod tests {
         let mut save = bundle_of(vec![Part::new(0, *b"SAVE")]);
         save.header.extensions.insert(key, reading);
         save.validate().expect("a save's header carries the reading");
+    }
+
+    #[test]
+    fn a_clock_reading_is_refused_in_a_game_map() {
+        // A key in `game` describes the game, and a clock reading describes one save of it. That
+        // holds on a save's header too, which is the one place the reading itself may sit.
+        let key = crate::ReverseDnsName::parse("x.1sav.rtc").unwrap();
+        let mut game = Game { title: Some("Pokemon Ruby".into()), ..Game::default() };
+        game.extensions.insert(key, dcbor::CBOR::from(1u64));
+
+        let mut save = bundle_of(vec![Part::new(0, *b"SAVE")]);
+        save.header.game = Some(game.clone());
+        assert_eq!(
+            save.validate().unwrap_err().kind(),
+            &ErrorKind::KeyOutOfPlace { key: "x.1sav.rtc".to_owned(), allowed: "a save's bundle header" }
+        );
+
+        let mut part = Part::new(0, *b"SAVE");
+        part.game = Some(game);
+        assert!(bundle_of(vec![part]).validate().is_err(), "nor in a part's game map");
     }
 
     #[test]

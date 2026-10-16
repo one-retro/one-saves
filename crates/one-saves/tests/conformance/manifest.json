@@ -3,8 +3,8 @@
   "spec_version": "0.3",
   "generated_from": "test/bundles.js",
   "counts": {
-    "valid": 27,
-    "invalid": 63
+    "valid": 28,
+    "invalid": 64
   },
   "cases": [
     {
@@ -109,8 +109,8 @@
       "name": "saturn-backup",
       "expect": "valid",
       "file": "valid/saturn-backup.cbor",
-      "sha256": "465172f10fc998ddadc4120f28b0fe05501ae814ba434fbeedfc5b935de3c056",
-      "note": "Saturn keeps a save's directory entry inside the save's own first block, so `saturn-bup` is the one card format where a card entry carries no `dirent` at all. A writer rewrites the block chain in the payload instead."
+      "sha256": "fc6f051541cc9bc9bab8f4dcead27b4713ea8be7d0025c53d14e4bec9d36d743",
+      "note": "Saturn keeps a save's directory entry at the head of the save's own first block rather than in a directory region, which changes where a reader finds those 30 bytes and not whether they can be carried, so `dirent` holds them like any other format's. What follows them is the block chain, and a writer rewrites that in the payload instead."
     },
     {
       "name": "vmu-card",
@@ -195,6 +195,13 @@
       "file": "valid/part-extension-keys.cbor",
       "sha256": "3e8dc6c0dec050b72c36f65d23429297ca88602868b5190c29cd7a0883cf18ef",
       "note": "Extension keys sit flat on the header and on a part alike, named by reversing a domain the producer holds or by taking a reserved name in the `x` tree when the value belongs to no one producer. Both kinds ride here."
+    },
+    {
+      "name": "game-extension-keys",
+      "expect": "valid",
+      "file": "valid/game-extension-keys.cbor",
+      "sha256": "be7eac6b507a548977e7ba83935427c3f146b04c4b75e9ae85bd84c7e346e41f",
+      "note": "`game` takes extension keys too, for a clue none of its integer keys names. A cartridge reader that read only the ROM header has a serial and a title and no hash, and the header's revision byte beside them is what tells two releases sharing that serial apart. A consumer that does not recognise the key skips it when matching and hands it back unchanged."
     },
     {
       "name": "part-unknown-integer-key",
@@ -482,7 +489,7 @@
       "rejected_by": "schema",
       "file": "invalid/extension-key-not-reverse-dns.cbor",
       "sha256": "5db768e28bcacfcade31b42583f5a4e0ee804765c8a66773fa6d495e2fdee389",
-      "note": "An extension key is a reverse-DNS name or it is nothing. Without that there is no way to tell whose key this is, which is the one thing the namespace buys. A bare word and an uppercase name are both unmintable."
+      "note": "An extension key is a reverse-DNS name or it is nothing. Without that there is no way to tell whose key this is, which is the one thing the namespace buys. A bare word and an uppercase name are both unmintable, in `game` as much as on the header or a part."
     },
     {
       "name": "extension-key-uppercase",
@@ -490,7 +497,15 @@
       "rejected_by": "schema",
       "file": "invalid/extension-key-uppercase.cbor",
       "sha256": "7ebc2f3c0b88c744beb019e68bda2b5c0203b86068dcf1aac5e7c514c4d5704f",
-      "note": "An extension key is a reverse-DNS name or it is nothing. Without that there is no way to tell whose key this is, which is the one thing the namespace buys. A bare word and an uppercase name are both unmintable."
+      "note": "An extension key is a reverse-DNS name or it is nothing. Without that there is no way to tell whose key this is, which is the one thing the namespace buys. A bare word and an uppercase name are both unmintable, in `game` as much as on the header or a part."
+    },
+    {
+      "name": "game-extension-key-not-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/game-extension-key-not-reverse-dns.cbor",
+      "sha256": "5399295b2644a395b951ea48a4a8d952d515e925e96307c8f1dce49f36c34fbc",
+      "note": "An extension key is a reverse-DNS name or it is nothing. Without that there is no way to tell whose key this is, which is the one thing the namespace buys. A bare word and an uppercase name are both unmintable, in `game` as much as on the header or a part."
     },
     {
       "name": "created-at-as-float",

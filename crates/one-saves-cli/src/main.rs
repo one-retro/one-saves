@@ -468,7 +468,9 @@ fn inspect(path: &Path) -> Fallible {
         if let Some(file) = &game.rom_filename {
             bits.push(file.clone());
         }
-        println!("  game         {}", bits.join(", "));
+        // Trimmed because a game can hold nothing this line names: only a resolver, say, or only
+        // an extension key, both of which are listed beneath it.
+        println!("{}", format!("  game         {}", bits.join(", ")).trim_end());
         for hash in &game.rom_hashes {
             println!("               {hash}");
         }
@@ -478,6 +480,10 @@ fn inspect(path: &Path) -> Fallible {
                 one_saves::GameId::Text(t) => t.clone(),
             };
             println!("               {resolver} = {id}");
+        }
+        // Clues none of the fields above name, such as a ROM header's revision byte.
+        for key in game.extensions.keys() {
+            println!("               extension {key}");
         }
     } else {
         println!("  game         unidentified");
