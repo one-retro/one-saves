@@ -174,21 +174,15 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
         extensions = split.extensions();
     }
 
-    Ok(Bundle {
-        header: Header {
-            // A raw dump is one game's state: the parts are the regions that state is made of.
-            shape: one_saves::Shape::Save,
-            created_at: options.created_at,
-            system,
-            game: options.game.clone(),
-            source: options.source.clone(),
-            card: None,
-            description: options.description.clone(),
-            extensions,
-            unknown: one_saves::UnknownKeys::new(),
-        },
-        parts,
-    })
+    // A raw dump is one game's state: the parts are the regions that state is made of.
+    let mut header = Header::new(one_saves::Shape::Save)
+        .created_at(options.created_at)
+        .system(system)
+        .game(options.game.clone())
+        .source(options.source.clone())
+        .extensions(extensions);
+    header.description.clone_from(&options.description);
+    Ok(Bundle::new(header, parts))
 }
 
 /// Parses a slug the specification defines, which is always well-formed.

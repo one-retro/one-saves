@@ -46,8 +46,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     for note in pak.notes() {
         // The game code is how a pak names the release; the note name is what the console lists
         // the note under, which is a label rather than a title and belongs under its own key.
-        let game = (!note.game_code.is_empty())
-            .then(|| Game { serial: Some(note.game_code.clone()), ..Game::default() });
+        let game = (!note.game_code.is_empty()).then(|| Game::default().serial(note.game_code.clone()));
 
         // A Controller Pak is the one format that keeps its text in the note table rather than in
         // the note, so this is read off the entry and not out of the payload.
@@ -68,8 +67,8 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         parts.push(card_image_part(0, pak.image(), &options.role_for(Format::N64Pak)));
     }
 
-    Ok(Bundle {
-        header: card_header(
+    Ok(Bundle::new(
+        card_header(
             Format::N64Pak,
             pak.capacity(),
             // The pak's own 32-byte label belongs to no note, so splitting would drop it.
@@ -77,7 +76,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             options,
         ),
         parts,
-    })
+    ))
 }
 
 /// Writes a bundle back out as a raw 32 KiB pak.

@@ -131,15 +131,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<one_saves::Bundle> {
         parts.push(card_image_part(0, volume.image(), &role));
     }
 
-    Ok(one_saves::Bundle {
-        header: card_header(
-            Format::SaturnBup,
-            volume.capacity(),
-            Some(volume.system_area().to_vec()),
-            options,
-        ),
+    Ok(one_saves::Bundle::new(
+        card_header(Format::SaturnBup, volume.capacity(), Some(volume.system_area().to_vec()), options),
         parts,
-    })
+    ))
 }
 
 /// Writes a bundle back out as a volume.

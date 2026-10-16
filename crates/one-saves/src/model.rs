@@ -5,6 +5,23 @@
 //! nested bundle's hash matching what it carries — so they are checked by
 //! [`Bundle::validate`](crate::Bundle::validate) when a bundle is read or written, not by every
 //! setter along the way.
+//!
+//! Every struct here is `#[non_exhaustive]`, because a later version of the specification adds
+//! fields to them. Build one by chaining its setters, which take the field's name. A setter for an
+//! optional field that is not text takes the value or an `Option` of it, so a value a caller may
+//! not have chains the same as one it does:
+//!
+//! ```
+//! use one_saves::{Bundle, Game, Header, Part, PartKind, Shape};
+//!
+//! let save = Bundle::new(Header::new(Shape::Save), vec![Part::new(0, *b"SAVE")]);
+//! let part = Part::new(0, save.to_vec()?)
+//!     .kind(PartKind::Bundle)
+//!     .path("BASLUS-00594")
+//!     .game(Game::default().serial("SLUS-00594").title("Metal Gear Solid"));
+//! assert_eq!(part.game.as_ref().and_then(|game| game.serial.as_deref()), Some("SLUS-00594"));
+//! # Ok::<(), one_saves::Error>(())
+//! ```
 
 use std::collections::BTreeMap;
 
@@ -28,6 +45,7 @@ pub type UnknownKeys = BTreeMap<i64, CBOR>;
 
 /// A complete bundle: what it is, and the bytes.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Bundle {
     /// What this bundle says about itself. Every field is optional; an empty header describes a
     /// bundle whose parts are all a consumer knows about it.
@@ -36,8 +54,17 @@ pub struct Bundle {
     pub parts: Vec<Part>,
 }
 
+impl Bundle {
+    /// A bundle of this header and these parts.
+    #[must_use]
+    pub fn new(header: Header, parts: Vec<Part>) -> Self {
+        Bundle { header, parts }
+    }
+}
+
 /// Everything the bundle says about itself.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Header {
     /// What this bundle is. Required, and the first key on the wire.
     ///
@@ -69,10 +96,65 @@ pub struct Header {
 }
 
 impl Header {
+    /// A header naming its shape and nothing else.
+    #[must_use]
+    pub fn new(shape: Shape) -> Self {
+        Header { shape, ..Header::default() }
+    }
+
     /// Whether this header identifies a game at all.
     #[must_use]
     pub fn is_identified(&self) -> bool {
         self.game.is_some()
+    }
+
+    /// Sets when the bundle was assembled, in whole epoch seconds.
+    #[must_use]
+    pub fn created_at(mut self, seconds: impl Into<Option<i64>>) -> Self {
+        self.created_at = seconds.into();
+        self
+    }
+
+    /// Sets the system these bytes are a save for.
+    #[must_use]
+    pub fn system(mut self, system: impl Into<Option<Slug>>) -> Self {
+        self.system = system.into();
+        self
+    }
+
+    /// Sets the clues to which game this is.
+    #[must_use]
+    pub fn game(mut self, game: impl Into<Option<Game>>) -> Self {
+        self.game = game.into();
+        self
+    }
+
+    /// Sets who assembled the bundle.
+    #[must_use]
+    pub fn source(mut self, source: impl Into<Option<Source>>) -> Self {
+        self.source = source.into();
+        self
+    }
+
+    /// Sets the card this bundle is.
+    #[must_use]
+    pub fn card(mut self, card: impl Into<Option<Card>>) -> Self {
+        self.card = card.into();
+        self
+    }
+
+    /// Sets the human-readable note.
+    #[must_use]
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Replaces every extension key with these.
+    #[must_use]
+    pub fn extensions(mut self, extensions: Extensions) -> Self {
+        self.extensions = extensions;
+        self
     }
 }
 
@@ -83,7 +165,10 @@ impl Header {
 /// rather than one question with different confidence. A `sha256` identifies one dump, a
 /// `serial` identifies one release that many dumps share, and a filename narrows the field
 /// without settling it.
+///
+/// Start from [`Game::default`] and set what you have.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Game {
     /// This game's id in one or more catalogs, keyed by resolver name. Never empty when present.
     pub game_id: BTreeMap<ReverseDnsName, GameId>,
@@ -125,6 +210,60 @@ impl Game {
             && self.extensions.is_empty()
             && self.unknown.is_empty()
     }
+
+    /// Adds this game's id in one catalog, replacing any the same resolver had.
+    #[must_use]
+    pub fn game_id(mut self, resolver: ReverseDnsName, id: impl Into<GameId>) -> Self {
+        self.game_id.insert(resolver, id.into());
+        self
+    }
+
+    /// Adds a ROM hash, replacing any of the same algorithm.
+    ///
+    /// The list stays ascending by tag, which is the order the format writes it in, so hashes can
+    /// be added in whatever order a producer computed them.
+    #[must_use]
+    pub fn rom_hash(mut self, hash: HashValue) -> Self {
+        self.rom_hashes.retain(|existing| existing.algorithm() != hash.algorithm());
+        let at = self.rom_hashes.partition_point(|existing| existing.tag() < hash.tag());
+        self.rom_hashes.insert(at, hash);
+        self
+    }
+
+    /// Sets the original ROM filename or stem.
+    #[must_use]
+    pub fn rom_filename(mut self, rom_filename: impl Into<String>) -> Self {
+        self.rom_filename = Some(rom_filename.into());
+        self
+    }
+
+    /// Sets the serial out of the ROM header.
+    #[must_use]
+    pub fn serial(mut self, serial: impl Into<String>) -> Self {
+        self.serial = Some(serial.into());
+        self
+    }
+
+    /// Sets the best-known title.
+    #[must_use]
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Sets which system's release these hints identify.
+    #[must_use]
+    pub fn system(mut self, system: impl Into<Option<Slug>>) -> Self {
+        self.system = system.into();
+        self
+    }
+
+    /// Replaces every extension key with these.
+    #[must_use]
+    pub fn extensions(mut self, extensions: Extensions) -> Self {
+        self.extensions = extensions;
+        self
+    }
 }
 
 /// A game's id in one catalog, in whichever form that catalog publishes.
@@ -136,6 +275,24 @@ pub enum GameId {
     Text(String),
 }
 
+impl From<u64> for GameId {
+    fn from(id: u64) -> Self {
+        GameId::Uint(id)
+    }
+}
+
+impl From<String> for GameId {
+    fn from(id: String) -> Self {
+        GameId::Text(id)
+    }
+}
+
+impl From<&str> for GameId {
+    fn from(id: &str) -> Self {
+        GameId::Text(id.to_owned())
+    }
+}
+
 /// Who produced some bytes.
 ///
 /// The same map attaches in two places: on the header it names the producer that assembled the
@@ -143,6 +300,7 @@ pub enum GameId {
 /// producer. Provenance belongs to each save, not just to the file around it — a bundle can hold
 /// one save read from a real cartridge and another exported by an emulator.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Source {
     /// What kind of producer read the bytes: `console`, `emulator`, `cartridge-reader`,
     /// `flashcart` or `service`. Spec-owned; a producer may not mint one.
@@ -172,10 +330,39 @@ impl Source {
             && self.app_version.is_none()
             && self.unknown.is_empty()
     }
+
+    /// Sets what kind of producer read the bytes.
+    #[must_use]
+    pub fn device_kind(mut self, device_kind: impl Into<Option<Slug>>) -> Self {
+        self.device_kind = device_kind.into();
+        self
+    }
+
+    /// Sets the opaque identifier for the device or install.
+    #[must_use]
+    pub fn fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
+        self.fingerprint = Some(fingerprint.into());
+        self
+    }
+
+    /// Sets the producing software or device.
+    #[must_use]
+    pub fn app(mut self, app: impl Into<Option<Name>>) -> Self {
+        self.app = app.into();
+        self
+    }
+
+    /// Sets the version of `app`.
+    #[must_use]
+    pub fn app_version(mut self, app_version: impl Into<String>) -> Self {
+        self.app_version = Some(app_version.into());
+        self
+    }
 }
 
 /// The card a bundle is, when it is one.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Card {
     /// The card's layout: `ps1-mc`, `ps2-mc`, `n64-cpak`, `gc-mc`, `neogeo-mc`, `vmu` or
     /// `saturn-bup`. Spec-owned; a producer may not mint one, because a consumer that does not
@@ -194,6 +381,21 @@ pub struct Card {
     pub system_area: Option<Vec<u8>>,
     /// Integer keys from a later minor version.
     pub unknown: UnknownKeys,
+}
+
+impl Card {
+    /// A card of this layout and data capacity.
+    #[must_use]
+    pub fn new(format: Slug, capacity: u64) -> Self {
+        Card { format, capacity, system_area: None, unknown: UnknownKeys::new() }
+    }
+
+    /// Sets the card-level bytes belonging to no save.
+    #[must_use]
+    pub fn system_area(mut self, system_area: impl Into<Vec<u8>>) -> Self {
+        self.system_area = Some(system_area.into());
+        self
+    }
 }
 
 /// What role a part's bytes play.
@@ -252,6 +454,7 @@ impl PartKind {
 
 /// One typed blob, and everything said about it.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Part {
     /// A stable identifier within the bundle. Parts are stored in ascending `id` order, always.
     ///
@@ -335,6 +538,83 @@ impl Part {
     #[must_use]
     pub fn address(&self) -> (Option<&Slug>, Option<&str>, Option<u64>) {
         (self.role.as_ref(), self.path.as_deref(), self.slot)
+    }
+
+    /// Sets what role these bytes play.
+    #[must_use]
+    pub fn kind(mut self, kind: PartKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// Sets which socket these bytes came out of.
+    #[must_use]
+    pub fn role(mut self, role: impl Into<Option<Slug>>) -> Self {
+        self.role = role.into();
+        self
+    }
+
+    /// Sets where these bytes sat in the container they came from.
+    #[must_use]
+    pub fn path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    /// Sets the index this part occupied in its container.
+    #[must_use]
+    pub fn slot(mut self, slot: impl Into<Option<u64>>) -> Self {
+        self.slot = slot.into();
+        self
+    }
+
+    /// Sets the container's own directory entry for this part, verbatim.
+    #[must_use]
+    pub fn dirent(mut self, dirent: impl Into<Vec<u8>>) -> Self {
+        self.dirent = Some(dirent.into());
+        self
+    }
+
+    /// Sets the media type of the payload.
+    #[must_use]
+    pub fn content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.content_type = Some(content_type.into());
+        self
+    }
+
+    /// Sets who produced this part's bytes.
+    #[must_use]
+    pub fn source(mut self, source: impl Into<Option<Source>>) -> Self {
+        self.source = source.into();
+        self
+    }
+
+    /// Sets which game this part's bytes belong to.
+    #[must_use]
+    pub fn game(mut self, game: impl Into<Option<Game>>) -> Self {
+        self.game = game.into();
+        self
+    }
+
+    /// Sets the index copy of a nested bundle's `system`.
+    #[must_use]
+    pub fn system(mut self, system: impl Into<Option<Slug>>) -> Self {
+        self.system = system.into();
+        self
+    }
+
+    /// Sets what the console that wrote this payload bound it to.
+    #[must_use]
+    pub fn binding(mut self, binding: impl Into<Option<Slug>>) -> Self {
+        self.binding = binding.into();
+        self
+    }
+
+    /// Replaces every extension key with these.
+    #[must_use]
+    pub fn extensions(mut self, extensions: Extensions) -> Self {
+        self.extensions = extensions;
+        self
     }
 }
 

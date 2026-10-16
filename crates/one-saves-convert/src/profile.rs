@@ -34,13 +34,10 @@ impl Profile {
     /// build that ran.
     #[must_use]
     pub fn source(&self, app_version: Option<String>) -> Source {
-        Source {
-            device_kind: Slug::parse(self.device_kind).ok(),
-            fingerprint: None,
-            app: Name::parse(self.app).ok(),
-            app_version,
-            unknown: one_saves::UnknownKeys::new(),
-        }
+        let mut source =
+            Source::default().device_kind(Slug::parse(self.device_kind).ok()).app(Name::parse(self.app).ok());
+        source.app_version = app_version;
+        source
     }
 
     /// The one system this profile can mean, when it can only mean one.

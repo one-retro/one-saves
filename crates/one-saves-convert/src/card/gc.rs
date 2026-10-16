@@ -189,10 +189,9 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     for save in card.saves() {
         // A GameCube save is opened by game code plus maker code plus filename, so the serial is
         // the pair rather than either alone.
-        let game = Some(Game {
-            serial: (!save.game_code.is_empty()).then(|| format!("{}{}", save.game_code, save.maker_code)),
-            ..Game::default()
-        });
+        let mut game = Game::default();
+        game.serial = (!save.game_code.is_empty()).then(|| format!("{}{}", save.game_code, save.maker_code));
+        let game = Some(game);
 
         // The picture travels with the save, so it goes in the header of the bundle that *is* the
         // save rather than on the card's part naming it.
@@ -220,8 +219,8 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         parts.push(card_image_part(0, card.image(), &options.role_for(Format::GcCard)));
     }
 
-    Ok(Bundle {
-        header: card_header(
+    Ok(Bundle::new(
+        card_header(
             Format::GcCard,
             card.capacity(),
             // The header block carries the card's flash serial, which is what a Phantasy Star
@@ -230,7 +229,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             options,
         ),
         parts,
-    })
+    ))
 }
 
 /// Writes a bundle back out as a raw card image.

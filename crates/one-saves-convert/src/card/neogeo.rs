@@ -65,7 +65,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // The NGH number is what a card is keyed on and what the BIOS looks a save up by, so it is
         // the serial. It is binary-coded decimal on the card, which is also how it is printed on a
         // cartridge: NGH-047.
-        let game = Some(Game { serial: Some(format!("NGH-{:04X}", save.ngh)), ..Game::default() });
+        let game = Some(Game::default().serial(format!("NGH-{:04X}", save.ngh)));
 
         // The title is what the BIOS lists the save under, so it is a label like every other
         // console's. It doubles as the `path` because a Neo Geo card has no filenames — but a
@@ -101,15 +101,15 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         parts.push(part);
     }
 
-    Ok(Bundle {
-        header: card_header(
+    Ok(Bundle::new(
+        card_header(
             Format::NeoGeoCard,
             card.geometry().data_capacity(),
             Some(card.system_area().to_vec()),
             options,
         ),
         parts,
-    })
+    ))
 }
 
 /// Writes a bundle back out as a bare card image.

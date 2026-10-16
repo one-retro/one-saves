@@ -173,13 +173,10 @@ fn unknown_names_and_keys_survive_a_round_trip() {
 fn a_decoder_round_trips_a_shape_a_later_version_defined() {
     use one_saves::{Header, Part, Shape};
 
-    let later = Bundle {
-        header: Header {
-            shape: "disc-set".parse::<one_saves::Slug>().map(Shape::from_slug).unwrap(),
-            ..Header::default()
-        },
-        parts: vec![Part::new(0, *b"SAVE")],
-    };
+    let later = Bundle::new(
+        Header::new("disc-set".parse::<one_saves::Slug>().map(Shape::from_slug).unwrap()),
+        vec![Part::new(0, *b"SAVE")],
+    );
     let bytes = later.to_vec().expect("encodes");
 
     // The schema pins the four this version defines, so it refuses.
@@ -228,7 +225,7 @@ fn a_shape_holds_only_what_its_document_allows() {
         let payload = inner.to_vec().expect("inner bundle encodes");
         let mut part = Part::new(0, payload);
         part.kind = PartKind::Bundle;
-        let mut header = Header { shape: outer, ..Header::default() };
+        let mut header = Header::new(outer);
         // Each shape admits a different header; give it the least that makes it well-formed.
         match &header.shape {
             Shape::Device => {
@@ -239,10 +236,10 @@ fn a_shape_holds_only_what_its_document_allows() {
             Shape::Card => panic!("this helper does not build the card map a card needs"),
             _ => {}
         }
-        Bundle { header, parts: vec![part] }
+        Bundle::new(header, vec![part])
     }
 
-    let save = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
+    let save = Bundle::new(Header::default(), vec![Part::new(0, *b"SAVE")]);
     assert_eq!(save.shape(), &Shape::Save);
     save.validate().expect("a bare save is valid");
 
