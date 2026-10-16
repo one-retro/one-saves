@@ -24,7 +24,7 @@ fn a_psv_gives_up_its_save() {
     // The payload is the save itself, which every PS1 save starts with.
     assert_eq!(&save.data[..2], b"SC");
     // Nothing but the name comes out of a `.psv` header, so the entry is left for a builder.
-    assert!(save.dirent.is_empty());
+    assert_eq!(save.dirent, b"");
 }
 
 #[test]

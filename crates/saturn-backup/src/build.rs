@@ -427,6 +427,6 @@ mod tests {
     fn a_formatted_volume_has_the_shape_a_console_leaves() {
         let built = BackupBuilder::new(32_768, 64).expect("a real geometry").build().expect("writes");
         assert_eq!(built, formatted(32_768, 64), "signature over block 0, zeros after it");
-        assert!(BackupRam::parse(&built).expect("reads").saves().is_empty());
+        assert_eq!(BackupRam::parse(&built).expect("reads").saves(), []);
     }
 }
