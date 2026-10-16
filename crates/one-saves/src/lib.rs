@@ -132,6 +132,7 @@
 
 mod codec;
 mod error;
+pub mod extension;
 pub mod hash;
 mod identity;
 mod model;
@@ -141,10 +142,9 @@ mod validate;
 
 pub use codec::Strictness;
 pub use error::{Error, ErrorKind};
+pub use extension::{Extension, Extensions};
 pub use hash::{HashAlgorithm, HashError, HashValue};
-pub use model::{
-    Bundle, Card, Extensions, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys,
-};
+pub use model::{Bundle, Card, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys};
 pub use name::{Name, NameError, ReverseDnsName, Slug};
 pub use shape::Shape;
 

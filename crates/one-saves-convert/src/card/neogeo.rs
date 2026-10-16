@@ -29,7 +29,7 @@ use crate::CardOptions;
 use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with, slug};
 use crate::detect::Format;
 use crate::error::{Error, Result};
-use crate::label::{label_key, value as label};
+use crate::label::value as label;
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::NeoGeoCard.label();
@@ -65,7 +65,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // The NGH number is what a card is keyed on and what the BIOS looks a save up by, so it is
         // the serial. It is binary-coded decimal on the card, which is also how it is printed on a
         // cartridge: NGH-047.
-        let game = Some(Game::default().serial(format!("NGH-{:04X}", save.ngh)));
+        let game = Game::default().serial(format!("NGH-{:04X}", save.ngh));
 
         // The title is what the BIOS lists the save under, so it is a label like every other
         // console's. It doubles as the `path` because a Neo Geo card has no filenames — but a
@@ -73,11 +73,11 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         let title = save.title();
         let mut inner = one_saves::Extensions::new();
         if let Some(value) = label(Some(title.clone()).filter(|t| !t.is_empty()), None) {
-            inner.insert(label_key(), value);
+            inner.insert(value);
         }
 
         let mut part =
-            save_part_with(Format::NeoGeoCard, parts.len(), save.data.clone(), game, options, inner)?;
+            save_part_with(Format::NeoGeoCard, parts.len(), save.data.clone(), Some(game), options, inner)?;
         part.path = (!title.is_empty()).then_some(title);
         part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
         part.dirent = Some(save.dirent.clone());

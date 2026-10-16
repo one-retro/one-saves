@@ -19,7 +19,7 @@ use crate::CardOptions;
 use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with};
 use crate::detect::Format;
 use crate::error::{Error, Result};
-use crate::label::{label_key, shift_jis_field, value as label};
+use crate::label::{shift_jis_field, value as label};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::Ps1Card.label();
@@ -70,7 +70,7 @@ mod header {
 }
 
 /// The title the console lists a save under.
-fn title_of(data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
+fn title_of(data: &[u8]) -> Option<one_saves::extension::Label> {
     if !data.starts_with(header::MAGIC) {
         return None;
     }
@@ -85,8 +85,9 @@ fn title_of(data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
 /// solid shape into stripes a pixel wide. The order here is the one that draws the Gran Turismo
 /// card under `data/saves` as solid shapes rather than as a comb.
 #[cfg(feature = "icon")]
-fn pictures(data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
-    use crate::icon::{Frame, Rgba, value};
+fn pictures(data: &[u8]) -> Option<one_saves::extension::Icon> {
+    use crate::icon::{Rgba, value};
+    use one_saves::extension::IconFrame;
 
     if !data.starts_with(header::MAGIC) {
         return None;
@@ -106,7 +107,7 @@ fn pictures(data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
             bgr555(u16::from_le_bytes([clut[usize::from(entry) * 2], clut[usize::from(entry) * 2 + 1]]))
         });
         // A PS1 icon holds no timing of its own; the console runs the frames at its own rate.
-        frames.push(Frame { png: rgba.to_png()?, hold_ms: None });
+        frames.push(IconFrame::new(rgba.to_png()?));
     }
     value(frames, None)
 }
@@ -132,11 +133,11 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // The title and the picture are both in the save's first block, so both travel with it.
         let mut inner = one_saves::Extensions::new();
         if let Some(title) = title_of(&save.data) {
-            inner.insert(label_key(), title);
+            inner.insert(title);
         }
         #[cfg(feature = "icon")]
         if let Some(icon) = pictures(&save.data) {
-            inner.insert(crate::icon::icon_key(), icon);
+            inner.insert(icon);
         }
         let mut part = save_part_with(Format::Ps1Card, parts.len(), save.data.clone(), game, options, inner)?;
         part.path = Some(save.name.clone());

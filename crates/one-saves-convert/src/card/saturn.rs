@@ -49,11 +49,13 @@ use saturn_backup::{BackupBuilder, BackupRam, ENTRY_LEN, Geometry, Save, TAG_LEN
 
 use crate::CardOptions;
 use crate::card::{
-    card_header, card_image_part, dirent_key, image_only, modified_only, nested_saves, save_part_with, slug,
+    card_header, card_image_part, image_only, modified_only, nested_saves, save_part_with, slug,
 };
 use crate::detect::Format;
 use crate::error::{Error, Result};
-use crate::label::{label_key, value as label};
+use crate::label::value as label;
+use one_saves::Bundle;
+use one_saves::extension::{Dirent, Label};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::SaturnBup.label();
@@ -105,7 +107,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<one_saves::Bundle> {
         let mut inner = one_saves::Extensions::new();
         let comment = Some(save.comment.clone()).filter(|line| !line.is_empty());
         if let Some(value) = label(Some(save.name.clone()).filter(|n| !n.is_empty()), comment) {
-            inner.insert(label_key(), value);
+            inner.insert(value);
         }
 
         let mut part = save_part_with(Format::SaturnBup, index, save.data.clone(), None, options, inner)?;
@@ -123,7 +125,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<one_saves::Bundle> {
         // The date again, decoded, for a consumer that will not parse thirty opaque bytes. The
         // volume records a write and no creation — the shape `x.1sav.dirent` admits for exactly
         // this. No zone: the console keeps a wall clock and does not know one.
-        part.extensions.insert(dirent_key(), modified_only(save.written_at(), None));
+        part.extensions.insert(modified_only(save.written_at(), None));
         parts.push(part);
     }
 
@@ -131,7 +133,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<one_saves::Bundle> {
         parts.push(card_image_part(0, volume.image(), &role));
     }
 
-    Ok(one_saves::Bundle::new(
+    Ok(Bundle::new(
         card_header(Format::SaturnBup, volume.capacity(), Some(volume.system_area().to_vec()), options),
         parts,
     ))
@@ -202,13 +204,7 @@ pub fn write(bundle: &one_saves::Bundle) -> Result<Vec<u8>> {
 /// A save that arrived without one gets a blank rather than a refusal — the bytes are the save,
 /// and the console lists a blank comment perfectly happily.
 fn comment_of(inner: &one_saves::Bundle) -> String {
-    inner
-        .header
-        .extensions
-        .get(&label_key())
-        .and_then(|value| value.as_map())
-        .and_then(|map| map.get::<u64, String>(1u64))
-        .unwrap_or_default()
+    inner.header.extensions.get::<Label>().and_then(|label| label.detail.clone()).unwrap_or_default()
 }
 
 /// The write time out of a part's `x.1sav.dirent`, as the volume counts it.
@@ -217,13 +213,7 @@ fn comment_of(inner: &one_saves::Bundle) -> String {
 /// past what the field holds is dropped rather than wrapped: a date the volume cannot state is
 /// worse written wrong than left at zero.
 fn written_at(extensions: &one_saves::Extensions) -> Option<u32> {
-    let map = extensions.get(&dirent_key())?.as_map()?;
-    let arm = map.get::<u64, one_saves::dcbor::CBOR>(1u64)?;
-    let reading = arm.as_array()?.first()?.clone();
-    let one_saves::dcbor::CBORCase::Tagged(_, seconds) = reading.as_case() else {
-        return None;
-    };
-    let seconds = i64::try_from(seconds.clone()).ok()?;
+    let seconds = extensions.get::<Dirent>()?.modified_at?.seconds;
     u32::try_from((seconds - saturn_backup::EPOCH_1980).max(0) / 60).ok()
 }
 
@@ -416,7 +406,7 @@ mod tests {
         assert_eq!(bundle.parts.len(), 1);
         assert_eq!(bundle.parts[0].path.as_deref(), Some("PANDRA_3_01"));
         assert_eq!(bundle.parts[0].dirent.as_ref().map(Vec::len), Some(30), "the entry rides whole");
-        assert!(bundle.parts[0].extensions.contains_key(&dirent_key()), "the date still rides");
+        assert!(bundle.parts[0].extensions.get::<Dirent>().is_some(), "the date still rides");
         assert_eq!(write(&bundle).expect("writes"), image);
     }
 }

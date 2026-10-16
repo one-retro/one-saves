@@ -7,8 +7,11 @@
 // nothing to run and nothing to compile the helpers for.
 #![cfg(all(feature = "ps1", any(feature = "shift-jis", feature = "icon")))]
 
-use one_saves::dcbor::CBOR;
-use one_saves::{Bundle, ReverseDnsName};
+use one_saves::Bundle;
+#[cfg(feature = "icon")]
+use one_saves::extension::Icon;
+#[cfg(feature = "shift-jis")]
+use one_saves::extension::Label;
 use one_saves_convert::{CardOptions, Format};
 
 const CARD: &str = "data/saves/PS1/Gran Turismo/DuckStation/shared_card_1.mcd";
@@ -30,27 +33,14 @@ fn saves() -> Vec<Bundle> {
 
 #[cfg(feature = "shift-jis")]
 fn label_of(save: &Bundle) -> String {
-    let key = ReverseDnsName::parse("x.1sav.label").expect("well-formed");
-    let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");
-    map.get::<u64, CBOR>(0).expect("a title").as_text().expect("text").to_owned()
+    save.header.extensions.get::<Label>().expect("a label").title.clone()
 }
 
 /// The frames of a save's icon, each as the PNG and whatever hold it states.
 #[cfg(feature = "icon")]
-fn frames(save: &Bundle) -> Vec<(Vec<u8>, Option<i64>)> {
-    let key = ReverseDnsName::parse("x.1sav.icon").expect("well-formed");
-    let map = save.header.extensions.get(&key).expect("an icon").as_map().expect("a map");
-    let frames = map.get::<u64, CBOR>(0).expect("frames");
-    frames
-        .as_array()
-        .expect("an array")
-        .iter()
-        .map(|frame| {
-            let frame = frame.as_array().expect("a frame");
-            let png = frame[0].as_byte_string().expect("a PNG").to_vec();
-            (png, frame.get(1).and_then(|hold| i64::try_from(hold.clone()).ok()))
-        })
-        .collect()
+fn frames(save: &Bundle) -> Vec<(Vec<u8>, Option<u64>)> {
+    let icon = save.header.extensions.get::<Icon>().expect("an icon");
+    icon.frames.iter().map(|frame| (frame.png.clone(), frame.hold_ms)).collect()
 }
 
 /// A short digest of what a PNG decodes to, so a change of encoder is not a change of picture.
@@ -96,9 +86,7 @@ fn a_still_icon_is_one_frame() {
 
     // No banner either, which is a GameCube thing.
     let saves = saves();
-    let key = ReverseDnsName::parse("x.1sav.icon").expect("well-formed");
-    let map = saves[0].header.extensions.get(&key).unwrap().as_map().unwrap();
-    assert!(map.get::<u64, CBOR>(1).is_none());
+    assert!(saves[0].header.extensions.get::<Icon>().unwrap().banner.is_none());
 }
 
 #[cfg(feature = "icon")]
@@ -122,9 +110,8 @@ fn an_animated_icon_keeps_every_frame_in_display_order() {
 #[test]
 fn an_icon_belongs_to_the_save_rather_than_to_the_card() {
     // It has to survive the save being sliced out, so it is in the save's own header.
-    let key = ReverseDnsName::parse("x.1sav.icon").expect("well-formed");
     for part in &card().parts {
-        assert!(!part.extensions.contains_key(&key));
+        assert!(part.extensions.get::<Icon>().is_none());
     }
 }
 

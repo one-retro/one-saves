@@ -13,10 +13,10 @@ use one_saves::{Bundle, Game, Header, Part, PartKind};
 use ps2_memcard::{Capacity, CardBuilder, File, MemoryCard, Save};
 
 use crate::CardOptions;
-use crate::card::{card_header, civil_seconds, created_and_modified, dirent_key, slug};
+use crate::card::{card_header, civil_seconds, created_and_modified, slug};
 use crate::detect::Format;
 use crate::error::{Error, Result};
-use crate::label::{label_key, shift_jis_field, value as label};
+use crate::label::{shift_jis_field, value as label};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::Ps2Card.label();
@@ -55,7 +55,7 @@ mod icon_sys {
 }
 
 /// The line the browser shows for a save, as `x.1sav.label` wants it.
-fn title_of(save: &ps2_memcard::Save) -> Option<one_saves::dcbor::CBOR> {
+fn title_of(save: &ps2_memcard::Save) -> Option<one_saves::extension::Label> {
     let file = save.files.iter().find(|file| file.name == icon_sys::NAME)?;
     if !file.data.starts_with(icon_sys::MAGIC) {
         return None;
@@ -131,7 +131,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // The title travels with the save, so it goes in the save's own header.
         let mut extensions = one_saves::Extensions::new();
         if let Some(title) = title_of(save) {
-            extensions.insert(label_key(), title);
+            extensions.insert(title);
         }
         // A PS2 save is a directory, so this nested bundle has a part per file — still one game's
         // state, and so still a save.
@@ -149,7 +149,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // The directory's own entry, carrying its mode bits and timestamps, belongs to no file.
         part.dirent = Some(save.dirent.clone());
         if let Some(times) = times {
-            part.extensions.insert(dirent_key(), times);
+            part.extensions.insert(times);
         }
         part.game = game;
         part.system = Some(slug(SYSTEM));

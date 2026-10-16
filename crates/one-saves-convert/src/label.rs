@@ -11,27 +11,19 @@
 //!
 //! [`x.1sav.label`]: https://docs.1retro.com/specifications/extensions/x.1sav.label/
 
-use one_saves::ReverseDnsName;
-use one_saves::dcbor::{CBOR, Map};
-
-/// The `x.1sav.label` key.
-pub(crate) fn label_key() -> ReverseDnsName {
-    ReverseDnsName::parse("x.1sav.label").expect("a spec name is well-formed")
-}
+use one_saves::extension::Label;
 
 /// The `x.1sav.label` value, where there is a title to carry.
 ///
 /// `title` is required, so a save with only a detail line has nothing to write. The schema caps
 /// each at 256 bytes, which is headroom rather than a target: the longest of these on real
 /// hardware is a PS1 title at 64.
-pub(crate) fn value(title: Option<String>, detail: Option<String>) -> Option<CBOR> {
-    let title = title.filter(|line| fits(line))?;
-    let mut map = Map::new();
-    map.insert(0u64, title);
-    if let Some(detail) = detail.filter(|line| fits(line)) {
-        map.insert(1u64, detail);
-    }
-    Some(map.into())
+pub(crate) fn value(title: Option<String>, detail: Option<String>) -> Option<Label> {
+    let label = Label::new(title.filter(|line| fits(line))?);
+    Some(match detail.filter(|line| fits(line)) {
+        Some(detail) => label.detail(detail),
+        None => label,
+    })
 }
 
 /// Whether a line is one the schema admits: not empty, and not past its ceiling.

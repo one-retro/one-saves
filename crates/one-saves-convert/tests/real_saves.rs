@@ -18,6 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use one_saves::Bundle;
+use one_saves::extension::Rtc;
 use one_saves_convert::{Format, detect, profile, raw, rtc};
 
 /// The workspace's fixtures, which are not packaged with the crate — see this file's header.
@@ -108,14 +109,7 @@ fn budude2_later() -> PathBuf {
 
 /// The instant a bundle's `x.1sav.rtc` carries, read back the way any consumer would.
 fn reading_of(bundle: &Bundle) -> Option<i64> {
-    let map = bundle.header.extensions.get(&rtc::rtc_key())?.as_map()?;
-    match map.get::<u64, one_saves::dcbor::CBOR>(0)?.as_case() {
-        one_saves::dcbor::CBORCase::Tagged(_, inner) => match inner.as_case() {
-            one_saves::dcbor::CBORCase::Unsigned(n) => i64::try_from(*n).ok(),
-            _ => None,
-        },
-        _ => None,
-    }
+    bundle.header.extensions.get::<Rtc>().map(|rtc| rtc.reading)
 }
 
 /// Skips rather than fails when the fixtures are not present, which is the case for a packaged
@@ -169,11 +163,7 @@ fn every_real_save_decodes_to_the_clock_it_was_taken_with() {
         bundle.validate().unwrap_or_else(|e| panic!("{}: {e}", fixture.path));
 
         // Both keys, on the header, whichever shape the producer wrote.
-        assert!(
-            bundle.header.extensions.contains_key(&rtc::rtc_key()),
-            "{}: no portable reading",
-            fixture.path
-        );
+        assert!(bundle.header.extensions.get::<Rtc>().is_some(), "{}: no portable reading", fixture.path);
 
         let footer = rtc::footer_of(&bundle).or_else(|| rtc::sidecar_of(&bundle));
         assert!(footer.is_some(), "{}: no clock to rebuild", fixture.path);
@@ -192,7 +182,7 @@ fn every_real_save_decodes_to_the_clock_it_was_taken_with() {
 
         // And the reading is the anchor plus that elapsed time, which is the distinction the key
         // exists to make. A producer that cannot compute it omits the key; none here has to.
-        assert_eq!(clock.reading().instant, fixture.reading, "{}: reading", fixture.path);
+        assert_eq!(clock.reading().reading, fixture.reading, "{}: reading", fixture.path);
         assert_eq!(
             reading_of(&bundle),
             Some(fixture.reading),
@@ -278,14 +268,8 @@ fn one_cartridge_clock_reads_the_same_through_every_producer() {
         // Whatever the shape, the reading is in the same place and says the same kind of thing:
         // key 0, tagged, and nothing else. `accuracy_ms` is omitted because nothing here can
         // measure it, and which clock produced it is not a field at all.
-        let reading = bundle.header.extensions.get(&rtc::rtc_key()).expect("a reading");
-        let map = reading.as_map().expect("a map");
-        assert!(
-            map.get::<u64, one_saves::dcbor::CBOR>(0).is_some_and(|v| v.as_tagged_value().is_some()),
-            "{}: key 0 should be a tagged instant",
-            fixture.path
-        );
-        assert!(map.get::<u64, one_saves::dcbor::CBOR>(1).is_none(), "{}: no accuracy", fixture.path);
+        let reading = bundle.header.extensions.get::<Rtc>().expect("a reading");
+        assert_eq!(reading.accuracy_ms, None, "{}: no accuracy", fixture.path);
     }
     assert!(shapes.len() >= 3, "the fixtures should cover several shapes, got {shapes:?}");
 }
@@ -595,14 +579,12 @@ fn a_ps2_save_is_labelled_by_what_its_icon_sys_says() {
     )
     .expect("reads as a card");
 
-    let key = one_saves::ReverseDnsName::parse("x.1sav.label").expect("well-formed");
     let titles: Vec<String> = bundle
         .parts
         .iter()
         .map(|part| {
             let save = one_saves::Bundle::from_slice(&part.bytes().expect("nested")).expect("a save");
-            let map = save.header.extensions.get(&key).expect("a label").as_map().expect("a map");
-            map.get::<u64, one_saves::dcbor::CBOR>(0).unwrap().as_text().unwrap().to_owned()
+            save.header.extensions.get::<one_saves::extension::Label>().expect("a label").title.clone()
         })
         .collect();
 
@@ -634,24 +616,17 @@ fn a_ps2_entry_dates_both_the_creation_and_the_last_write() {
     .expect("reads as a card");
     assert_eq!(bundle.shape(), &one_saves::Shape::Card);
 
-    let key = one_saves::ReverseDnsName::parse("x.1sav.dirent").unwrap();
     let readings: Vec<(i64, i64)> = bundle
         .parts
         .iter()
-        .filter_map(|part| part.extensions.get(&key))
-        .map(|value| {
-            let map = value.as_map().expect("a dirent map");
-            let at = |k: u64| {
-                let arm = map.get::<u64, one_saves::dcbor::CBOR>(k).expect("both times");
-                let pair = arm.as_array().expect("a reading and maybe an offset");
-                assert_eq!(pair.len(), 2, "a PS2 reading carries its zone");
-                assert_eq!(i64::try_from(pair[1].clone()).expect("an offset"), 9 * 3600);
-                let one_saves::dcbor::CBORCase::Tagged(_, seconds) = pair[0].as_case() else {
-                    panic!("a reading is a tagged epoch")
-                };
-                i64::try_from(seconds.clone()).expect("seconds")
+        .filter_map(|part| part.extensions.get::<one_saves::extension::Dirent>())
+        .map(|dirent| {
+            let at = |time: Option<one_saves::extension::EntryTime>| {
+                let time = time.expect("both times");
+                assert_eq!(time.utc_offset, Some(9 * 3600), "a PS2 reading carries its zone");
+                time.seconds
             };
-            (at(0), at(1))
+            (at(dirent.created_at), at(dirent.modified_at))
         })
         .collect();
 

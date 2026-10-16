@@ -138,8 +138,8 @@ said once for the bundle rather than repeated onto every part.
 $ 1saves convert crystal.sav --from gambatte --system gb
 split a real-time-clock footer off the save, so its bytes hash the same over time
 
-  extension    x.1sav.rtc.mbc3
-  clock        mbc3, read at epoch 1700000000
+  extension    x.1sav.rtc = 2023-11-14 22:13:20 UTC
+  extension    x.1sav.rtc.mbc3 = day 3 05:20:00, written 2023-11-11 16:53:20 UTC
   parts        1
     [0]   save       primary              32768 bytes  09fed9cbfb98b6ab
 ```

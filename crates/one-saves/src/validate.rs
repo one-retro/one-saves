@@ -278,7 +278,7 @@ mod tests {
         let inner = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
         let mut outer = Part::new(0, inner.to_vec().unwrap());
         outer.kind = PartKind::Bundle;
-        outer.extensions.insert(key.clone(), reading.clone());
+        outer.extensions.insert_cbor(key.clone(), reading.clone());
         assert_eq!(
             bundle_of(vec![outer]).validate().unwrap_err().kind(),
             &ErrorKind::KeyOutOfPlace { key: "x.1sav.rtc".to_owned(), allowed: "a save's bundle header" }
@@ -286,12 +286,12 @@ mod tests {
 
         // And on a plain part, which it now also covers.
         let mut plain = Part::new(0, *b"SAVE");
-        plain.extensions.insert(key.clone(), reading.clone());
+        plain.extensions.insert_cbor(key.clone(), reading.clone());
         assert!(bundle_of(vec![plain]).validate().is_err(), "not on a plain part either");
 
         // A save's own header is where it belongs.
         let mut save = bundle_of(vec![Part::new(0, *b"SAVE")]);
-        save.header.extensions.insert(key, reading);
+        save.header.extensions.insert_cbor(key, reading);
         save.validate().expect("a save's header carries the reading");
     }
 
@@ -301,7 +301,7 @@ mod tests {
         // holds on a save's header too, which is the one place the reading itself may sit.
         let key = crate::ReverseDnsName::parse("x.1sav.rtc").unwrap();
         let mut game = Game { title: Some("Pokemon Ruby".into()), ..Game::default() };
-        game.extensions.insert(key, dcbor::CBOR::from(1u64));
+        game.extensions.insert_cbor(key, dcbor::CBOR::from(1u64));
 
         let mut save = bundle_of(vec![Part::new(0, *b"SAVE")]);
         save.header.game = Some(game.clone());
@@ -323,7 +323,7 @@ mod tests {
             let inner = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
             let mut outer = Part::new(0, inner.to_vec().unwrap());
             outer.kind = PartKind::Bundle;
-            outer.extensions.insert(crate::ReverseDnsName::parse(key).unwrap(), dcbor::CBOR::from(1u64));
+            outer.extensions.insert_cbor(crate::ReverseDnsName::parse(key).unwrap(), dcbor::CBOR::from(1u64));
             assert!(bundle_of(vec![outer]).validate().is_err(), "{key} on a bundle part");
         }
     }

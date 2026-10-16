@@ -11,12 +11,10 @@ use gc_memcard::{CardBuilder, MemoryCard, Save};
 use one_saves::{Bundle, Game};
 
 use crate::CardOptions;
-use crate::card::{
-    card_header, card_image_part, dirent_key, image_only, modified_only, nested_saves, save_part_with,
-};
+use crate::card::{card_header, card_image_part, image_only, modified_only, nested_saves, save_part_with};
 use crate::detect::Format;
 use crate::error::{Error, Result};
-use crate::label::{ascii_field, label_key, value as label};
+use crate::label::{ascii_field, value as label};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::GcCard.label();
@@ -74,9 +72,10 @@ mod image {
 /// RGB5A3 picture carries its colours inline. Both are tiled, and the geometry follows the pixel
 /// size: 4x4 for two bytes a pixel, 8x4 for one.
 #[cfg(feature = "icon")]
-fn pictures(dirent: &[u8], data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
-    use crate::icon::{Frame, Rgba, be16, rgb5a3, value};
+fn pictures(dirent: &[u8], data: &[u8]) -> Option<one_saves::extension::Icon> {
+    use crate::icon::{Rgba, be16, rgb5a3, value};
     use image as gc;
+    use one_saves::extension::IconFrame;
 
     let at = usize::try_from(u32::from_be_bytes(
         dirent.get(gc::IMAGE_OFFSET..gc::IMAGE_OFFSET + 4)?.try_into().ok()?,
@@ -116,7 +115,7 @@ fn pictures(dirent: &[u8], data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
                 let bytes = data.get(cursor..cursor + w * h * 2)?;
                 cursor += w * h * 2;
                 let png = Rgba::from_tiles(w, h, (4, 4), |i| rgb5a3(be16(bytes, i))).to_png()?;
-                frames.push(Frame { png, hold_ms: (hold > 0).then_some(hold) });
+                frames.push(IconFrame { png, hold_ms: (hold > 0).then_some(hold) });
             }
             gc::CI8 => {
                 let bytes = data.get(cursor..cursor + w * h)?.to_vec();
@@ -126,7 +125,7 @@ fn pictures(dirent: &[u8], data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
                 let palette = data.get(cursor..cursor + gc::PALETTE * 2)?;
                 let png = Rgba::from_tiles(w, h, (8, 4), |i| rgb5a3(be16(palette, usize::from(bytes[i]))))
                     .to_png()?;
-                frames.push(Frame { png, hold_ms: (hold > 0).then_some(hold) });
+                frames.push(IconFrame { png, hold_ms: (hold > 0).then_some(hold) });
             }
             _ => break,
         }
@@ -143,7 +142,7 @@ const COMMENTS_OFFSET: usize = 0x3c;
 const COMMENT: usize = 32;
 
 /// The two lines the console shows, as `x.1sav.label` wants them.
-fn comments(dirent: &[u8], data: &[u8]) -> Option<one_saves::dcbor::CBOR> {
+fn comments(dirent: &[u8], data: &[u8]) -> Option<one_saves::extension::Label> {
     let at = usize::try_from(u32::from_be_bytes(
         dirent.get(COMMENTS_OFFSET..COMMENTS_OFFSET + 4)?.try_into().ok()?,
     ))
@@ -191,26 +190,26 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // the pair rather than either alone.
         let mut game = Game::default();
         game.serial = (!save.game_code.is_empty()).then(|| format!("{}{}", save.game_code, save.maker_code));
-        let game = Some(game);
 
         // The picture travels with the save, so it goes in the header of the bundle that *is* the
         // save rather than on the card's part naming it.
         let mut inner = one_saves::Extensions::new();
         #[cfg(feature = "icon")]
         if let Some(icon) = pictures(&save.dirent, &save.data) {
-            inner.insert(crate::icon::icon_key(), icon);
+            inner.insert(icon);
         }
         if let Some(label) = comments(&save.dirent, &save.data) {
-            inner.insert(label_key(), label);
+            inner.insert(label);
         }
-        let mut part = save_part_with(Format::GcCard, parts.len(), save.data.clone(), game, options, inner)?;
+        let mut part =
+            save_part_with(Format::GcCard, parts.len(), save.data.clone(), Some(game), options, inner)?;
         part.path = Some(save.filename.clone());
         part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
         part.dirent = Some(save.dirent.clone());
         // The directory's own record of the save, which is the card's rather than the save's, so
         // it rides on the part beside the raw entry rather than in the nested bundle's header.
         if let Some(seconds) = modified_at(&save.dirent) {
-            part.extensions.insert(dirent_key(), modified_only(seconds, None));
+            part.extensions.insert(modified_only(seconds, None));
         }
         parts.push(part);
     }
@@ -288,6 +287,8 @@ fn into_error(source: gc_memcard::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use one_saves::extension::Dirent;
+
     use super::*;
 
     /// Builds a card holding the given saves, each of the given block count.
@@ -391,25 +392,17 @@ mod tests {
         });
         let bundle = read(&builder.build().expect("builds"), &CardOptions::default()).expect("reads");
 
-        let value = bundle.parts[0]
-            .extensions
-            .get(&dirent_key())
-            .expect("a dated entry puts its reading on the part");
-        let map = value.as_map().expect("a dirent map");
-        assert!(map.get::<u64, one_saves::dcbor::CBOR>(0).is_none(), "a GameCube dates no creation");
-        let arm = map.get::<u64, one_saves::dcbor::CBOR>(1).expect("the write time");
-        let pair = arm.as_array().expect("a reading, and an offset only where one is known");
-        assert_eq!(pair.len(), 1, "a GameCube reading is unqualified: the console has no zone");
-
-        let one_saves::dcbor::CBORCase::Tagged(_, seconds) = pair[0].as_case() else {
-            panic!("a reading is a tagged epoch")
-        };
-        assert_eq!(i64::try_from(seconds.clone()).expect("seconds"), 1_789_664_796);
+        let dirent =
+            bundle.parts[0].extensions.get::<Dirent>().expect("a dated entry puts its reading on the part");
+        assert!(dirent.created_at.is_none(), "a GameCube dates no creation");
+        let modified = dirent.modified_at.expect("the write time");
+        assert_eq!(modified.utc_offset, None, "a GameCube reading is unqualified: the console has no zone");
+        assert_eq!(modified.seconds, 1_789_664_796);
 
         // And a save the card never dated puts no key on its part at all.
         let plain =
             read(&card_with(64, &[("GAFE01", "sunshine", 1)]), &CardOptions::default()).expect("reads");
-        assert!(!plain.parts[0].extensions.contains_key(&dirent_key()));
+        assert!(plain.parts[0].extensions.get::<Dirent>().is_none());
     }
 
     #[test]

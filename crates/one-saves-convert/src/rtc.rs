@@ -30,10 +30,11 @@
 //! The shape follows what [`x.1sav.rtc`] prescribes, which is to carry two keys rather than one:
 //!
 //! - the save part's payload is the bare save memory,
-//! - the portable reading goes in [`x.1sav.rtc`], normalized to a Unix instant, so a consumer can
-//!   read it without knowing which chip produced it,
-//! - the chip's own state goes in [`RTC_NATIVE_KEY`], read out as fields rather than kept as a
-//!   blob, because that is the state only something that understands the layout can rebuild.
+//! - the portable reading goes in [`x.1sav.rtc`] as an [`Rtc`], normalized to a Unix instant, so a
+//!   consumer can read it without knowing which chip produced it,
+//! - the chip's own state goes in its key under that one, as an [`RtcMbc3`] or an [`RtcS3511a`],
+//!   read out as fields rather than kept as a blob, because that is the state only something that
+//!   understands the layout can rebuild.
 //!
 //! > a producer that wants byte-exact round-tripping carries both: this key for the instant
 //! > anyone can read, and its own for the state only it can rebuild.
@@ -71,46 +72,9 @@
 //! [`io.mgba.rtc`]: https://docs.1retro.com/specifications/extensions/io.mgba.rtc/
 //! [`x.1sav.rtc.s3511a`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc.s3511a/
 
-use one_saves::dcbor::{CBOR, CBORCase, Map, Tag};
-use one_saves::{Extensions, ReverseDnsName};
+use one_saves::extension::{Rtc, RtcMbc3, RtcS3511a};
+use one_saves::{Extension, Extensions};
 use one_saves_registry::ClockLayout;
-
-/// The extension key the portable reading is written under.
-pub const RTC_KEY: &str = "x.1sav.rtc";
-
-/// The extension key the chip's own state is written under.
-///
-/// An MBC3 clock, read out rather than kept as a blob, so a consumer can act on it:
-///
-/// ```text
-/// "x.1sav.rtc.mbc3": {
-///   0: [30, 45, 13, 44, 1],   ; live registers: s, m, h, day counter low, day counter high
-///   1: [30, 45, 13, 44, 1],   ; the latched copy the game reads
-///   2: 1(1700000000),         ; the host clock when the emulator wrote the save
-///   3: 8,                     ; how many bytes that timestamp occupied
-/// }
-/// ```
-///
-/// Every byte of the footer is accounted for by those fields, so it is **regenerated** rather
-/// than stored: 40 bytes of registers plus a timestamp of the stated width. Key 3 is what keeps
-/// that byte-exact, since emulators differ over whether the timestamp is 32 or 64 bits.
-pub const RTC_NATIVE_KEY: &str = "x.1sav.rtc.mbc3";
-
-/// The extension key a GBA cartridge's Seiko S-3511A state is written under.
-///
-/// ```text
-/// "x.1sav.rtc.s3511a": {
-///   0: h'26081203103943',   ; latched BCD: year, month, day, weekday, hour, minute, second
-///   1: 64,                  ; the control register as read; bit 6 is 24-hour mode
-/// }
-/// ```
-///
-/// The instant the chip was last read is not repeated here: it is a Unix instant, so it is
-/// exactly what [`x.1sav.rtc`] carries, and holding it twice would let the two drift apart.
-/// Between the two keys every byte of the footer is accounted for.
-///
-/// [`x.1sav.rtc`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc/
-pub const RTC_S3511A_KEY: &str = "x.1sav.rtc.s3511a";
 
 /// The footer mGBA appends for a GBA cartridge clock: seven BCD bytes, a control register, and an
 /// eight-byte little-endian instant.
@@ -151,7 +115,7 @@ pub struct Split {
     ///
     /// Absent rather than approximated: the key must be omitted rather than filled with the
     /// anchor or a guess, because nothing downstream can tell a wrong reading from a right one.
-    pub reading: Option<Reading>,
+    pub reading: Option<Rtc>,
     /// The chip's own state.
     pub clock: Clock,
 }
@@ -202,38 +166,16 @@ impl S3511aClock {
     /// zone, and it is the only copy — the chip's own key holds components and control, nothing
     /// else — so reading it back is also what lets a footer be rebuilt byte for byte.
     #[must_use]
-    pub fn reading(self) -> Reading {
-        Reading { instant: self.latched_at }
+    pub fn reading(self) -> Rtc {
+        Rtc::new(self.latched_at)
     }
 }
 
-/// A clock reading: what the game's clock showed when the bundle was written.
-///
-/// **Never the point a counting clock advances from.** An MBC3 keeps elapsed time beside a host
-/// timestamp, and that timestamp is the anchor rather than the reading — writing it here would be
-/// wrong by however long the cartridge has been running, which on a save a few days old is days.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Reading {
-    /// What the clock showed, in whole epoch seconds.
-    pub instant: i64,
-}
-
-impl Reading {
-    /// The CBOR value this reading is carried as.
-    ///
-    /// ```text
-    /// { 0: 1(1700000000) }
-    /// ```
-    ///
-    /// `accuracy_ms` is omitted throughout: it states the uncertainty of the reading, and nothing
-    /// here can measure that. The key says to leave it out rather than guess.
-    #[must_use]
-    pub fn to_cbor(self) -> CBOR {
-        let mut map = Map::new();
-        // Tag 1 over whole seconds. The key admits a float and this format does not, for the
-        // reason `created_at` gives: one instant would otherwise have two encodings.
-        map.insert(0u64, CBOR::from(CBORCase::Tagged(Tag::new(1u64, "epoch"), self.instant.into())));
-        map.into()
+impl From<S3511aClock> for RtcS3511a {
+    /// The chip's own key carries the components and the control register and nothing else: the
+    /// instant it was read is the portable reading, and holding it twice would let the two drift.
+    fn from(clock: S3511aClock) -> Self {
+        RtcS3511a { components: clock.components, control: clock.control }
     }
 }
 
@@ -280,8 +222,8 @@ impl Mbc3Clock {
     /// `x.1sav.rtc.mbc3`, which is what the footer stores — is wrong by exactly that elapsed
     /// time, which on a cartridge running for days is days.
     #[must_use]
-    pub fn reading(self) -> Reading {
-        Reading { instant: self.written_at + self.elapsed_seconds() }
+    pub fn reading(self) -> Rtc {
+        Rtc::new(self.written_at + self.elapsed_seconds())
     }
 
     /// The five live registers, in the order the footer stores them.
@@ -306,6 +248,20 @@ impl Mbc3Clock {
     #[must_use]
     pub fn overflowed(self) -> bool {
         self.days_high & 0x80 != 0
+    }
+}
+
+impl From<Mbc3Clock> for RtcMbc3 {
+    /// Every byte of the footer is accounted for by these fields, so the footer is rebuilt from
+    /// them rather than stored. The width is what keeps that byte-exact, since emulators differ
+    /// over whether the timestamp is 32 or 64 bits.
+    fn from(clock: Mbc3Clock) -> Self {
+        RtcMbc3 {
+            live: clock.live(),
+            latched: clock.latched,
+            written_at: clock.written_at,
+            timestamp_width: u8::try_from(clock.timestamp_width).expect("4 or 8"),
+        }
     }
 }
 
@@ -425,45 +381,14 @@ impl Split {
     pub fn extensions(&self) -> Extensions {
         let mut extensions = Extensions::new();
         if let Some(reading) = self.reading {
-            extensions.insert(rtc_key(), reading.to_cbor());
+            extensions.insert(reading);
         }
-
-        let mut native = Map::new();
         match self.clock {
-            Clock::Mbc3(clock) => {
-                native.insert(0u64, registers(&clock.live()));
-                native.insert(1u64, registers(&clock.latched));
-                native.insert(
-                    2u64,
-                    CBOR::from(CBORCase::Tagged(Tag::new(1u64, "epoch"), clock.written_at.into())),
-                );
-                native.insert(3u64, u64::try_from(clock.timestamp_width).expect("4 or 8"));
-                extensions.insert(mbc3_key(), native.into());
-            }
-            Clock::S3511a(clock) => {
-                native.insert(0u64, CBOR::to_byte_string(clock.components));
-                native.insert(1u64, u64::from(clock.control));
-                extensions.insert(s3511a_key(), native.into());
-            }
+            Clock::Mbc3(clock) => extensions.insert(RtcMbc3::from(clock)),
+            Clock::S3511a(clock) => extensions.insert(RtcS3511a::from(clock)),
         }
         extensions
     }
-}
-
-fn registers(values: &[u32; 5]) -> CBOR {
-    values.iter().map(|&v| CBOR::from(v)).collect::<Vec<_>>().into()
-}
-
-fn read_registers(value: &CBOR) -> Option<[u32; 5]> {
-    let items = value.as_array()?;
-    let mut out = [0u32; 5];
-    for (slot, item) in out.iter_mut().zip(items) {
-        *slot = match item.as_case() {
-            CBORCase::Unsigned(n) => u32::try_from(*n).ok()?,
-            _ => return None,
-        };
-    }
-    (items.len() == 5).then_some(out)
 }
 
 /// Which on-disk shape a clock is written back in.
@@ -498,7 +423,7 @@ pub fn form_of(bundle: &one_saves::Bundle) -> ClockForm {
     // Which chip wrote the state is the save's own business — a Seiko S-3511A is a Game Boy
     // Advance part and an MBC3 a Game Boy one — so the key settles it before the producer is
     // consulted at all. What the producer settles is the layout, which is the rest of this.
-    if bundle.header.extensions.contains_key(&s3511a_key()) {
+    if bundle.header.extensions.contains_key(&RtcS3511a::KEY) {
         return ClockForm::S3511a;
     }
     let app = bundle.header.source.as_ref().and_then(|source| source.app.as_ref());
@@ -536,42 +461,14 @@ pub fn footer_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec
 /// Rebuilds the appended MBC3 footer, whatever shape the producer actually writes.
 #[must_use]
 fn footer_of_mbc3(bundle: &one_saves::Bundle) -> Option<Vec<u8>> {
-    if let Some(native) = bundle.header.extensions.get(&s3511a_key()) {
-        let map = native.as_map()?;
-        let components: [u8; 7] = map.get::<u64, CBOR>(0)?.as_byte_string()?.try_into().ok()?;
-        let control = match map.get::<u64, CBOR>(1)?.as_case() {
-            CBORCase::Unsigned(n) => u8::try_from(*n).ok()?,
-            _ => return None,
-        };
+    let extensions = &bundle.header.extensions;
+    if let Some(chip) = extensions.get::<RtcS3511a>() {
         // The instant lives in the portable key, since that is what it is.
-        let reading = bundle.header.extensions.get(&rtc_key())?.as_map()?;
-        let latched_at = match reading.get::<u64, CBOR>(0)?.as_case() {
-            CBORCase::Tagged(_, inner) => match inner.as_case() {
-                CBORCase::Unsigned(n) => i64::try_from(*n).ok()?,
-                _ => return None,
-            },
-            _ => return None,
-        };
-        return Some(build_s3511a(&components, control, latched_at));
+        let reading = extensions.get::<Rtc>()?;
+        return Some(build_s3511a(&chip.components, chip.control, reading.reading));
     }
-
-    let native = bundle.header.extensions.get(&mbc3_key())?;
-    let map = native.as_map()?;
-
-    let live = read_registers(&map.get::<u64, CBOR>(0)?)?;
-    let latched = read_registers(&map.get::<u64, CBOR>(1)?)?;
-    let written_at = match map.get::<u64, CBOR>(2)?.as_case() {
-        CBORCase::Tagged(_, inner) => match inner.as_case() {
-            CBORCase::Unsigned(n) => i64::try_from(*n).ok()?,
-            _ => return None,
-        },
-        _ => return None,
-    };
-    let width = match map.get::<u64, CBOR>(3)?.as_case() {
-        CBORCase::Unsigned(n) => usize::try_from(*n).ok()?,
-        _ => return None,
-    };
-    Some(build_mbc3(&live, &latched, written_at, width))
+    let clock = extensions.get::<RtcMbc3>()?;
+    Some(build_mbc3(&clock.live, &clock.latched, clock.written_at, usize::from(clock.timestamp_width)))
 }
 
 /// Reads the footer mGBA appends for a GBA cartridge clock.
@@ -809,27 +706,10 @@ pub fn build_mbc3(live: &[u32; 5], latched: &[u32; 5], written_at: i64, timestam
     footer
 }
 
-/// The extension key `x.1sav.rtc` is written under.
-#[must_use]
-pub fn rtc_key() -> ReverseDnsName {
-    ReverseDnsName::parse(RTC_KEY).expect("x.1sav.rtc is a well-formed name")
-}
-
-/// The extension key an MBC3 clock is written under.
-#[must_use]
-pub fn mbc3_key() -> ReverseDnsName {
-    ReverseDnsName::parse(RTC_NATIVE_KEY).expect("x.1sav.rtc.mbc3 is a well-formed name")
-}
-
-/// The extension key a Seiko S-3511A's state is written under.
-#[must_use]
-pub fn s3511a_key() -> ReverseDnsName {
-    ReverseDnsName::parse(RTC_S3511A_KEY).expect("x.1sav.rtc.s3511a is a well-formed name")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use one_saves::dcbor::CBOR;
 
     /// Builds the footer an emulator writes for a Game Boy cartridge with a clock.
     fn mbc3_footer(seconds: u32, minutes: u32, hours: u32, days: u32, written_at: i64) -> Vec<u8> {
@@ -906,7 +786,7 @@ mod tests {
         assert_eq!(split.footer.len(), MBC3_LEN_64);
         // The anchor plus 300 days, 13:45:30 of elapsed cartridge time.
         let elapsed = 300 * 86_400 + 13 * 3_600 + 45 * 60 + 30;
-        assert_eq!(split.reading.unwrap().instant, 1_700_000_000 + elapsed);
+        assert_eq!(split.reading.unwrap().reading, 1_700_000_000 + elapsed);
     }
 
     #[test]
@@ -960,7 +840,7 @@ mod tests {
 
     #[test]
     fn the_reading_encodes_as_the_extension_schema_says() {
-        let encoded = Reading { instant: 1_700_000_000 }.to_cbor().to_cbor_data();
+        let encoded = CBOR::from(Rtc::new(1_700_000_000)).to_cbor_data();
         // { 0: 1(1700000000) } — one key, tagged whole seconds, and nothing else. Which clock
         // produced it is not a field: the chip key beside this one names it.
         assert_eq!(encoded, [0xa1, 0x00, 0xc1, 0x1a, 0x65, 0x53, 0xf1, 0x00]);
@@ -973,17 +853,17 @@ mod tests {
         let split = split(&crystal_save(1_700_000_000), Some("gb")).expect("has a footer");
         let extensions = split.extensions();
 
-        assert!(extensions.contains_key(&rtc_key()), "the portable reading");
-        let native = extensions.get(&mbc3_key()).expect("the chip state");
-        let map = native.as_map().expect("a map");
+        assert!(extensions.get::<Rtc>().is_some(), "the portable reading");
+        let native = extensions.get::<RtcMbc3>().expect("the chip state");
 
-        // Keys 0 to 3, exactly as the published schema numbers them. Read out as fields, not kept
-        // as a blob, so a consumer can see what time it is.
-        assert_eq!(read_registers(&map.get::<u64, CBOR>(0).unwrap()), Some([30, 45, 13, 44, 1]));
-        assert_eq!(read_registers(&map.get::<u64, CBOR>(1).unwrap()), Some([30, 45, 13, 44, 1]));
-        assert_eq!(map.get::<u64, CBOR>(3).unwrap().as_case(), &CBORCase::Unsigned(8));
-        // No layout discriminator: the key name says which chip this is.
-        assert!(map.get::<u64, CBOR>(4).is_none());
+        // Read out as fields, not kept as a blob, so a consumer can see what time it is.
+        assert_eq!(native.live, [30, 45, 13, 44, 1]);
+        assert_eq!(native.latched, [30, 45, 13, 44, 1]);
+        assert_eq!(native.timestamp_width, 8);
+        // Keys 0 to 3, exactly as the published schema numbers them, and no layout discriminator:
+        // the key name says which chip this is.
+        let map = extensions.cbor(&RtcMbc3::KEY).unwrap();
+        assert_eq!(map.as_map().unwrap().len(), 4);
     }
 
     #[test]
@@ -1055,16 +935,15 @@ mod tests {
         let split = split(&save, Some("gba")).expect("has a clock");
         assert_eq!(split.sram.len(), 131_072);
         // A dating chip needs no anchor: the latched components are the reading.
-        assert_eq!(split.reading.unwrap().instant, 1_786_556_383);
+        assert_eq!(split.reading.unwrap().reading, 1_786_556_383);
 
         // Both keys go on, and the chip key carries only what the chip holds.
         let extensions = split.extensions();
-        assert!(extensions.contains_key(&rtc_key()));
-        let native = extensions.get(&s3511a_key()).expect("chip state").as_map().unwrap();
-        assert_eq!(native.get::<u64, CBOR>(0).unwrap().as_byte_string().unwrap().len(), 7);
-        assert_eq!(native.get::<u64, CBOR>(1).unwrap().as_case(), &CBORCase::Unsigned(0x40));
+        assert!(extensions.get::<Rtc>().is_some());
+        assert_eq!(extensions.get::<RtcS3511a>().expect("chip state").control, 0x40);
         // The instant is not repeated here; it is what the portable key is for.
-        assert!(native.get::<u64, CBOR>(2).is_none());
+        let native = extensions.cbor(&RtcS3511a::KEY).unwrap();
+        assert_eq!(native.as_map().unwrap().len(), 2);
 
         let Clock::S3511a(clock) = split.clock else { panic!("wrong chip") };
         assert_eq!(build_s3511a(&clock.components, clock.control, clock.latched_at), RUBY_FOOTER);

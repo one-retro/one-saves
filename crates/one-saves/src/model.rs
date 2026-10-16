@@ -27,15 +27,10 @@ use std::collections::BTreeMap;
 
 use dcbor::CBOR;
 
+use crate::extension::{Extension, Extensions};
 use crate::hash::HashValue;
 use crate::name::{Name, ReverseDnsName, Slug};
 use crate::shape::Shape;
-
-/// Extension keys and their values, keyed by a reverse-DNS name.
-///
-/// What sits under a key is entirely the producer's: any CBOR value of any shape. This crate
-/// never looks inside one and never drops one it does not recognise.
-pub type Extensions = BTreeMap<ReverseDnsName, CBOR>;
 
 /// Integer keys this version does not define, preserved verbatim.
 ///
@@ -150,6 +145,13 @@ impl Header {
         self
     }
 
+    /// Puts an extension value under its key.
+    #[must_use]
+    pub fn extension<T: Extension>(mut self, value: T) -> Self {
+        self.extensions.insert(value);
+        self
+    }
+
     /// Replaces every extension key with these.
     #[must_use]
     pub fn extensions(mut self, extensions: Extensions) -> Self {
@@ -255,6 +257,13 @@ impl Game {
     #[must_use]
     pub fn system(mut self, system: impl Into<Option<Slug>>) -> Self {
         self.system = system.into();
+        self
+    }
+
+    /// Puts an extension value under its key: a clue none of the fields names.
+    #[must_use]
+    pub fn extension<T: Extension>(mut self, value: T) -> Self {
+        self.extensions.insert(value);
         self
     }
 
@@ -610,6 +619,13 @@ impl Part {
         self
     }
 
+    /// Puts an extension value under its key.
+    #[must_use]
+    pub fn extension<T: Extension>(mut self, value: T) -> Self {
+        self.extensions.insert(value);
+        self
+    }
+
     /// Replaces every extension key with these.
     #[must_use]
     pub fn extensions(mut self, extensions: Extensions) -> Self {
@@ -696,7 +712,7 @@ mod tests {
         // namespace that key is in.
         let mut game = Game::default();
         assert!(game.is_empty());
-        game.extensions.insert(ReverseDnsName::parse("x.example.revision").unwrap(), CBOR::from(1u64));
+        game.extensions.insert_cbor(ReverseDnsName::parse("x.example.revision").unwrap(), CBOR::from(1u64));
         assert!(!game.is_empty());
     }
 

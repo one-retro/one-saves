@@ -483,7 +483,7 @@ fn inspect(path: &Path) -> Fallible {
         }
         // Clues none of the fields above name, such as a ROM header's revision byte.
         for key in game.extensions.keys() {
-            println!("               extension {key}");
+            println!("               extension {}", describe_extension(&game.extensions, key));
         }
     } else {
         println!("  game         unidentified");
@@ -497,12 +497,8 @@ fn inspect(path: &Path) -> Fallible {
     if let Some(description) = &header.description {
         println!("  description  {description}");
     }
-    for (key, value) in &header.extensions {
-        if key.as_str() == one_saves_convert::rtc::RTC_KEY {
-            println!("  clock        {}", describe_clock(value, &header.extensions));
-        } else {
-            println!("  extension    {key}");
-        }
+    for key in header.extensions.keys() {
+        println!("  extension    {}", describe_extension(&header.extensions, key));
     }
 
     println!("  parts        {}", bundle.parts.len());
@@ -539,45 +535,30 @@ fn inspect(path: &Path) -> Fallible {
     Ok(())
 }
 
-/// Renders an `x.1sav.rtc` value: what the clock showed, as a Unix instant.
-///
-/// Which chip produced it is not part of the value — the key names an instant and nothing else —
-/// so the chip is named from whichever sibling key sits beside it.
-fn describe_clock(value: &one_saves::dcbor::CBOR, extensions: &one_saves::Extensions) -> String {
-    let Some(map) = value.as_map() else {
-        return "unreadable".to_owned();
-    };
-    let instant = map
-        .get::<u64, one_saves::dcbor::CBOR>(0)
-        .and_then(|tagged| match tagged.as_case() {
-            // Tag 1 over whole seconds, which is the only shape the key admits.
-            one_saves::dcbor::CBORCase::Tagged(_, inner) => match inner.as_case() {
-                one_saves::dcbor::CBORCase::Unsigned(n) => Some(n.to_string()),
-                one_saves::dcbor::CBORCase::Negative(n) => Some(format!("-{}", i128::from(*n) + 1)),
-                _ => None,
-            },
-            _ => None,
-        })
-        .unwrap_or_else(|| "?".to_owned());
-
-    // A sibling under the same root is a chip's own state; its last label is the chip's name.
-    let chip = extensions
-        .keys()
-        .filter(|k| k.as_str() != one_saves_convert::rtc::RTC_KEY)
-        .find_map(|k| k.as_str().strip_prefix(&format!("{}.", one_saves_convert::rtc::RTC_KEY)));
-
-    let accuracy = map
-        .get::<u64, one_saves::dcbor::CBOR>(1)
-        .and_then(|a| match a.as_case() {
-            one_saves::dcbor::CBORCase::Unsigned(ms) => Some(format!(", ±{ms}ms")),
-            _ => None,
-        })
-        .unwrap_or_default();
-
-    match chip {
-        Some(chip) => format!("epoch {instant}{accuracy} ({chip})"),
-        None => format!("epoch {instant}{accuracy}"),
+/// An extension key and its value on one line: the value's own line where it is typed, its CBOR
+/// in diagnostic notation where it is not, cut short either way.
+fn describe_extension(extensions: &one_saves::Extensions, key: &one_saves::ReverseDnsName) -> String {
+    match extensions.display(key) {
+        Some(value) => format!("{key} = {}", printable(&value.to_string())),
+        None => key.to_string(),
     }
+}
+
+/// Text out of a bundle, made safe to write to a terminal.
+///
+/// A bundle is whatever file someone handed over, and a title in it can hold an escape sequence
+/// that moves the cursor, retitles the window or rewrites what was printed before it. Every
+/// control character is written as its escape instead, the way `{:?}` would.
+fn printable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() {
+            out.extend(character.escape_default());
+        } else {
+            out.push(character);
+        }
+    }
+    out
 }
 
 fn verify(path: &Path) -> Fallible {
@@ -637,4 +618,17 @@ fn profiles() {
         "\nAny of the {} cores in the registry also works by slug or name.",
         one_saves_registry::cores().len()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_from_a_bundle_cannot_drive_the_terminal() {
+        assert_eq!(printable("FINAL FANTASY VII"), "FINAL FANTASY VII");
+        assert_eq!(printable("ＴＥＫＫＥＮ　４"), "ＴＥＫＫＥＮ　４");
+        assert_eq!(printable("\u{1b}]0;owned\u{7}\u{1b}[2J"), r"\u{1b}]0;owned\u{7}\u{1b}[2J");
+        assert_eq!(printable("two\nlines\u{9b}"), r"two\nlines\u{9b}");
+    }
 }

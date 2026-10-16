@@ -15,7 +15,7 @@ use crate::CardOptions;
 use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with};
 use crate::detect::Format;
 use crate::error::{Error, Result};
-use crate::label::{label_key, value as label};
+use crate::label::value as label;
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::N64Pak.label();
@@ -52,7 +52,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         // the note, so this is read off the entry and not out of the payload.
         let mut inner = one_saves::Extensions::new();
         if let Some(label) = label(Some(note.name.clone()).filter(|n| !n.is_empty()), None) {
-            inner.insert(label_key(), label);
+            inner.insert(label);
         }
 
         let mut part = save_part_with(Format::N64Pak, parts.len(), note.data.clone(), game, options, inner)?;
