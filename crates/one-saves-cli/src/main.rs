@@ -458,16 +458,13 @@ fn inspect(path: &Path) -> Fallible {
         }
     }
     if let Some(game) = &header.game {
-        let mut bits = Vec::new();
-        if let Some(name) = &game.title {
-            bits.push(name.clone());
-        }
-        if let Some(serial) = &game.serial {
-            bits.push(serial.clone());
-        }
-        if let Some(file) = &game.rom_filename {
-            bits.push(file.clone());
-        }
+        // Everything a producer wrote as free text goes through `printable`; slugs and names have
+        // a grammar that keeps them safe to print already.
+        let bits: Vec<String> = [&game.title, &game.serial, &game.rom_filename]
+            .into_iter()
+            .flatten()
+            .map(|text| printable(text))
+            .collect();
         // Trimmed because a game can hold nothing this line names: only a resolver, say, or only
         // an extension key, both of which are listed beneath it.
         println!("{}", format!("  game         {}", bits.join(", ")).trim_end());
@@ -477,7 +474,7 @@ fn inspect(path: &Path) -> Fallible {
         for (resolver, id) in &game.game_id {
             let id = match id {
                 one_saves::GameId::Uint(n) => n.to_string(),
-                one_saves::GameId::Text(t) => t.clone(),
+                one_saves::GameId::Text(t) => printable(t),
             };
             println!("               {resolver} = {id}");
         }
@@ -491,11 +488,11 @@ fn inspect(path: &Path) -> Fallible {
     if let Some(source) = &header.source {
         let app = source.app.as_ref().map_or_else(|| "?".to_owned(), ToString::to_string);
         let kind = source.device_kind.as_ref().map_or_else(|| "?".to_owned(), ToString::to_string);
-        let version = source.app_version.as_deref().unwrap_or("");
+        let version = printable(source.app_version.as_deref().unwrap_or(""));
         println!("  source       {app} {version} ({kind})");
     }
     if let Some(description) = &header.description {
-        println!("  description  {description}");
+        println!("  description  {}", printable(description));
     }
     for key in header.extensions.keys() {
         println!("  extension    {}", describe_extension(&header.extensions, key));
@@ -508,8 +505,8 @@ fn inspect(path: &Path) -> Fallible {
         // A save's own product code, where the card carried one. It is what identifies a part
         // whose format writes no name — a Neo Geo card has no filenames at all, and a game that
         // skips the BIOS's title convention leaves `path` empty with nothing else to go on.
-        let serial = part.game.as_ref().and_then(|game| game.serial.as_deref()).unwrap_or("");
-        let path = part.path.as_deref().unwrap_or("");
+        let serial = printable(part.game.as_ref().and_then(|game| game.serial.as_deref()).unwrap_or(""));
+        let path = printable(part.path.as_deref().unwrap_or(""));
         let slot = part.slot.map_or_else(String::new, |s| format!("slot {s}"));
         // A card can hold 200 saves, so the id is padded as a token rather than as a number: a
         // bracket that moves is worse to read down a column than one that does not.
@@ -531,6 +528,17 @@ fn inspect(path: &Path) -> Fallible {
             &short[..16]
         );
         println!("{}", line.trim_end());
+
+        // What the part says about itself beyond its columns, such as when a card's directory
+        // dated the save, one line each under the part it belongs to.
+        for key in part.extensions.keys() {
+            println!("          extension {}", describe_extension(&part.extensions, key));
+        }
+        if let Some(game) = &part.game {
+            for key in game.extensions.keys() {
+                println!("          game extension {}", describe_extension(&game.extensions, key));
+            }
+        }
     }
     Ok(())
 }
