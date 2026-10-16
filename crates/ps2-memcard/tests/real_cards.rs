@@ -49,7 +49,7 @@ fn a_formatted_card_with_nothing_on_it_is_still_a_card() {
     assert_eq!(card.capacity(), 8_388_608);
     // A root holding nothing but `.` and `..` is the boundary of the entry-count rule: the count
     // is two, both are skipped, and what comes back is empty rather than an error.
-    assert!(card.saves().expect("reads the directory").is_empty());
+    assert_eq!(card.saves().expect("reads the directory"), []);
 }
 
 /// What the console's timezone setting does to the times a card records, which is nothing.
