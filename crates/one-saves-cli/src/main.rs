@@ -444,7 +444,8 @@ fn inspect(path: &Path) -> Fallible {
 
     println!("{}", path.display());
     println!("  {} bytes, spec version {}", bytes.len(), one_saves::SPEC_VERSION);
-    describe(&bundle, 2, 0);
+    let mut inflatable = MAX_INFLATED;
+    describe(&bundle, 2, 0, &mut inflatable);
     Ok(())
 }
 
@@ -460,12 +461,14 @@ const LABEL_WIDTH: usize = 13;
 /// later version's.
 const MAX_DEPTH: usize = 4;
 
-/// The most a compressed `bundle` part may claim to inflate to and still be opened for listing.
+/// The most one listing inflates, across every compressed `bundle` part it opens.
 ///
-/// Inflating stops at what the part claims, and the claim is the file's to make, so it needs a
-/// bound of its own. This is several times the largest card there is, a 16 MiB GameCube one: it
-/// declines a bomb and never a real save.
-const MAX_INFLATED: u64 = 64 << 20;
+/// Inflating a part stops at what it claims, and the claim is the file's to make, so the claims
+/// need a bound of their own. One for the whole listing rather than one a part, because a file can
+/// hold any number of parts each claiming just under a per-part cap, and an inflated bundle can
+/// hold thousands more. This is a dozen of the largest cards there are, 16 MiB GameCube ones: it
+/// declines a bomb and no real collection.
+const MAX_INFLATED: u64 = 192 << 20;
 
 /// One line of a listing: a label, and a value lined up after it.
 ///
@@ -480,8 +483,9 @@ fn field(indent: usize, label: &str, value: &str) {
 ///
 /// A part that is itself a bundle is described the same way under its own line, so a card lists
 /// what each save's own header says — its label and icon among it — and not only the card's
-/// record of it. `depth` counts the bundles above this one, up to [`MAX_DEPTH`].
-fn describe(bundle: &Bundle, indent: usize, depth: usize) {
+/// record of it. `depth` counts the bundles above this one, up to [`MAX_DEPTH`], and `inflatable`
+/// is what is left of [`MAX_INFLATED`].
+fn describe(bundle: &Bundle, indent: usize, depth: usize, inflatable: &mut u64) {
     let header = &bundle.header;
 
     // What the bundle *is*, which decides how the parts below it should be read. It comes from
@@ -529,13 +533,13 @@ fn describe(bundle: &Bundle, indent: usize, depth: usize) {
 
     field(indent, "parts", &bundle.parts.len().to_string());
     for part in &bundle.parts {
-        describe_part(part, indent + 2, depth);
+        describe_part(part, indent + 2, depth, inflatable);
     }
 }
 
 /// A part's line, and beneath it everything else the part says, down to the bundle it holds if it
 /// holds one. `depth` is the depth of the bundle the part is in.
-fn describe_part(part: &Part, indent: usize, depth: usize) {
+fn describe_part(part: &Part, indent: usize, depth: usize, inflatable: &mut u64) {
     let kind = part.kind.as_str().unwrap_or("save");
     let role = part.role.as_ref().map_or("primary", |r| r.as_str());
     // A save's own product code, where the card carried one. It is what identifies a part
@@ -571,17 +575,23 @@ fn describe_part(part: &Part, indent: usize, depth: usize) {
     // Validation reads an embedded nested bundle but leaves a compressed one alone, so opening one
     // can still fail: on a build without `zstd`, or on a payload that does not inflate to a bundle.
     // The error is escaped like any other text out of the file, since it can quote some.
+    let open = || {
+        part.bytes()
+            .and_then(|bytes| Bundle::from_slice(&bytes))
+            .map_err(|e| format!("cannot be opened: {}", printable(&e.to_string())))
+    };
     let inner = match &part.payload {
         _ if !matches!(part.kind, PartKind::Bundle) => None,
         _ if depth >= MAX_DEPTH => Some(Err(format!("not listed, being more than {MAX_DEPTH} deep"))),
-        Payload::Compressed { size, .. } if *size > MAX_INFLATED => {
-            Some(Err(format!("not inflated, claiming {size} bytes")))
+        Payload::Compressed { size, .. } if *size > *inflatable => Some(Err(format!(
+            "not inflated, claiming {size} bytes where this listing has {inflatable} left to inflate"
+        ))),
+        // Charged whether or not it inflates to a bundle: the work is done either way.
+        Payload::Compressed { size, .. } => {
+            *inflatable -= size;
+            Some(open())
         }
-        _ => Some(
-            part.bytes()
-                .and_then(|bytes| Bundle::from_slice(&bytes))
-                .map_err(|e| format!("cannot be opened: {}", printable(&e.to_string()))),
-        ),
+        Payload::Embedded(_) => Some(open()),
     };
     let held = inner.as_ref().and_then(|inner| inner.as_ref().ok()).map(|inner| &inner.header);
 
@@ -620,7 +630,7 @@ fn describe_part(part: &Part, indent: usize, depth: usize) {
         field(indent, "unknown", &line);
     }
     match inner {
-        Some(Ok(inner)) => describe(&inner, indent + 2, depth + 1),
+        Some(Ok(inner)) => describe(&inner, indent + 2, depth + 1, inflatable),
         Some(Err(why)) => field(indent, "bundle", &why),
         None => {}
     }
