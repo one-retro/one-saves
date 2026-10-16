@@ -116,10 +116,9 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             .iter()
             .enumerate()
             .map(|(file_index, file)| {
-                let mut part = Part::new(u64::try_from(file_index).expect("fits"), file.data.clone());
-                part.path = Some(file.name.clone());
-                part.dirent = Some(file.dirent.clone());
-                part
+                Part::new(u64::try_from(file_index).expect("fits"), file.data.clone())
+                    .path(file.name.clone())
+                    .dirent(file.dirent.clone())
             })
             .collect();
 
@@ -141,18 +140,18 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             .extensions(extensions);
         let inner = Bundle::new(header, inner_parts);
 
-        let mut part = Part::new(u64::try_from(parts.len()).expect("fits"), inner.to_vec()?);
-        part.kind = PartKind::Bundle;
-        part.role = Some(options.role_for(Format::Ps2Card));
-        part.path = Some(save.name.clone());
-        part.slot = Some(u64::try_from(index).expect("fits"));
-        // The directory's own entry, carrying its mode bits and timestamps, belongs to no file.
-        part.dirent = Some(save.dirent.clone());
+        let mut part = Part::new(u64::try_from(parts.len()).expect("fits"), inner.to_vec()?)
+            .kind(PartKind::Bundle)
+            .role(options.role_for(Format::Ps2Card))
+            .path(save.name.clone())
+            .slot(u64::try_from(index).expect("fits"))
+            // The directory's own entry, carrying its mode bits and timestamps, belongs to no file.
+            .dirent(save.dirent.clone())
+            .game(game)
+            .system(slug(SYSTEM));
         if let Some(times) = times {
             part.extensions.insert(times);
         }
-        part.game = game;
-        part.system = Some(slug(SYSTEM));
         parts.push(part);
     }
 

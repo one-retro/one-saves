@@ -55,11 +55,12 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             inner.insert(label);
         }
 
-        let mut part = save_part_with(Format::N64Pak, parts.len(), note.data.clone(), game, options, inner)?;
-        part.path = Some(note.path());
-        // Two notes may agree on game code and name, so the table index is what keeps them apart.
-        part.slot = Some(u64::try_from(note.slot).expect("slot fits"));
-        part.dirent = Some(note.dirent.clone());
+        let part = save_part_with(Format::N64Pak, parts.len(), note.data.clone(), game, options, inner)?
+            .path(note.path())
+            // Two notes may agree on game code and name, so the table index is what keeps them
+            // apart.
+            .slot(u64::try_from(note.slot).expect("slot fits"))
+            .dirent(note.dirent.clone());
         parts.push(part);
     }
 

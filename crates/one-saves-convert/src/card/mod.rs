@@ -312,12 +312,11 @@ pub(crate) fn save_part_with(
         .extensions(extensions);
     let inner = Bundle::new(header, vec![Part::new(0, payload)]);
 
-    let mut part = Part::new(u64::try_from(id).expect("part count fits"), inner.to_vec()?);
-    part.kind = PartKind::Bundle;
-    part.role = Some(options.role_for(format));
-    part.game = game;
-    part.system = system;
-    Ok(part)
+    Ok(Part::new(u64::try_from(id).expect("part count fits"), inner.to_vec()?)
+        .kind(PartKind::Bundle)
+        .role(options.role_for(format))
+        .game(game)
+        .system(system))
 }
 
 /// One save pulled out of a card bundle, ready to be written back onto a card.
@@ -379,11 +378,8 @@ pub fn nested_saves(bundle: &Bundle) -> Result<Vec<NestedSave>> {
 /// is the only part it can have, since there is no save to nest.
 #[must_use]
 pub fn card_image_part(id: u64, image: &[u8], role: &Slug) -> Part {
-    let mut part = Part::new(id, image);
-    part.kind = PartKind::CardImage;
-    part.role = Some(role.clone());
     // `content_type` stays absent: a raw card dump has no registered media type to name.
-    part
+    Part::new(id, image).kind(PartKind::CardImage).role(role.clone())
 }
 
 /// The whole-card image to write back, for a bundle that carries one and no saves.

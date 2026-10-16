@@ -139,10 +139,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         if let Some(icon) = pictures(&save.data) {
             inner.insert(icon);
         }
-        let mut part = save_part_with(Format::Ps1Card, parts.len(), save.data.clone(), game, options, inner)?;
-        part.path = Some(save.name.clone());
-        part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
-        part.dirent = Some(save.dirent.clone());
+        let part = save_part_with(Format::Ps1Card, parts.len(), save.data.clone(), game, options, inner)?
+            .path(save.name.clone())
+            .slot(u64::try_from(save.slot).expect("slot fits"))
+            .dirent(save.dirent.clone());
         parts.push(part);
     }
 

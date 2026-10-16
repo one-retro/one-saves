@@ -77,10 +77,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         }
 
         let mut part =
-            save_part_with(Format::NeoGeoCard, parts.len(), save.data.clone(), Some(game), options, inner)?;
+            save_part_with(Format::NeoGeoCard, parts.len(), save.data.clone(), Some(game), options, inner)?
+                .slot(u64::try_from(save.slot).expect("slot fits"))
+                .dirent(save.dirent.clone());
         part.path = (!title.is_empty()).then_some(title);
-        part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
-        part.dirent = Some(save.dirent.clone());
         parts.push(part);
     }
 
@@ -94,10 +94,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     if let Some(ram) = card.backup_ram()
         && ram.iter().any(|&b| b != 0xFF)
     {
-        let mut part = Part::new(u64::try_from(parts.len()).expect("part count fits"), ram.to_vec());
-        part.kind = PartKind::Aux;
-        part.role = Some(slug(BACKUP_RAM_ROLE));
-        part.system = Some(slug(SYSTEM));
+        let part = Part::new(u64::try_from(parts.len()).expect("part count fits"), ram.to_vec())
+            .kind(PartKind::Aux)
+            .role(slug(BACKUP_RAM_ROLE))
+            .system(slug(SYSTEM));
         parts.push(part);
     }
 
