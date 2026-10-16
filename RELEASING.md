@@ -15,11 +15,12 @@ Everything that can fail is made to fail first. `just check`, `just msrv` and th
 all run before anything leaves the machine, and the tag is written last, after the upload, so a tag
 that exists is a release that happened.
 
-Which word to pass: while the major is 0 the **minor** is Cargo's breaking position, so an additive
-change takes `patch` and a breaking one takes `minor`. `major` is the move to 1.0, which for this
-workspace means the specification stabilized. `same` releases the number already in `Cargo.toml` —
-for a bump made by hand, and for a second run after one failed between the bump and the publish,
-which is the one failure that leaves a commit behind without a release.
+Which word to pass: the **minor** follows the specification, so `minor` is for moving to a new spec
+version and every other release takes `patch`, breaking or not (see [Version policy](#version-policy)).
+`major` is the move to 1.0, which for this workspace means the specification stabilized. `same`
+releases the number already in `Cargo.toml` — for a bump made by hand, and for a second run after
+one failed between the bump and the publish, which is the one failure that leaves a commit behind
+without a release.
 
 The rest of this file is what that recipe does, for when it has to be done by hand.
 
@@ -108,8 +109,14 @@ edit to either half shows up rather than diverging quietly.
 
 ## Version policy
 
-The specification is at 0.1 and **not yet stabilized**, so until it reaches 1.0 these stay on 0.x
-and breaking changes happen in place.
+The specification is **not yet stabilized**, so until it reaches 1.0 these stay on 0.x and
+breaking changes happen in place.
+
+The minor is the spec's: 0.3.x implements spec 0.3, and the minor moves when the crates move to a
+new spec version and at no other time. A breaking change to the Rust API alone ships as a patch.
+While the major is 0 Cargo reads the minor as the breaking position, so `^0.3` takes such a patch
+on the next `cargo update`. Keep those breaks rare: a public data type that is expected to grow,
+such as `Game`, is `#[non_exhaustive]`, so a new field is not a break.
 
 `one-saves::SPEC_VERSION` and the vendored corpus's `manifest.json` must agree; the conformance
 suite asserts it, so a corpus re-vendored from a newer spec fails the build until the crate is
