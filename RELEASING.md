@@ -130,8 +130,13 @@ The corpus under `crates/one-saves/tests/conformance/` is copied from the specif
 repository. When that spec moves:
 
 ```console
-just vendor-conformance       # defaults to ../docs.1retro.com
+just vendor-conformance       # fetches the specifications into target/spec
+just vendor-conformance ../my-docs
 ```
+
+Pass a path to vendor from a checkout of your own, such as one carrying spec changes not yet
+pushed. Without one the recipe clones the specifications repository, or brings its copy up to
+date, so nothing depends on where anybody keeps theirs.
 
 Do not edit anything under that directory by hand. The manifest carries a digest per case, and the
 harness checks it, so a hand edit shows up as corruption rather than as a passing test.
@@ -141,8 +146,8 @@ harness checks it, so a hand edit shows up as corruption rather than as a passin
 The registry data is generated from the registry pages at docs.1retro.com:
 
 ```console
-just sync-registries          # defaults to ../docs.1retro.com
-just sync-registries ../elsewhere
+just sync-registries          # fetches the specifications into target/spec
+just sync-registries ../my-docs
 ```
 
 Without `--docs` the task rebuilds the tables from the JSON this repository already carries, which

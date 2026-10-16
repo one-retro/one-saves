@@ -11,8 +11,11 @@
 # its own, so ours has to state the real floor.
 msrv := "1.88"
 
-# Where a checkout of the specifications repository lives, for syncing the registries.
-docs := "../docs.1retro.com"
+# The specifications repository, which the registries and the conformance corpus are taken from.
+# Where anyone keeps a checkout of it is their own business, so the recipes that need it fetch it
+# into `target/` themselves; each also takes a path, for a local checkout with changes not pushed.
+spec_repo := "https://github.com/one-retro/docs.git"
+spec_dir := "target/spec"
 
 # List the recipes.
 default:
@@ -124,20 +127,48 @@ hooks:
 registries:
     cargo xtask registries
 
-# Re-read the registries from the specification pages, then rebuild the tables.
-sync-registries docs=docs:
-    cargo xtask registries --docs {{ docs }}
+# Fetch the specifications into target/spec, or bring that copy up to date.
+fetch-spec:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A cache under target/ and nobody's working copy, so it is reset to upstream rather than
+    # merged: anything edited in there is meant to be thrown away.
+    if [ -d {{ spec_dir }}/.git ]; then
+        git -C {{ spec_dir }} fetch --quiet --depth 1 origin main
+        git -C {{ spec_dir }} reset --quiet --hard FETCH_HEAD
+    else
+        git clone --quiet --depth 1 {{ spec_repo }} {{ spec_dir }}
+    fi
+    git -C {{ spec_dir }} log -1 --format='specifications at %h: %s'
+
+# Re-read the registries from the specification pages, fetched or at a path, then rebuild the tables.
+sync-registries docs="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docs='{{ docs }}'
+    if [ -z "$docs" ]; then
+        "{{ just_executable() }}" fetch-spec
+        docs='{{ spec_dir }}'
+    fi
+    cargo xtask registries --docs "$docs"
 
 # Fail if the committed tables have drifted from their data. This is what CI checks.
 registries-in-sync: registries
     git diff --exit-code crates/one-saves-registry/src/generated.rs
 
-# Re-vendor the conformance corpus from a checkout of the specifications.
-vendor-conformance docs=docs:
+# Re-vendor the conformance corpus from the specifications, fetched or at a path as above.
+vendor-conformance docs="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docs='{{ docs }}'
+    if [ -z "$docs" ]; then
+        "{{ just_executable() }}" fetch-spec
+        docs='{{ spec_dir }}'
+    fi
     # The corpus is generated there and pinned to the spec_version it records, so this is the only
     # way it should ever change; the suite checks a digest per case and will catch a hand edit.
     rm -rf crates/one-saves/tests/conformance
-    cp -R {{ docs }}/conformance/universal-saves crates/one-saves/tests/conformance
+    cp -R "$docs/conformance/universal-saves" crates/one-saves/tests/conformance
     cargo test -p one-saves --test conformance
 
 # Install the `1saves` binary from this checkout.

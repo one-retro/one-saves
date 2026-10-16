@@ -234,14 +234,15 @@ just fixtures   # the converters against the real emulator saves under data/
 ```
 
 The registry data under `crates/one-saves-registry/data/` is synced from the registry pages at
-[docs.1retro.com][spec]:
+[docs.1retro.com][spec], whose source the recipe fetches into `target/spec`:
 
 ```console
-cargo xtask registries --docs ../docs.1retro.com
+just sync-registries              # fetch the specifications, then sync from them
+just sync-registries ../my-docs   # or sync from a checkout of your own
 ```
 
-Without `--docs` it rebuilds the Rust tables from the JSON already in the repository, which is what
-CI checks. Nothing at build time needs either form.
+`just registries` rebuilds the Rust tables from the JSON already in the repository instead, which
+is what CI checks. Nothing at build time needs either form.
 
 ## Status
 
@@ -253,6 +254,6 @@ spec reaches 1.0, breaking changes happen in place under the same bundle tag.
 Apache-2.0. See [LICENSE](LICENSE).
 
 [spec]: https://docs.1retro.com/specifications/universal-saves-format/
-[corpus]: https://github.com/hansl/docs.1retro.com/tree/main/conformance
+[corpus]: https://github.com/one-retro/docs/tree/main/conformance
 [det]: https://datatracker.ietf.org/doc/html/rfc8949#name-deterministically-encoded-c
 [`dcbor`]: https://docs.rs/dcbor
