@@ -9,8 +9,9 @@
 //! What a caller works with is a typed value. A type that implements [`Extension`] names its key
 //! and how it converts to and from CBOR, and [`Extensions::get`] hands back that type for a key
 //! that holds it. The keys these specifications define under `x.1sav` have their types here —
-//! [`Rtc`], [`RtcMbc3`], [`RtcS3511a`], [`Label`], [`Icon`] and [`Dirent`] — and a producer's own
-//! key is a type of its own implementing the same trait.
+//! [`Rtc`], [`RtcMbc3`], [`RtcS3511a`], [`Label`], [`Icon`], [`Dirent`] and [`DirentGcMc`] — and so
+//! does 1retro's [`Forge`]. Any other producer's key is a type of its own implementing the same
+//! trait.
 //!
 //! ```
 //! use one_saves::{Extensions, extension::Label};
@@ -34,12 +35,16 @@ use dcbor::{CBOR, CBORDecodable, CBOREncodable};
 use crate::name::ReverseDnsName;
 
 mod dirent;
+mod forge;
+mod gc_mc;
 mod icon;
 mod label;
 mod rtc;
 mod time;
 
 pub use dirent::{Dirent, EntryTime};
+pub use forge::Forge;
+pub use gc_mc::DirentGcMc;
 pub use icon::{Icon, IconFrame};
 pub use label::Label;
 pub use rtc::{Rtc, RtcMbc3, RtcS3511a};
@@ -117,13 +122,15 @@ type Decoder = fn(&CBOR) -> Option<Box<dyn Erased>>;
 /// The type this crate has for a key, so a value read off the wire can be shown without a caller
 /// naming its type.
 fn known(key: &ReverseDnsName) -> Option<Decoder> {
-    let known: [(ReverseDnsName, Decoder); 6] = [
+    let known: [(ReverseDnsName, Decoder); 8] = [
         (Rtc::KEY, decode::<Rtc>),
         (RtcMbc3::KEY, decode::<RtcMbc3>),
         (RtcS3511a::KEY, decode::<RtcS3511a>),
         (Label::KEY, decode::<Label>),
         (Icon::KEY, decode::<Icon>),
         (Dirent::KEY, decode::<Dirent>),
+        (DirentGcMc::KEY, decode::<DirentGcMc>),
+        (Forge::KEY, decode::<Forge>),
     ];
     known.into_iter().find(|(name, _)| name == key).map(|(_, decoder)| decoder)
 }
