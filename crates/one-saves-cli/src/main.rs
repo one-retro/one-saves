@@ -1,10 +1,12 @@
 //! The `1saves` command-line tool.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
-use one_saves::{Bundle, PartKind};
+use one_saves::extension::{Civil, SHOWN_BYTES, SHOWN_CHARS};
+use one_saves::{Bundle, Game, Part, PartKind, Payload, Source};
 use one_saves_convert::{Format, Profile, card, detect, raw};
 
 /// Move retro saves and memory cards in and out of the Universal Saves Format.
@@ -439,108 +441,257 @@ fn extract(args: Extract) -> Fallible {
 fn inspect(path: &Path) -> Fallible {
     let bytes = std::fs::read(path)?;
     let bundle = Bundle::from_slice(&bytes)?;
-    let header = &bundle.header;
 
     println!("{}", path.display());
     println!("  {} bytes, spec version {}", bytes.len(), one_saves::SPEC_VERSION);
+    describe(&bundle, 2);
+    Ok(())
+}
+
+/// How wide the labels down the left of a listing are: `content type` and a space.
+const LABEL_WIDTH: usize = 13;
+
+/// One line of a listing: a label, and a value lined up after it.
+///
+/// An empty label continues the field above, which is how a field's further facts sit beneath its
+/// first line. Trimmed because a value can be empty: a game can hold nothing its first line names,
+/// only a resolver, say, which is listed beneath it.
+fn field(indent: usize, label: &str, value: &str) {
+    println!("{}", format!("{:indent$}{label:LABEL_WIDTH$}{value}", "").trim_end());
+}
+
+/// Everything a bundle says about itself, then each of its parts beneath it.
+///
+/// A part that is itself a bundle is described the same way under its own line, so a card lists
+/// what each save's own header says — its label and icon among it — and not only the card's
+/// record of it.
+fn describe(bundle: &Bundle, indent: usize) {
+    let header = &bundle.header;
+
     // What the bundle *is*, which decides how the parts below it should be read. It comes from
     // the container crate rather than from a rule spelled out here, so this listing and any other
     // consumer classify the same file the same way.
-    println!("  shape        {}", bundle.shape());
+    let shape = bundle.shape();
+    if shape.is_known() {
+        field(indent, "shape", shape.as_str());
+    } else {
+        field(indent, "shape", &format!("{shape} (not a shape spec {} defines)", one_saves::SPEC_VERSION));
+    }
     if let Some(system) = &header.system {
-        let name = one_saves_registry::system(system.as_str()).map_or("unlisted", |s| s.name);
-        println!("  system       {system} ({name})");
+        field(indent, "system", &system_name(system));
     }
     if let Some(card) = &header.card {
-        println!("  card         {}, capacity {} bytes", card.format, card.capacity);
+        field(indent, "card", &format!("{}, capacity {} bytes", card.format, card.capacity));
         if let Some(area) = &card.system_area {
-            println!("               system area {} bytes", area.len());
+            field(indent, "", &format!("system area {}", shown_bytes(area)));
+        }
+        for line in unknown_keys(&card.unknown) {
+            field(indent, "", &format!("unknown {line}"));
         }
     }
-    if let Some(game) = &header.game {
-        // Everything a producer wrote as free text goes through `printable`; slugs and names have
-        // a grammar that keeps them safe to print already.
-        let bits: Vec<String> = [&game.title, &game.serial, &game.rom_filename]
-            .into_iter()
-            .flatten()
-            .map(|text| printable(text))
-            .collect();
-        // Trimmed because a game can hold nothing this line names: only a resolver, say, or only
-        // an extension key, both of which are listed beneath it.
-        println!("{}", format!("  game         {}", bits.join(", ")).trim_end());
-        for hash in &game.rom_hashes {
-            println!("               {hash}");
-        }
-        for (resolver, id) in &game.game_id {
-            let id = match id {
-                one_saves::GameId::Uint(n) => n.to_string(),
-                one_saves::GameId::Text(t) => printable(t),
-            };
-            println!("               {resolver} = {id}");
-        }
-        // Clues none of the fields above name, such as a ROM header's revision byte.
-        for key in game.extensions.keys() {
-            println!("               extension {}", describe_extension(&game.extensions, key));
-        }
-    } else {
-        println!("  game         unidentified");
-    }
+    // Where the bytes came from goes ahead of which game they are thought to be: the one is a
+    // record of what happened, the other a set of clues.
     if let Some(source) = &header.source {
-        let app = source.app.as_ref().map_or_else(|| "?".to_owned(), ToString::to_string);
-        let kind = source.device_kind.as_ref().map_or_else(|| "?".to_owned(), ToString::to_string);
-        let version = printable(source.app_version.as_deref().unwrap_or(""));
-        println!("  source       {app} {version} ({kind})");
+        describe_source(indent, source);
+    }
+    if let Some(seconds) = header.created_at {
+        field(indent, "created", &format!("{} UTC", Civil(seconds)));
+    }
+    match &header.game {
+        Some(game) => describe_game(indent, game),
+        None => field(indent, "game", "unidentified"),
     }
     if let Some(description) = &header.description {
-        println!("  description  {}", printable(description));
+        field(indent, "description", &printable(description));
     }
     for key in header.extensions.keys() {
-        println!("  extension    {}", describe_extension(&header.extensions, key));
+        field(indent, "extension", &describe_extension(&header.extensions, key));
+    }
+    for line in unknown_keys(&header.unknown) {
+        field(indent, "unknown", &line);
     }
 
-    println!("  parts        {}", bundle.parts.len());
+    field(indent, "parts", &bundle.parts.len().to_string());
     for part in &bundle.parts {
-        let kind = part.kind.as_str().unwrap_or("save");
-        let role = part.role.as_ref().map_or("primary", |r| r.as_str());
-        // A save's own product code, where the card carried one. It is what identifies a part
-        // whose format writes no name — a Neo Geo card has no filenames at all, and a game that
-        // skips the BIOS's title convention leaves `path` empty with nothing else to go on.
-        let serial = printable(part.game.as_ref().and_then(|game| game.serial.as_deref()).unwrap_or(""));
-        let path = printable(part.path.as_deref().unwrap_or(""));
-        let slot = part.slot.map_or_else(String::new, |s| format!("slot {s}"));
-        // A card can hold 200 saves, so the id is padded as a token rather than as a number: a
-        // bracket that moves is worse to read down a column than one that does not.
-        let id = format!("[{}]", part.id);
-        // The head of the digest is enough to see at a glance that two parts hold the same bytes,
-        // which is the question a reader comparing two bundles is usually asking.
-        let digest = part.sha256.to_string();
-        let short = digest.strip_prefix("sha256:").unwrap_or(&digest);
-        // Every column is fixed-width except the last, and `path` is last because it is the one
-        // with no bound worth padding to: a GameCube filename runs to 32 characters where a VMU's
-        // stops at 12. Padding it would misalign every line a long name appears on, so it goes
-        // where nothing follows it instead.
-        //
-        // Trimmed because the tail columns are all optional — a flat save has no serial, no slot
-        // and no path — and the line would otherwise end in the padding for all three.
-        let line = format!(
-            "    {id:<5} {kind:10} {role:16} {:>9} bytes  {}  {serial:12} {slot:8} {path}",
-            part.payload.len(),
-            &short[..16]
-        );
-        println!("{}", line.trim_end());
-
-        // What the part says about itself beyond its columns, such as when a card's directory
-        // dated the save, one line each under the part it belongs to.
-        for key in part.extensions.keys() {
-            println!("          extension {}", describe_extension(&part.extensions, key));
-        }
-        if let Some(game) = &part.game {
-            for key in game.extensions.keys() {
-                println!("          game extension {}", describe_extension(&game.extensions, key));
-            }
-        }
+        describe_part(part, indent + 2);
     }
-    Ok(())
+}
+
+/// A part's line, and beneath it everything else the part says, down to the bundle it holds if it
+/// holds one.
+fn describe_part(part: &Part, indent: usize) {
+    let kind = part.kind.as_str().unwrap_or("save");
+    let role = part.role.as_ref().map_or("primary", |r| r.as_str());
+    // A save's own product code, where the card carried one. It is what identifies a part
+    // whose format writes no name — a Neo Geo card has no filenames at all, and a game that
+    // skips the BIOS's title convention leaves `path` empty with nothing else to go on.
+    let serial = printable(part.game.as_ref().and_then(|game| game.serial.as_deref()).unwrap_or(""));
+    let path = printable(part.path.as_deref().unwrap_or(""));
+    let slot = part.slot.map_or_else(String::new, |s| format!("slot {s}"));
+    // A card can hold 200 saves, so the id is padded as a token rather than as a number: a
+    // bracket that moves is worse to read down a column than one that does not.
+    let id = format!("[{}]", part.id);
+    // The head of the digest is enough to see at a glance that two parts hold the same bytes,
+    // which is the question a reader comparing two bundles is usually asking.
+    let digest = part.sha256.to_string();
+    let short = digest.strip_prefix("sha256:").unwrap_or(&digest);
+    // Every column is fixed-width except the last, and `path` is last because it is the one
+    // with no bound worth padding to: a GameCube filename runs to 32 characters where a VMU's
+    // stops at 12. Padding it would misalign every line a long name appears on, so it goes
+    // where nothing follows it instead.
+    //
+    // Trimmed because the tail columns are all optional — a flat save has no serial, no slot
+    // and no path — and the line would otherwise end in the padding for all three.
+    let line = format!(
+        "{:indent$}{id:<5} {kind:10} {role:16} {:>9} bytes  {}  {serial:12} {slot:8} {path}",
+        "",
+        part.payload.len(),
+        &short[..16]
+    );
+    println!("{}", line.trim_end());
+
+    // What the part says about itself beyond its columns, one field a line, under the id.
+    let indent = indent + 6;
+    // Validation reads an embedded nested bundle but leaves a compressed one alone, so this can
+    // still fail: on a build without `zstd`, or on a payload that does not inflate to a bundle.
+    let inner = matches!(part.kind, PartKind::Bundle)
+        .then(|| part.bytes().and_then(|bytes| Bundle::from_slice(&bytes)));
+    let held = inner.as_ref().and_then(|inner| inner.as_ref().ok()).map(|inner| &inner.header);
+
+    if let Some(source) = &part.source {
+        describe_source(indent, source);
+    }
+    // On a `bundle` part, `game` and `system` are index copies of the header it holds, which is
+    // listed below. A copy that agrees with it says nothing new; one that does not is worth seeing.
+    if let Some(game) = &part.game
+        && held.is_none_or(|held| held.game.as_ref() != Some(game))
+    {
+        describe_game(indent, game);
+    }
+    if let Some(system) = &part.system
+        && held.is_none_or(|held| held.system.as_ref() != Some(system))
+    {
+        field(indent, "system", &system_name(system));
+    }
+    if let Some(binding) = &part.binding {
+        let listed = if one_saves_registry::is_binding(binding.as_str()) { "" } else { " (unlisted)" };
+        field(indent, "binding", &format!("{binding}{listed}"));
+    }
+    if let Some(content_type) = &part.content_type {
+        field(indent, "content type", &printable(content_type));
+    }
+    if let Payload::Compressed { bytes, .. } = &part.payload {
+        field(indent, "encoding", &format!("zstd, {} bytes stored", bytes.len()));
+    }
+    if let Some(dirent) = &part.dirent {
+        field(indent, "dirent", &shown_bytes(dirent));
+    }
+    for key in part.extensions.keys() {
+        field(indent, "extension", &describe_extension(&part.extensions, key));
+    }
+    for line in unknown_keys(&part.unknown) {
+        field(indent, "unknown", &line);
+    }
+    match inner {
+        Some(Ok(inner)) => describe(&inner, indent + 2),
+        Some(Err(e)) => field(indent, "bundle", &format!("cannot be opened: {e}")),
+        None => {}
+    }
+}
+
+/// Who produced some bytes: the producer, its version and what kind of producer it is on one line,
+/// and the rest beneath.
+fn describe_source(indent: usize, source: &Source) {
+    // A core in the registry has to write its slug, so a slug is always one to look up.
+    let app = source.app.as_ref().map(|app| match app.as_slug() {
+        Some(slug) => {
+            format!(
+                "{app} ({})",
+                one_saves_registry::core(slug.as_str()).map_or("unlisted", |core| core.name)
+            )
+        }
+        None => app.to_string(),
+    });
+    let producer: Vec<String> =
+        [app, source.app_version.as_deref().map(printable)].into_iter().flatten().collect();
+    let kind = source.device_kind.as_ref().map(|kind| {
+        let listed = if one_saves_registry::is_device_kind(kind.as_str()) { "" } else { " (unlisted)" };
+        format!("{kind}{listed}")
+    });
+    let bits: Vec<String> =
+        [(!producer.is_empty()).then(|| producer.join(" ")), kind].into_iter().flatten().collect();
+    field(indent, "source", &bits.join(", "));
+    if let Some(fingerprint) = &source.fingerprint {
+        field(indent, "", &format!("fingerprint {}", printable(fingerprint)));
+    }
+    for line in unknown_keys(&source.unknown) {
+        field(indent, "", &format!("unknown {line}"));
+    }
+}
+
+/// The clues to a game: what a person knows it by on the first line, and the rest beneath.
+fn describe_game(indent: usize, game: &Game) {
+    // Everything a producer wrote as free text goes through `printable`; slugs and names have
+    // a grammar that keeps them safe to print already.
+    let bits: Vec<String> = [&game.title, &game.serial, &game.rom_filename]
+        .into_iter()
+        .flatten()
+        .map(|text| printable(text))
+        .collect();
+    field(indent, "game", &bits.join(", "));
+    // Which system's release this is, which need not be the system that loads the save.
+    if let Some(system) = &game.system {
+        field(indent, "", &format!("system {}", system_name(system)));
+    }
+    for hash in &game.rom_hashes {
+        field(indent, "", &hash.to_string());
+    }
+    for (resolver, id) in &game.game_id {
+        let id = match id {
+            one_saves::GameId::Uint(n) => n.to_string(),
+            one_saves::GameId::Text(t) => printable(t),
+        };
+        field(indent, "", &format!("{resolver} = {id}"));
+    }
+    // Clues none of the fields above name, such as a ROM header's revision byte.
+    for key in game.extensions.keys() {
+        field(indent, "", &format!("extension {}", describe_extension(&game.extensions, key)));
+    }
+    for line in unknown_keys(&game.unknown) {
+        field(indent, "", &format!("unknown {line}"));
+    }
+}
+
+/// A system slug, and the name the registry knows it by.
+fn system_name(system: &one_saves::Slug) -> String {
+    format!("{system} ({})", one_saves_registry::system(system.as_str()).map_or("unlisted", |s| s.name))
+}
+
+/// Integer keys from a later minor version, one `key N = value` each.
+///
+/// Nothing here knows what such a key means, so its value is CBOR in diagnostic notation, cut at
+/// the length an extension value is.
+fn unknown_keys(keys: &one_saves::UnknownKeys) -> impl Iterator<Item = String> + '_ {
+    keys.iter().map(|(key, value)| {
+        let text = value.diagnostic_flat();
+        let text = match text.char_indices().nth(SHOWN_CHARS - 1) {
+            Some((cut, _)) if text.chars().nth(SHOWN_CHARS).is_some() => format!("{}…", &text[..cut]),
+            _ => text,
+        };
+        format!("key {key} = {}", printable(&text))
+    })
+}
+
+/// Bytes the format keeps opaque, as the head of them in hex and how many there are.
+///
+/// The form a long byte string in an extension value takes, so the two read alike in one listing.
+fn shown_bytes(bytes: &[u8]) -> String {
+    let mut head = String::new();
+    for byte in bytes.iter().take(SHOWN_BYTES) {
+        write!(head, "{byte:02x}").expect("a String takes any write");
+    }
+    let more = if bytes.len() > SHOWN_BYTES { "…" } else { "" };
+    format!("h'{head}{more}' ({} bytes)", bytes.len())
 }
 
 /// An extension key and its value on one line: the value's own line where it is typed, its CBOR

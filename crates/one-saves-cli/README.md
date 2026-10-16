@@ -16,7 +16,7 @@ card.mcr -> card.1saves (PS1 memory card, 3 save(s), 25525 bytes)
 $ 1saves convert pokemon.srm --from mgba --rom pokemon_red.gb --dat No-Intro_GB.dat
 identified as "Pokemon - Red Version (USA, Europe)"
 
-$ 1saves inspect card.1saves     # what it is and what it holds, a line per part
+$ 1saves inspect card.1saves     # everything it says, down to each save on a card
 $ 1saves verify card.1saves      # structure, every digest, and the encoding
 $ 1saves hash card.1saves        # content hash and file hash
 $ 1saves extract card.1saves     # write it back out as the card it came from

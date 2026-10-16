@@ -9,21 +9,42 @@ container that fixes that, plus the tools to move real saves and memory cards in
 
 ```console
 $ 1saves convert card.mcr --from duckstation
-card.mcr -> card.1saves (PS1 memory card, 3 save(s), 25525 bytes)
+card.mcr -> card.1saves (PS1 memory card, 2 save(s), 58034 bytes)
 
 $ 1saves inspect card.1saves
+card.1saves
+  58034 bytes, spec version 0.3
+  shape        card
   system       psx (PlayStation)
   card         ps1-mc, capacity 131072 bytes
-  parts        3
-    [0]   bundle     memcard-1             8264 bytes  2db9dc7f051620d4  SCUS-94163   slot 1   BASCUS-94163FF7-S01
-    [1]   bundle     memcard-1             8264 bytes  1364dd5cfc4c8b54  SCUS-94163   slot 2   BASCUS-94163FF7-S03
-    [2]   bundle     memcard-1             8264 bytes  60fff59a7d0ca245  SLUS-00594   slot 3   BASLUS-00594
+               system area h'4d430000000000000000000000000000…' (8192 bytes)
+  source       duckstation (DuckStation), emulator
+  game         unidentified
+  parts        2
+    [0]   bundle     memcard-1            41038 bytes  f78b86a6953ca4ce  SCUS-94194   slot 1   BASCUS-94194GT
+          dirent       h'5100000000a000000100424153435553…' (128 bytes)
+            shape        save
+            system       psx (PlayStation)
+            game         SCUS-94194
+            parts        1
+              [0]   save       primary              40960 bytes  2360ed4a31caa17b
+    [1]   bundle     memcard-1             8270 bytes  d97147227506d5bc  SCUS-94154   slot 6   BASCUS-9415400827918
+          dirent       h'5100000000200000ffff424153435553…' (128 bytes)
+            shape        save
+            system       psx (PlayStation)
+            game         SCUS-94154
+            parts        1
+              [0]   save       primary               8192 bytes  67e275405e9e84ee
 ```
 
 Each part line is its id, kind, socket, size, the head of its digest, the game's product code, the
 slot it sat in and the name the card held. The name goes last because it is the one field with no
 useful bound — a GameCube filename runs to 32 characters — so everything before it stays in column.
-The two Final Fantasy VII saves share a product code and are told apart by the rest.
+Two saves of one game share a product code and are told apart by the rest.
+
+Beneath each part line is everything else the part says: here the card's own directory entry,
+elsewhere its producer where that differs from the bundle's, its extension keys, a binding. A save
+on a card is a bundle of its own, so beneath that comes the bundle it holds, listed the same way.
 
 ## The crates
 

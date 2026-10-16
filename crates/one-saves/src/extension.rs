@@ -48,6 +48,7 @@ pub use gc_mc::DirentGcMc;
 pub use icon::{Icon, IconFrame};
 pub use label::Label;
 pub use rtc::{Rtc, RtcMbc3, RtcS3511a};
+pub use time::Civil;
 
 /// A typed value for one extension key.
 ///
