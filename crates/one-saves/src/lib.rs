@@ -113,7 +113,7 @@
 //! feature switches on:
 //!
 //! ```toml
-//! one-saves = { version = "0.3", features = ["multithread"] }
+//! one-saves = { version = "0.4", features = ["multithread"] }
 //! ```
 //!
 //! Turn it on to hold a bundle across an `.await` in a future that has to be `Send`, or to move
@@ -166,7 +166,7 @@ pub const EXTENSION: &str = "1saves";
 pub const MEDIA_TYPE: &str = "application/vnd.1saves+cbor";
 
 /// The version of the specification this crate implements.
-pub const SPEC_VERSION: &str = "0.3";
+pub const SPEC_VERSION: &str = "0.4";
 
 /// How long a part's `path` may run, in bytes.
 ///

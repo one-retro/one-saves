@@ -31,6 +31,22 @@ pub struct Core {
     pub family: String,
 }
 
+/// An app that runs emulator cores.
+#[derive(Serialize, Deserialize)]
+pub struct App {
+    pub slug: String,
+    pub name: String,
+    /// What it runs: a core kind, or the slugs of the cores it runs alone, as the page lists them.
+    pub cores: Vec<String>,
+}
+
+/// An operating system or firmware an app runs on.
+#[derive(Serialize, Deserialize)]
+pub struct Platform {
+    pub slug: String,
+    pub name: String,
+}
+
 /// A save role compared whole.
 #[derive(Serialize, Deserialize)]
 pub struct RoleEntry {
@@ -113,6 +129,8 @@ pub struct Clocks {
 pub struct Registries {
     pub systems: Vec<System>,
     pub cores: Vec<Core>,
+    pub apps: Vec<App>,
+    pub platforms: Vec<Platform>,
     pub roles: Roles,
     pub vendors: Vec<VendorEntry>,
     pub card_formats: Vec<CardFormat>,
@@ -132,6 +150,8 @@ pub fn read_from_docs(docs: &Path) -> Fallible<Registries> {
     Ok(Registries {
         systems: systems(&read(&content.join("registries/systems.md"))?)?,
         cores: cores(&read(&content.join("registries/cores.md"))?)?,
+        apps: apps(&read(&content.join("registries/apps.md"))?)?,
+        platforms: platforms(&read(&content.join("registries/platforms.md"))?)?,
         roles: roles(&read(&content.join("registries/roles.md"))?)?,
         vendors: vendors(&read(&content.join("registries/vendors.md"))?)?,
         card_formats: card_formats(&read(&content.join("specifications/memory-cards.md"))?)?,
@@ -165,6 +185,28 @@ fn cores(page: &str) -> Fallible<Vec<Core>> {
                 aliases: row.get(4).map(|c| codes(c)).unwrap_or_default(),
                 family: table.heading.clone(),
             });
+        }
+    }
+    out.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(out)
+}
+
+fn apps(page: &str) -> Fallible<Vec<App>> {
+    let mut out = Vec::new();
+    for table in tables(page).iter().filter(|t| t.headed_by("Slug")) {
+        for row in &table.rows {
+            out.push(App { slug: one_code(&row[0])?, name: row[1].clone(), cores: codes(&row[2]) });
+        }
+    }
+    out.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(out)
+}
+
+fn platforms(page: &str) -> Fallible<Vec<Platform>> {
+    let mut out = Vec::new();
+    for table in tables(page).iter().filter(|t| t.headed_by("Slug")) {
+        for row in &table.rows {
+            out.push(Platform { slug: one_code(&row[0])?, name: row[1].clone() });
         }
     }
     out.sort_by(|a, b| a.slug.cmp(&b.slug));
@@ -312,6 +354,8 @@ fn store<T: Serialize>(dir: &Path, name: &str, value: &T) -> Fallible<()> {
 pub fn write_json(data: &Registries, dir: &Path) -> Fallible<()> {
     store(dir, "systems", &data.systems)?;
     store(dir, "cores", &data.cores)?;
+    store(dir, "apps", &data.apps)?;
+    store(dir, "platforms", &data.platforms)?;
     store(dir, "roles", &data.roles)?;
     store(dir, "vendors", &data.vendors)?;
     store(dir, "card-formats", &data.card_formats)?;
@@ -336,6 +380,8 @@ pub fn read_json(dir: &Path) -> Fallible<Registries> {
     Ok(Registries {
         systems: load(dir, "systems")?,
         cores: load(dir, "cores")?,
+        apps: load(dir, "apps")?,
+        platforms: load(dir, "platforms")?,
         roles: load(dir, "roles")?,
         vendors: load(dir, "vendors")?,
         card_formats: load(dir, "card-formats")?,

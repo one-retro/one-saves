@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use one_saves::extension::{Civil, SHOWN_BYTES, SHOWN_CHARS};
-use one_saves::{Bundle, Game, Part, PartKind, Payload, Source};
+use one_saves::{Bundle, Game, Name, Part, PartKind, Payload, Source};
 use one_saves_convert::{Format, Profile, card, detect, raw};
 
 /// Move retro saves and memory cards in and out of the Universal Saves Format.
@@ -23,7 +23,7 @@ enum Command {
     ///
     /// The input may be a .zip holding a card, or holding loose PlayStation saves, in which
     /// case a card is built to carry them.
-    Convert(Convert),
+    Convert(Box<Convert>),
     /// Write a bundle back out in the format it came from.
     Extract(Extract),
     /// Show what a bundle is and what it holds.
@@ -49,7 +49,7 @@ struct Convert {
     /// Where to write the bundle. Defaults to the input with a .1saves extension.
     #[arg(short, long)]
     output: Option<PathBuf>,
-    /// The emulator, core or device the save came from, or the input format.
+    /// The app, core or device the save came from, or the input format.
     #[arg(long, value_name = "NAME")]
     from: Option<String>,
     /// The system these bytes are a save for, as a registry slug.
@@ -58,9 +58,26 @@ struct Convert {
     /// The socket they came out of, as a registry slug. Absent means `primary`.
     #[arg(long, value_name = "SLUG")]
     role: Option<String>,
-    /// The version of the producing software, recorded as `source.app_version`.
+    /// The version of the app `--from` names, recorded as `source.app_version`.
     #[arg(long, value_name = "VERSION")]
     app_version: Option<String>,
+    /// The emulator core the app ran, for an app such as RetroArch that runs many.
+    ///
+    /// A listed core is written as its registry slug, so `mGBA` and `mgba` both write `mgba`. One
+    /// the registry does not list has to be given as its owner's reverse-DNS name.
+    #[arg(long, value_name = "NAME")]
+    core: Option<String>,
+    /// The version of the core, recorded as `source.core_version`.
+    #[arg(long, value_name = "VERSION")]
+    core_version: Option<String>,
+    /// The operating system or firmware the app ran on, such as `muos` or `windows`.
+    ///
+    /// Name the most specific one: a handheld running KNULLI is `knulli`, not `linux`.
+    #[arg(long, value_name = "NAME")]
+    platform: Option<String>,
+    /// The version of the platform, recorded as `source.platform_version`.
+    #[arg(long, value_name = "VERSION")]
+    platform_version: Option<String>,
     /// A human-readable note about this bundle.
     #[arg(long)]
     description: Option<String>,
@@ -142,7 +159,7 @@ type Fallible = Result<(), Box<dyn std::error::Error>>;
 
 fn run(cli: Cli) -> Fallible {
     match cli.command {
-        Command::Convert(args) => convert(args),
+        Command::Convert(args) => convert(*args),
         Command::Extract(args) => extract(args),
         Command::Inspect(args) => inspect(&args.file),
         Command::Verify(args) => verify(&args.file),
@@ -252,13 +269,22 @@ fn convert(args: Convert) -> Fallible {
     let sidecar_path = sidecar.as_ref().map(|(path, _, _)| path.clone());
     let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at));
 
-    let source = profile.as_ref().map(|p| p.source(args.app_version.clone()));
-    // A profile that covers exactly one system settles `system` when the user did not say.
+    let source = source_of(&args, profile.as_ref())?;
+    // A profile or a core that covers exactly one system settles `system` when the user did not say.
+    let core_system = source
+        .as_ref()
+        .and_then(|source| source.core.as_ref())
+        .and_then(|core| one_saves_registry::core(core.as_str()))
+        .and_then(|core| match core.systems {
+            [only] => Some(*only),
+            _ => None,
+        });
     let system = args
         .system
         .clone()
         .or_else(|| rom_system.map(ToOwned::to_owned))
-        .or_else(|| profile.as_ref().and_then(Profile::only_system).map(ToOwned::to_owned));
+        .or_else(|| profile.as_ref().and_then(Profile::only_system).map(ToOwned::to_owned))
+        .or_else(|| core_system.map(ToOwned::to_owned));
 
     let mut bundle = if format == Format::Raw {
         let options = raw::RawOptions {
@@ -331,6 +357,94 @@ fn convert(args: Convert) -> Fallible {
         encoded.len()
     );
     Ok(())
+}
+
+/// The `source` a bundle carries: what `--from` names, and what the other flags add to it.
+///
+/// Every layer is checked against the registry before it is written, since `source` sits in the
+/// header and a misspelt name changes the content hash as surely as a different one.
+fn source_of(
+    args: &Convert,
+    profile: Option<&Profile>,
+) -> Result<Option<Source>, Box<dyn std::error::Error>> {
+    let mut source = profile.map(Profile::source).unwrap_or_default();
+
+    if let Some(text) = &args.core {
+        let core =
+            listed_name(text, "--core", |name| one_saves_registry::core_by_any_name(name).map(|c| c.slug))?;
+        if let Some(named) = &source.core
+            && named != &core
+        {
+            return Err(format!("--from names the core {named}, and --core says {core}").into());
+        }
+        // A listed app says what it runs, so a core it cannot have run is a slip rather than news.
+        let app = source.app.as_ref().and_then(|app| one_saves_registry::app(app.as_str()));
+        if let Some(app) = app
+            && let Some(listed) = one_saves_registry::core(core.as_str())
+            && !app.runs(listed)
+        {
+            return Err(format!(
+                "{} does not run {}, so --core {text} cannot be right",
+                app.name, listed.name
+            )
+            .into());
+        }
+        source.core = Some(core);
+    }
+    if let Some(text) = &args.platform {
+        let platform = listed_name(text, "--platform", |name| {
+            one_saves_registry::platform_by_any_name(name).map(|p| p.slug)
+        })?;
+        source.platform = Some(platform);
+    }
+
+    // A version says which build of something, so it needs the something. `--from mgba` names the
+    // core rather than an app, which is the slip this catches most.
+    for (flag, version, named, what) in [
+        ("--app-version", &args.app_version, source.app.is_some(), "an app"),
+        ("--core-version", &args.core_version, source.core.is_some(), "a core"),
+        ("--platform-version", &args.platform_version, source.platform.is_some(), "a platform"),
+    ] {
+        if version.is_some() && !named {
+            let hint = if flag == "--app-version" && source.core.is_some() {
+                "; --from names a core here, so its version is --core-version"
+            } else {
+                ""
+            };
+            return Err(format!(
+                "{flag} was given, but nothing names {what} for it to be the version of{hint}"
+            )
+            .into());
+        }
+    }
+    source.app_version.clone_from(&args.app_version);
+    source.core_version.clone_from(&args.core_version);
+    source.platform_version.clone_from(&args.platform_version);
+
+    Ok((!source.is_empty()).then_some(source))
+}
+
+/// The name to write for a core or platform someone typed.
+///
+/// A listed one is written as its registry slug, whatever it was called. One the registry does not
+/// list may only be a reverse-DNS name, which is its owner's to mint, so a bare word that matches
+/// nothing is refused rather than written as a slug nobody registered.
+fn listed_name(
+    text: &str,
+    flag: &str,
+    lookup: impl Fn(&str) -> Option<&'static str>,
+) -> Result<Name, String> {
+    if let Some(slug) = lookup(text) {
+        return Name::parse(slug).map_err(|e| format!("the registry slug {slug:?} is malformed: {e}"));
+    }
+    match Name::parse(text) {
+        Ok(name @ Name::ReverseDns(_)) => Ok(name),
+        Ok(Name::Slug(_)) => Err(format!(
+            "{flag} {text:?} is not one the registry lists; an unlisted one is written as its owner's \
+             reverse-DNS name"
+        )),
+        Err(e) => Err(format!("{flag} {text:?} is neither listed nor a well-formed name: {e}")),
+    }
 }
 
 /// What a ROM and a catalog were able to say about the save.
@@ -636,33 +750,57 @@ fn describe_part(part: &Part, indent: usize, depth: usize, inflatable: &mut u64)
     }
 }
 
-/// Who produced some bytes: the producer, its version and what kind of producer it is on one line,
-/// and the rest beneath.
+/// Who produced some bytes: the app, the core it ran, the platform it ran on and what kind of
+/// producer it is on one line, each with its version, and the rest beneath.
 fn describe_source(indent: usize, source: &Source) {
-    // A core in the registry has to write its slug, so a slug is always one to look up.
-    let app = source.app.as_ref().map(|app| match app.as_slug() {
-        Some(slug) => {
-            format!(
-                "{app} ({})",
-                one_saves_registry::core(slug.as_str()).map_or("unlisted", |core| core.name)
-            )
-        }
-        None => app.to_string(),
+    let app = layer("app", "", source.app.as_ref(), source.app_version.as_deref(), |slug| {
+        one_saves_registry::app(slug).map(|app| app.name)
     });
-    let producer: Vec<String> =
-        [app, source.app_version.as_deref().map(printable)].into_iter().flatten().collect();
+    let core = layer("core", "core ", source.core.as_ref(), source.core_version.as_deref(), |slug| {
+        one_saves_registry::core(slug).map(|core| core.name)
+    });
+    let platform = layer(
+        "platform",
+        "platform ",
+        source.platform.as_ref(),
+        source.platform_version.as_deref(),
+        |slug| one_saves_registry::platform(slug).map(|platform| platform.name),
+    );
     let kind = source.device_kind.as_ref().map(|kind| {
         let listed = if one_saves_registry::is_device_kind(kind.as_str()) { "" } else { " (unlisted)" };
         format!("{kind}{listed}")
     });
-    let bits: Vec<String> =
-        [(!producer.is_empty()).then(|| producer.join(" ")), kind].into_iter().flatten().collect();
+    let bits: Vec<String> = [app, core, platform, kind].into_iter().flatten().collect();
     field(indent, "source", &bits.join(", "));
     if let Some(fingerprint) = &source.fingerprint {
         field(indent, "", &format!("fingerprint {}", printable(fingerprint)));
     }
     for line in unknown_keys(&source.unknown) {
         field(indent, "", &format!("unknown {line}"));
+    }
+}
+
+/// One layer of a `source`: the name with what its registry calls it, and the version beside it.
+///
+/// A listed name has to be written as its slug, so a slug is always one to look up, and one that
+/// finds nothing is said to be unlisted. The app goes unlabelled, being the producer itself.
+fn layer(
+    what: &str,
+    label: &str,
+    name: Option<&Name>,
+    version: Option<&str>,
+    lookup: impl Fn(&str) -> Option<&'static str>,
+) -> Option<String> {
+    let name = name.map(|name| match name.as_slug() {
+        Some(slug) => format!("{name} ({})", lookup(slug.as_str()).unwrap_or("unlisted")),
+        None => name.to_string(),
+    });
+    match (name, version.map(printable)) {
+        (Some(name), Some(version)) => Some(format!("{label}{name} {version}")),
+        (Some(name), None) => Some(format!("{label}{name}")),
+        // A version of nothing named is odd, but it is what the bundle says.
+        (None, Some(version)) => Some(format!("{what} version {version}")),
+        (None, None) => None,
     }
 }
 
@@ -804,14 +942,23 @@ fn hash(path: &Path) -> Fallible {
 }
 
 fn profiles() {
-    println!("{:<14} {:<18} {:<28} SYSTEMS", "NAME", "DEVICE KIND", "APP");
+    println!("{:<14} {:<18} {:<12} {:<18} SYSTEMS", "NAME", "DEVICE KIND", "APP", "CORE");
     for profile in one_saves_convert::profile::profiles() {
         let systems =
             if profile.systems.is_empty() { "(any)".to_owned() } else { profile.systems.join(", ") };
-        println!("{:<14} {:<18} {:<28} {systems}", profile.key, profile.device_kind, profile.app);
+        println!(
+            "{:<14} {:<18} {:<12} {:<18} {systems}",
+            profile.key,
+            profile.device_kind,
+            profile.app.unwrap_or("-"),
+            profile.core.unwrap_or("-")
+        );
     }
     println!(
-        "\nAny of the {} cores in the registry also works by slug or name.",
+        "\nA dash is a name neither registry lists, which a bundle leaves out rather than invent one for.\n\
+         Any of the {} apps and {} cores in the registry also works by slug or name, and --core and\n\
+         --platform name the core an app ran and the firmware it ran on.",
+        one_saves_registry::apps().len(),
         one_saves_registry::cores().len()
     );
 }

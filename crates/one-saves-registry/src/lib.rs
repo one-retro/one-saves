@@ -44,6 +44,24 @@
 //! assert!(cores::MGBA.systems.contains(&systems::GBA.slug));
 //! ```
 //!
+//! # Apps and platforms
+//!
+//! A `source` names three layers, each from a registry of its own: the platform an app ran on,
+//! the app, and the core it ran. One app runs many cores and ships on many platforms, which is why
+//! they are three lists rather than one.
+//!
+//! ```
+//! use one_saves_registry::{AppCores, CoreKind, apps, cores, platform_by_any_name};
+//!
+//! // RetroArch loads every libretro core, so the mGBA core is one it can have run.
+//! assert_eq!(apps::RETROARCH.cores, AppCores::Kind(CoreKind::Libretro));
+//! assert!(apps::RETROARCH.runs(&cores::MGBA));
+//! assert!(!apps::RETROARCH.runs(&cores::GAMEBOY_MISTER));
+//!
+//! // A firmware's display name lands on its slug, which is what a bundle carries.
+//! assert_eq!(platform_by_any_name("muOS").unwrap().slug, "muos");
+//! ```
+//!
 //! # Roles, and the one place a slug has structure
 //!
 //! A role ending in `-<n>` names the nth socket of the kind its prefix names, so a consumer that
@@ -52,19 +70,25 @@
 
 mod generated;
 
+/// A named const per listed app: [`apps::RETROARCH`], [`apps::MISTER`], and so on.
+pub use generated::apps;
 /// A named const per listed core: [`cores::MGBA`], [`cores::GAMBATTE`], and so on.
 ///
 /// A producer that knows which core it is does not need a lookup, and naming a const links only
 /// that core rather than the whole 122-entry table. `cores()` still returns the table for the
 /// consumers that genuinely search.
 pub use generated::cores;
+/// A named const per listed platform: [`platforms::MUOS`], [`platforms::WINDOWS`], and so on.
+pub use generated::platforms;
 /// A named const per listed system: [`systems::GBA`], [`systems::PSX`], and so on.
 ///
 /// The counterpart to [`mod@cores`], and the same bargain: a consumer that knows which system it
 /// means names it, and carries that one rather than all 49.
 pub use generated::systems;
 
-use generated::{BINDINGS, CARD_FORMATS, CORES, DEVICE_KINDS, ROLE_PREFIXES, ROLES, SYSTEMS, VENDORS};
+use generated::{
+    APPS, BINDINGS, CARD_FORMATS, CORES, DEVICE_KINDS, PLATFORMS, ROLE_PREFIXES, ROLES, SYSTEMS, VENDORS,
+};
 
 /// A gaming system, and the names other tools use for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,8 +104,9 @@ pub struct System {
 /// What hosts an emulator core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoreKind {
-    /// A software core hosted by RetroArch, OnionOS and most handheld firmwares. Its canonical
-    /// name is the core's `library_name`, the exact string that names a `saves/<core>/` folder.
+    /// A software core hosted by RetroArch, on its own or inside Onion and most handheld
+    /// firmwares. Its canonical name is the core's `library_name`, the exact string that names a
+    /// `saves/<core>/` folder.
     Libretro,
     /// A MiSTer FPGA core, named for its repository in the MiSTer-devel organization.
     MiSTer,
@@ -112,10 +137,10 @@ pub enum ClockLayout {
     Sidecar,
 }
 
-/// An emulator core: the engine that runs the game, as distinct from the frontend hosting it.
+/// An emulator core: the engine that runs the game, as distinct from the [`App`] hosting it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Core {
-    /// The canonical slug, which is what a `source.app` field carries for this core.
+    /// The canonical slug, which is what a `source.core` field carries for this core.
     ///
     /// A core listed here **must** write this rather than a reverse-DNS name, even when it holds
     /// a domain, so that one core has exactly one spelling. mGBA is `mgba`, never `io.mgba`.
@@ -135,6 +160,57 @@ pub struct Core {
     /// should fall back to whatever it does for an unlisted producer rather than assume there is
     /// no clock.
     pub clock: Option<ClockLayout>,
+}
+
+/// What an app runs, as the Apps registry's **Cores** column says it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppCores {
+    /// Every core of one kind: RetroArch loads every libretro core, a MiSTer every MiSTer core.
+    Kind(CoreKind),
+    /// Only these, by core slug: an app built around engines of its own.
+    Only(&'static [&'static str]),
+}
+
+/// An app: the software or device that runs an emulator core.
+///
+/// A frontend that loads cores, an FPGA device that loads them as bitstreams, or a standalone
+/// emulator. A firmware that ships an app is a [`Platform`] rather than an app, so a save a muOS
+/// handheld wrote names `retroarch` here; a device whose firmware loads cores itself, such as the
+/// Analogue Pocket, is the app. A producer that runs no core has no entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct App {
+    /// The canonical slug, which is what a `source.app` field carries for this app.
+    ///
+    /// An app listed here **must** write this rather than a reverse-DNS name, even when it holds
+    /// a domain. RetroArch is `retroarch`, never `com.libretro.retroarch`.
+    pub slug: &'static str,
+    /// The app's name as its authors write it.
+    pub name: &'static str,
+    /// What it runs.
+    pub cores: AppCores,
+}
+
+impl App {
+    /// Whether this app runs a core, as far as the registry says.
+    #[must_use]
+    pub fn runs(&self, core: &Core) -> bool {
+        match self.cores {
+            AppCores::Kind(kind) => core.kind == kind,
+            AppCores::Only(slugs) => slugs.contains(&core.slug),
+        }
+    }
+}
+
+/// An operating system or firmware an [`App`] runs on.
+///
+/// A producer names the most specific one it knows: a handheld running KNULLI is `knulli`, not
+/// `linux`, though KNULLI is a Linux distribution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Platform {
+    /// The canonical slug, which is what a `source.platform` field carries for this platform.
+    pub slug: &'static str,
+    /// The platform's name as its authors write it.
+    pub name: &'static str,
 }
 
 /// A save role: which socket a save came out of.
@@ -182,7 +258,7 @@ pub struct CardFormat {
     /// The medium is sometimes recoverable and sometimes not. A Saturn read whole is a device
     /// whose parts carry a [`role`] — `internal` against `ram-cart` — but a cartridge dumped
     /// by itself is a card bundle with no role anywhere in it, and nothing then says which it was.
-    /// The specifications leave this as written for 0.3; settling it means keying the block size
+    /// The specifications leave this as written for 0.4; settling it means keying the block size
     /// on the card map's `capacity`, which every card carries, rather than on the format alone.
     pub block_size: usize,
     /// What is particular about this format.
@@ -276,6 +352,51 @@ pub fn core_by_any_name(name: &str) -> Option<&'static Core> {
 /// Every core that runs a given system.
 pub fn cores_for_system(slug: &str) -> impl Iterator<Item = &'static Core> {
     CORES.iter().filter(move |core| core.systems.contains(&slug))
+}
+
+/// Every listed app, sorted by slug.
+#[must_use]
+pub fn apps() -> &'static [App] {
+    &APPS
+}
+
+/// The app a slug names, if it is listed.
+#[must_use]
+pub fn app(slug: &str) -> Option<&'static App> {
+    APPS.binary_search_by_key(&slug, |a| a.slug).ok().map(|i| &APPS[i])
+}
+
+/// The app a slug or its name names, compared case-insensitively.
+#[must_use]
+pub fn app_by_any_name(name: &str) -> Option<&'static App> {
+    app(name).or_else(|| {
+        APPS.iter().find(|app| app.slug.eq_ignore_ascii_case(name) || app.name.eq_ignore_ascii_case(name))
+    })
+}
+
+/// Every listed platform, sorted by slug.
+#[must_use]
+pub fn platforms() -> &'static [Platform] {
+    &PLATFORMS
+}
+
+/// The platform a slug names, if it is listed.
+#[must_use]
+pub fn platform(slug: &str) -> Option<&'static Platform> {
+    PLATFORMS.binary_search_by_key(&slug, |p| p.slug).ok().map(|i| &PLATFORMS[i])
+}
+
+/// The platform a slug or its name names, compared case-insensitively.
+///
+/// A firmware writes its own name with capitals a slug cannot carry — `muOS`, `KNULLI` — and this
+/// is what maps that onto the slug to write.
+#[must_use]
+pub fn platform_by_any_name(name: &str) -> Option<&'static Platform> {
+    platform(name).or_else(|| {
+        PLATFORMS.iter().find(|platform| {
+            platform.slug.eq_ignore_ascii_case(name) || platform.name.eq_ignore_ascii_case(name)
+        })
+    })
 }
 
 /// Every registered role compared whole, sorted by name.
@@ -408,12 +529,16 @@ mod tests {
         assert!(SYSTEMS.windows(2).all(|w| w[0].slug < w[1].slug), "systems must be sorted by slug");
         assert!(CORES.windows(2).all(|w| w[0].slug < w[1].slug), "cores must be sorted by slug");
         assert!(ROLES.windows(2).all(|w| w[0].name < w[1].name), "roles must be sorted by name");
+        assert!(APPS.windows(2).all(|w| w[0].slug < w[1].slug), "apps must be sorted by slug");
+        assert!(PLATFORMS.windows(2).all(|w| w[0].slug < w[1].slug), "platforms must be sorted by slug");
     }
 
     #[test]
     fn the_registries_are_the_size_the_documents_are() {
         assert_eq!(SYSTEMS.len(), 49);
         assert_eq!(CORES.len(), 122);
+        assert_eq!(APPS.len(), 3);
+        assert_eq!(PLATFORMS.len(), 13);
         assert_eq!(CARD_FORMATS.len(), 7);
         assert_eq!(DEVICE_KINDS.len(), 5);
         assert_eq!(BINDINGS.len(), 4);
@@ -449,6 +574,54 @@ mod tests {
         assert_eq!(mgba.kind, CoreKind::Libretro);
         assert!(mgba.systems.contains(&"gba"));
         assert_eq!(core_by_any_name("mGBA").map(|c| c.slug), Some("mgba"));
+    }
+
+    #[test]
+    fn an_app_runs_the_cores_its_column_names() {
+        // Each of the three listed apps loads one whole kind, and nothing of the other two.
+        for (app, kind) in [
+            (apps::RETROARCH, CoreKind::Libretro),
+            (apps::MISTER, CoreKind::MiSTer),
+            (apps::ANALOGUE_POCKET, CoreKind::OpenFpga),
+        ] {
+            assert_eq!(app.cores, AppCores::Kind(kind), "{}", app.slug);
+            assert!(cores().iter().filter(|c| app.runs(c)).all(|c| c.kind == kind), "{}", app.slug);
+        }
+        assert!(apps::MISTER.runs(&cores::GAMEBOY_MISTER));
+        assert!(!apps::MISTER.runs(&cores::GAMBATTE));
+    }
+
+    #[test]
+    fn no_name_is_both_an_app_and_a_platform() {
+        // The Pocket's firmware loads cores itself, so it is an app with nothing beneath it, and
+        // the specification keeps the two lists disjoint so one name has one reading.
+        for app in apps() {
+            assert_eq!(platform(app.slug), None, "{} is on both lists", app.slug);
+        }
+        assert_eq!(platform("analogue-pocket"), None);
+    }
+
+    #[test]
+    fn a_display_name_lands_on_its_slug() {
+        assert_eq!(app_by_any_name("RetroArch").map(|a| a.slug), Some("retroarch"));
+        assert_eq!(app_by_any_name("Analogue Pocket").map(|a| a.slug), Some("analogue-pocket"));
+        assert_eq!(platform_by_any_name("muOS").map(|p| p.slug), Some("muos"));
+        assert_eq!(platform_by_any_name("KNULLI").map(|p| p.slug), Some("knulli"));
+        // The engine and the frontend are different registries, so neither answers for the other.
+        assert_eq!(app_by_any_name("mgba"), None);
+        assert_eq!(core_by_any_name("retroarch"), None);
+    }
+
+    #[test]
+    fn the_app_and_platform_consts_and_the_tables_are_the_same_entries() {
+        assert_eq!(app("retroarch"), Some(&apps::RETROARCH));
+        assert_eq!(platform("muos"), Some(&platforms::MUOS));
+        for entry in apps() {
+            assert_eq!(app(entry.slug), Some(entry));
+        }
+        for entry in platforms() {
+            assert_eq!(platform(entry.slug), Some(entry));
+        }
     }
 
     #[test]

@@ -83,11 +83,13 @@ fn registries(args: &[String]) -> Result<(), String> {
     let clocks = registry::read_clocks(&data_dir)?;
     generate::write_rust(&data, &clocks, &generated)?;
     println!(
-        "wrote {} ({} systems, {} cores, {} roles, {} prefixes, {} card formats, {} device kinds, \
-         {} bindings, {} vendors)",
+        "wrote {} ({} systems, {} cores, {} apps, {} platforms, {} roles, {} prefixes, {} card \
+         formats, {} device kinds, {} bindings, {} vendors)",
         generated.display(),
         data.systems.len(),
         data.cores.len(),
+        data.apps.len(),
+        data.platforms.len(),
         data.roles.roles.len(),
         data.roles.prefixes.len(),
         data.card_formats.len(),

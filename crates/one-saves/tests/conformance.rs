@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use one_saves::{Bundle, Shape, Strictness};
+use one_saves::{Bundle, Name, Shape, Strictness};
 use serde_json::Value;
 
 fn corpus_dir() -> PathBuf {
@@ -57,7 +57,7 @@ fn cases() -> Vec<Case> {
 /// The corpus is run at [`Strictness::Schema`].
 ///
 /// Two invalid cases — `header-unknown-integer-key` and `part-unknown-integer-key` — are invalid
-/// against the version 0.3 schema and *accepted* by a shipped decoder, which ignores and
+/// against the version 0.4 schema and *accepted* by a shipped decoder, which ignores and
 /// round-trips an integer key it does not know. Running the corpus in decoder mode would fail
 /// those two for being right. A shape a later version assigned is the same asymmetry; see
 /// `a_decoder_round_trips_a_shape_a_later_version_defined` for why the corpus cannot show it.
@@ -68,7 +68,7 @@ fn corpus() {
 
     // A manifest this harness failed to read would otherwise pass by testing nothing.
     let (valid, invalid): (Vec<_>, Vec<_>) = cases.iter().partition(|c| c.expect_valid);
-    assert_eq!((valid.len(), invalid.len()), (28, 64), "the corpus is not the size it should be");
+    assert_eq!((valid.len(), invalid.len()), (28, 66), "the corpus is not the size it should be");
 
     for case in cases {
         let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
@@ -200,7 +200,7 @@ fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
 
         assert!(
             Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
-            "{name} must fail against the version 0.3 schema"
+            "{name} must fail against the version 0.4 schema"
         );
 
         let bundle = Bundle::from_slice(&bytes)
@@ -212,6 +212,36 @@ fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
         );
     }
 }
+/// `core` and `platform` are read as fields, not carried as integer keys nobody knows.
+///
+/// A decoder that predated 0.4 would pass the corpus's two new invalid cases at the schema level
+/// for the wrong reason — keys 4 and 6 unknown — and accept both in decoder mode, keeping `mGBA`
+/// as an opaque value. So the decoder is held to rejecting them in its loose mode too, which it
+/// can only do by reading the names, and the valid case is checked for what it says.
+#[test]
+fn a_source_names_its_core_and_platform_apart_from_its_app() {
+    let bytes = fs::read(corpus_dir().join("valid/source-provenance.cbor")).expect("read case");
+    let bundle = Bundle::from_slice_with(&bytes, Strictness::Schema).expect("source-provenance is valid");
+
+    // The cartridge reader runs no core and sits on no platform worth naming.
+    let reader = bundle.header.source.as_ref().expect("a header source");
+    assert_eq!(reader.app.as_ref().map(Name::as_str), Some("io.epilogue"));
+    assert_eq!((&reader.core, &reader.platform), (&None, &None));
+
+    // The emulator is all three layers: muOS, running RetroArch, running mGBA.
+    let emulator = bundle.parts[1].source.as_ref().expect("a part source");
+    let layers = [&emulator.platform, &emulator.app, &emulator.core].map(|n| n.as_ref().map(Name::as_str));
+    assert_eq!(layers, [Some("muos"), Some("retroarch"), Some("mgba")]);
+    let versions = [&emulator.platform_version, &emulator.app_version, &emulator.core_version];
+    assert_eq!(versions.map(Option::as_deref), [Some("2502.0"), Some("1.19.1"), Some("0.10.3")]);
+    assert!(emulator.unknown.is_empty(), "keys 4 to 7 are fields now, not a later version's");
+
+    for name in ["core-as-library-name", "platform-as-display-name"] {
+        let bytes = fs::read(corpus_dir().join(format!("invalid/{name}.cbor"))).expect("read case");
+        assert!(Bundle::from_slice(&bytes).is_err(), "{name}: a display name is not a slug in either mode");
+    }
+}
+
 /// What each shape may hold, which is what replaced the depth cap in 0.2.
 ///
 /// A save holds no nested bundle, a card holds saves, a device holds cards and saves, and a

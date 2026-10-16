@@ -1,7 +1,8 @@
 # one-saves-registry
 
 The registries the [Universal Saves Format][spec] draws its vocabularies from: 49 systems, 122
-emulator cores, save roles, card formats, device kinds, bindings and vendor names.
+emulator cores, 3 apps, 13 platforms, save roles, card formats, device kinds, bindings and vendor
+names.
 
 ```rust
 use one_saves_registry::{system_by_any_name, core_by_any_name, role, RoleMatch};
@@ -24,8 +25,19 @@ assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended));
 assert!(cores::MGBA.systems.contains(&systems::GBA.slug));
 ```
 
-Cores and systems are consts rather than rows reached through a table, so naming one links that
-entry alone: about 40 bytes, against roughly 17 KB for the searchable core table. Dead-stripping
+A `source` names three layers, each from its own registry: the platform, the app on it, and the
+core the app ran. An app records what it runs, so a pairing can be checked:
+
+```rust
+use one_saves_registry::{apps, cores, platform_by_any_name};
+
+assert!(apps::RETROARCH.runs(&cores::MGBA));
+assert!(!apps::RETROARCH.runs(&cores::GAMEBOY_MISTER));
+assert_eq!(platform_by_any_name("muOS").unwrap().slug, "muos");
+```
+
+Systems, cores, apps and platforms are consts rather than rows reached through a table, so naming
+one links that entry alone: about 40 bytes, against roughly 17 KB for the searchable core table. Dead-stripping
 is per table, so a consumer that never calls `vendor()` does not carry the vendor list either.
 
 ## Why it exists

@@ -3,7 +3,7 @@
 // The JSON under `data/` is itself synced from the registry pages at docs.1retro.com,
 // so a change starts there, lands in the JSON, and reaches this file last.
 
-use crate::{Binding, CardFormat, Core, DeviceKind, Role, RolePrefix, System, Vendor};
+use crate::{App, Binding, CardFormat, Core, DeviceKind, Platform, Role, RolePrefix, System, Vendor};
 
 /// A named const per listed system, for the consumers that know which one they mean.
 pub mod systems {
@@ -1399,6 +1399,72 @@ pub(crate) static CORES: [Core; 122] = [
     cores::VIRTUAL_JAGUAR,
     cores::WONDERSWAN_MISTER,
     cores::YABASANSHIRO,
+];
+
+/// A named const per listed app, for a producer that knows which one it is.
+pub mod apps {
+    use crate::{App, AppCores, CoreKind};
+
+    /// Analogue Pocket.
+    pub const ANALOGUE_POCKET: App =
+        App { slug: "analogue-pocket", name: "Analogue Pocket", cores: AppCores::Kind(CoreKind::OpenFpga) };
+    /// MiSTer.
+    pub const MISTER: App = App { slug: "mister", name: "MiSTer", cores: AppCores::Kind(CoreKind::MiSTer) };
+    /// RetroArch.
+    pub const RETROARCH: App =
+        App { slug: "retroarch", name: "RetroArch", cores: AppCores::Kind(CoreKind::Libretro) };
+}
+
+/// Every known app, sorted by slug.
+pub(crate) static APPS: [App; 3] = [apps::ANALOGUE_POCKET, apps::MISTER, apps::RETROARCH];
+
+/// A named const per listed platform, for a producer that knows which one it runs on.
+pub mod platforms {
+    use crate::Platform;
+
+    /// Android.
+    pub const ANDROID: Platform = Platform { slug: "android", name: "Android" };
+    /// ArkOS.
+    pub const ARKOS: Platform = Platform { slug: "arkos", name: "ArkOS" };
+    /// Batocera.
+    pub const BATOCERA: Platform = Platform { slug: "batocera", name: "Batocera" };
+    /// iOS.
+    pub const IOS: Platform = Platform { slug: "ios", name: "iOS" };
+    /// KNULLI.
+    pub const KNULLI: Platform = Platform { slug: "knulli", name: "KNULLI" };
+    /// Lakka.
+    pub const LAKKA: Platform = Platform { slug: "lakka", name: "Lakka" };
+    /// Linux.
+    pub const LINUX: Platform = Platform { slug: "linux", name: "Linux" };
+    /// macOS.
+    pub const MACOS: Platform = Platform { slug: "macos", name: "macOS" };
+    /// MinUI.
+    pub const MINUI: Platform = Platform { slug: "minui", name: "MinUI" };
+    /// muOS.
+    pub const MUOS: Platform = Platform { slug: "muos", name: "muOS" };
+    /// Onion.
+    pub const ONION: Platform = Platform { slug: "onion", name: "Onion" };
+    /// ROCKNIX.
+    pub const ROCKNIX: Platform = Platform { slug: "rocknix", name: "ROCKNIX" };
+    /// Windows.
+    pub const WINDOWS: Platform = Platform { slug: "windows", name: "Windows" };
+}
+
+/// Every known platform, sorted by slug.
+pub(crate) static PLATFORMS: [Platform; 13] = [
+    platforms::ANDROID,
+    platforms::ARKOS,
+    platforms::BATOCERA,
+    platforms::IOS,
+    platforms::KNULLI,
+    platforms::LAKKA,
+    platforms::LINUX,
+    platforms::MACOS,
+    platforms::MINUI,
+    platforms::MUOS,
+    platforms::ONION,
+    platforms::ROCKNIX,
+    platforms::WINDOWS,
 ];
 
 /// Registered save roles that are compared whole, sorted by name.

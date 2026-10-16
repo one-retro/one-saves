@@ -308,6 +308,18 @@ impl From<&str> for GameId {
 /// bundle and serves as the default for every part, and on a part it names that part's own
 /// producer. Provenance belongs to each save, not just to the file around it — a bundle can hold
 /// one save read from a real cartridge and another exported by an emulator.
+///
+/// `platform`, `app` and `core` are three fields because each comes apart from the others. One
+/// app runs many cores and ships on many platforms: RetroArch running mGBA on a muOS handheld is
+/// `platform: muos`, `app: retroarch`, `core: mgba`, and the same game on its Gambatte core
+/// differs only in `core`. A device whose firmware loads cores itself, such as the Analogue
+/// Pocket, is the app, with no platform beneath it. A producer that runs no core — a cartridge
+/// reader, a flashcart, a service — leaves `core` out.
+///
+/// All three take the same rule. A name listed in the field's registry **must** be written as its
+/// slug, and one with no entry is a reverse-DNS name its owner mints. A tool reporting what it
+/// *observed* leaves out a field it has no entry for rather than mint a name in a namespace it
+/// does not hold.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct Source {
@@ -317,14 +329,34 @@ pub struct Source {
     /// An opaque stable identifier for the specific device or install. Should carry no personal
     /// information.
     pub fingerprint: Option<String>,
-    /// The producing software or device.
+    /// The producing software or device: a frontend that loads cores, an FPGA device, a
+    /// standalone emulator, or a producer that runs no core at all.
     ///
-    /// A core listed in the Emulator Cores registry **must** write its slug rather than a
-    /// reverse-DNS name, even when it holds a domain, so that one core has one spelling. mGBA is
-    /// `mgba`, never `io.mgba`. A producer with no entry mints a reverse-DNS name.
+    /// An app listed in the Apps registry **must** write its slug rather than a reverse-DNS name,
+    /// even when it holds a domain. RetroArch is `retroarch`, never `com.libretro.retroarch`.
+    ///
+    /// Under 0.3 this held a core's slug. An `app` of `mgba` now means an app, and the core
+    /// belongs in [`core`](Source::core).
     pub app: Option<Name>,
     /// The version of `app`, in whatever scheme that app uses.
     pub app_version: Option<String>,
+    /// The emulator core `app` ran to produce the bytes, for an app that runs one.
+    ///
+    /// A core listed in the Emulator Cores registry **must** write its slug, so mGBA is `mgba`,
+    /// never `io.mgba`. Where a core also exists as a standalone emulator the slug covers both,
+    /// since the engine is the same.
+    pub core: Option<Name>,
+    /// The version of `core`, in whatever scheme that core uses. A libretro core reports it as
+    /// `library_version`.
+    pub core_version: Option<String>,
+    /// The operating system or firmware `app` ran on: a handheld firmware such as muOS, or a
+    /// general-purpose system such as Windows.
+    ///
+    /// A platform listed in the Platforms registry **must** write its slug. A producer names the
+    /// most specific one it knows, so a handheld running KNULLI is `knulli` and not `linux`.
+    pub platform: Option<Name>,
+    /// The version of `platform`, in whatever scheme that platform uses.
+    pub platform_version: Option<String>,
     /// Integer keys from a later minor version.
     pub unknown: UnknownKeys,
 }
@@ -337,6 +369,10 @@ impl Source {
             && self.fingerprint.is_none()
             && self.app.is_none()
             && self.app_version.is_none()
+            && self.core.is_none()
+            && self.core_version.is_none()
+            && self.platform.is_none()
+            && self.platform_version.is_none()
             && self.unknown.is_empty()
     }
 
@@ -365,6 +401,34 @@ impl Source {
     #[must_use]
     pub fn app_version(mut self, app_version: impl Into<String>) -> Self {
         self.app_version = Some(app_version.into());
+        self
+    }
+
+    /// Sets the emulator core `app` ran.
+    #[must_use]
+    pub fn core(mut self, core: impl Into<Option<Name>>) -> Self {
+        self.core = core.into();
+        self
+    }
+
+    /// Sets the version of `core`.
+    #[must_use]
+    pub fn core_version(mut self, core_version: impl Into<String>) -> Self {
+        self.core_version = Some(core_version.into());
+        self
+    }
+
+    /// Sets the operating system or firmware `app` ran on.
+    #[must_use]
+    pub fn platform(mut self, platform: impl Into<Option<Name>>) -> Self {
+        self.platform = platform.into();
+        self
+    }
+
+    /// Sets the version of `platform`.
+    #[must_use]
+    pub fn platform_version(mut self, platform_version: impl Into<String>) -> Self {
+        self.platform_version = Some(platform_version.into());
         self
     }
 }

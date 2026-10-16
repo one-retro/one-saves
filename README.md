@@ -13,12 +13,12 @@ card.mcr -> card.1saves (PS1 memory card, 2 save(s), 58034 bytes)
 
 $ 1saves inspect card.1saves
 card.1saves
-  58034 bytes, spec version 0.3
+  58034 bytes, spec version 0.4
   shape        card
   system       psx (PlayStation)
   card         ps1-mc, capacity 131072 bytes
                system area h'4d430000000000000000000000000000…' (8192 bytes)
-  source       duckstation (DuckStation), emulator
+  source       core duckstation (DuckStation), emulator
   game         unidentified
   parts        2
     [0]   bundle     memcard-1            41038 bytes  f78b86a6953ca4ce  SCUS-94194   slot 1   BASCUS-94194GT
@@ -51,7 +51,7 @@ on a card is a bundle of its own, so beneath that comes the bundle it holds, lis
 | Crate | What it is |
 | ----- | ---------- |
 | [`one-saves`](crates/one-saves) | The format: decode, encode, validate, content hash. |
-| [`one-saves-registry`](crates/one-saves-registry) | Systems, emulator cores, save roles, vendor names. |
+| [`one-saves-registry`](crates/one-saves-registry) | Systems, emulator cores, apps, platforms, save roles, vendor names. |
 | [`one-saves-convert`](crates/one-saves-convert) | Emulator saves and memory cards, both directions. |
 | [`one-saves-cli`](crates/one-saves-cli) | The `1saves` command-line tool. |
 
@@ -186,8 +186,8 @@ restores the naive behaviour.
 
 ## Conformance
 
-`one-saves` passes the [conformance corpus][corpus] published alongside the specification: all 24
-valid cases and all 49 invalid ones, vendored under
+`one-saves` passes the [conformance corpus][corpus] published alongside the specification: all 28
+valid cases and all 66 invalid ones, vendored under
 [`crates/one-saves/tests/conformance/`](crates/one-saves/tests/conformance).
 
 A green corpus run is deliberately not full coverage, and its README says so. The four properties

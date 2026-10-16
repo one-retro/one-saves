@@ -1,10 +1,10 @@
 {
   "corpus": "Universal Saves Format conformance cases",
-  "spec_version": "0.3",
+  "spec_version": "0.4",
   "generated_from": "test/bundles.js",
   "counts": {
     "valid": 28,
-    "invalid": 64
+    "invalid": 66
   },
   "cases": [
     {
@@ -179,8 +179,8 @@
       "name": "source-provenance",
       "expect": "valid",
       "file": "valid/source-provenance.cbor",
-      "sha256": "8b4737667aa416cad1ec47f488309b3bbd8392f18ca7d74bc487bdf571ec6c23",
-      "note": "Provenance at both levels: a cartridge reader assembled the bundle, and one part came from an emulator instead, so it carries its own source. Note the split inside one map: `device_kind` is a spec slug nobody may mint into, while `app` beside it is the producer's own name, here reverse-DNS for the reader and a Cores registry slug for the emulator."
+      "sha256": "04a6f66e387dc3b89536758b84b04e0fac323a45fcc27ccc459b8cd70fd0a7b3",
+      "note": "Provenance at both levels: a cartridge reader assembled the bundle, and one part came from an emulator instead, so it carries its own source. Note the split inside one map: `device_kind` is a spec slug nobody may mint into, while `app` beside it is the producer's own name, here reverse-DNS for the reader and an Apps registry slug for the emulator. The reader runs no core; the emulator names the one it ran in `core`, and the firmware it ran on in `platform`."
     },
     {
       "name": "game-ids",
@@ -209,7 +209,7 @@
       "rejected_by": "schema",
       "file": "invalid/part-unknown-integer-key.cbor",
       "sha256": "f35a7f557ea356a7f764c22b6b31626ddd8da0891fcf91824df0a1ad5df5faaa",
-      "note": "This schema describes v0.3, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+      "note": "This schema describes v0.4, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
     },
     {
       "name": "header-unknown-integer-key",
@@ -217,7 +217,7 @@
       "rejected_by": "schema",
       "file": "invalid/header-unknown-integer-key.cbor",
       "sha256": "38d3710e8cca5034c58a831bb3b81fa64f54c8c129909e229af966448c92f818",
-      "note": "This schema describes v0.3, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+      "note": "This schema describes v0.4, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
     },
     {
       "name": "header-without-shape",
@@ -442,6 +442,22 @@
       "file": "invalid/device-kind-reverse-dns.cbor",
       "sha256": "edee43ea1d2a837e8b560624e778f312e98ed34c178d3afdca98bad3665d27eb",
       "note": "Same for a device kind. `app` in the same map names the producer itself and is minted freely, so the two arms of that map pull in opposite directions."
+    },
+    {
+      "name": "core-as-library-name",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/core-as-library-name.cbor",
+      "sha256": "0f6e1453ead3998ff92fb3cbc58a9d305e05e6b297fdbbd580cc2b84d81e61a1",
+      "note": "A core's slug derives from the name RetroArch reports, and is not that name. `mGBA` is the core's `library_name` verbatim, which fails the slug arm on case and the reverse-DNS arm for having no dot, so it is malformed rather than a core nobody has listed yet."
+    },
+    {
+      "name": "platform-as-display-name",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/platform-as-display-name.cbor",
+      "sha256": "7f408524114f45aa4f75e6576af75bd0272a0bebedf6a5a7295df4c6e057ec7a",
+      "note": "The same for a platform written the way it writes its own name. `muOS` is a display name, not a slug, and has no dot to be a minted one."
     },
     {
       "name": "role-reverse-dns",

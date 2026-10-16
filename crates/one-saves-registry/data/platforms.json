@@ -1,0 +1,54 @@
+[
+  {
+    "slug": "android",
+    "name": "Android"
+  },
+  {
+    "slug": "arkos",
+    "name": "ArkOS"
+  },
+  {
+    "slug": "batocera",
+    "name": "Batocera"
+  },
+  {
+    "slug": "ios",
+    "name": "iOS"
+  },
+  {
+    "slug": "knulli",
+    "name": "KNULLI"
+  },
+  {
+    "slug": "lakka",
+    "name": "Lakka"
+  },
+  {
+    "slug": "linux",
+    "name": "Linux"
+  },
+  {
+    "slug": "macos",
+    "name": "macOS"
+  },
+  {
+    "slug": "minui",
+    "name": "MinUI"
+  },
+  {
+    "slug": "muos",
+    "name": "muOS"
+  },
+  {
+    "slug": "onion",
+    "name": "Onion"
+  },
+  {
+    "slug": "rocknix",
+    "name": "ROCKNIX"
+  },
+  {
+    "slug": "windows",
+    "name": "Windows"
+  }
+]

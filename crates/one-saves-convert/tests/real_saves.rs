@@ -143,7 +143,7 @@ impl Fixture {
             source: Some(
                 profile(self.producer)
                     .unwrap_or_else(|| panic!("{} is a known producer", self.producer))
-                    .source(None),
+                    .source(),
             ),
             rtc_sidecar: sidecar,
             ..raw::RawOptions::default()
@@ -234,7 +234,7 @@ fn the_save_memory_is_what_gets_deduplicated() {
 
     let options = raw::RawOptions {
         system: Some("gb".to_owned()),
-        source: Some(profile("budude2-gbc").expect("known").source(None)),
+        source: Some(profile("budude2-gbc").expect("known").source()),
         ..raw::RawOptions::default()
     };
     let later = raw::wrap(&later_bytes, &options).expect("wraps");
@@ -374,7 +374,7 @@ impl BackupRam {
             // Deliberately unset: the point is that the bytes settle it.
             system: None,
             role: Some("internal".to_owned()),
-            source: Some(profile(self.producer).expect("a listed core").source(None)),
+            source: Some(profile(self.producer).expect("a listed core").source()),
             ..raw::RawOptions::default()
         };
         let bundle = raw::wrap(&bytes, &options).expect("wraps");

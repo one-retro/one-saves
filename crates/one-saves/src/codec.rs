@@ -380,8 +380,22 @@ fn decode_source(value: &CBOR, path: &str, strictness: Strictness) -> Result<Sou
     let fingerprint = fields.take(1).map(|v| want_text(&v, path)).transpose()?;
     let app = fields.take(2).map(|v| want_name(&v, &format!("{path}.app"))).transpose()?;
     let app_version = fields.take(3).map(|v| want_text(&v, path)).transpose()?;
+    let core = fields.take(4).map(|v| want_name(&v, &format!("{path}.core"))).transpose()?;
+    let core_version = fields.take(5).map(|v| want_text(&v, path)).transpose()?;
+    let platform = fields.take(6).map(|v| want_name(&v, &format!("{path}.platform"))).transpose()?;
+    let platform_version = fields.take(7).map(|v| want_text(&v, path)).transpose()?;
 
-    Ok(Source { device_kind, fingerprint, app, app_version, unknown: fields.unknown(path, strictness)? })
+    Ok(Source {
+        device_kind,
+        fingerprint,
+        app,
+        app_version,
+        core,
+        core_version,
+        platform,
+        platform_version,
+        unknown: fields.unknown(path, strictness)?,
+    })
 }
 
 fn decode_card(value: &CBOR, path: &str, strictness: Strictness) -> Result<Card, Error> {
@@ -671,6 +685,18 @@ impl Source {
         }
         if let Some(app_version) = &self.app_version {
             map.insert(3u64, app_version.as_str());
+        }
+        if let Some(core) = &self.core {
+            map.insert(4u64, core.as_str());
+        }
+        if let Some(core_version) = &self.core_version {
+            map.insert(5u64, core_version.as_str());
+        }
+        if let Some(platform) = &self.platform {
+            map.insert(6u64, platform.as_str());
+        }
+        if let Some(platform_version) = &self.platform_version {
+            map.insert(7u64, platform_version.as_str());
         }
         finish(map, &self.unknown, &Extensions::new())
     }

@@ -411,8 +411,9 @@ pub enum ClockForm {
 
 /// The shape a bundle's producer writes, from what its `source` says.
 ///
-/// `source.app` names the software that wrote the bytes, so it is what says which of the shapes
-/// to expect. The layout each core writes is registry data — see [`ClockLayout`] — rather than
+/// `source.core` names the engine that wrote the bytes, so it is what says which of the shapes
+/// to expect — not `source.app`, since RetroArch writes whatever its core does. The layout each
+/// core writes is registry data — see [`ClockLayout`] — rather than
 /// anything this module reads out of the slug: a core is not obliged to spell its own name in a
 /// way that gives its clock away, and two that do spell it the same way need not agree.
 ///
@@ -426,9 +427,9 @@ pub fn form_of(bundle: &one_saves::Bundle) -> ClockForm {
     if bundle.header.extensions.contains_key(&RtcS3511a::KEY) {
         return ClockForm::S3511a;
     }
-    let app = bundle.header.source.as_ref().and_then(|source| source.app.as_ref());
-    // `source.app` carries the slug for a listed core, which is what the registry is keyed by.
-    let layout = app.map(one_saves::Name::as_str).and_then(one_saves_registry::core).and_then(|c| c.clock);
+    let core = bundle.header.source.as_ref().and_then(|source| source.core.as_ref());
+    // `source.core` carries the slug for a listed core, which is what the registry is keyed by.
+    let layout = core.map(one_saves::Name::as_str).and_then(one_saves_registry::core).and_then(|c| c.clock);
     match layout {
         Some(ClockLayout::Sidecar) => ClockForm::Sidecar,
         Some(ClockLayout::Packed { reserved }) => ClockForm::Packed(reserved),
@@ -1113,18 +1114,18 @@ mod tests {
             reading: Some(clock.reading()),
             clock: Clock::Mbc3(clock),
         };
-        for (app, want) in [
+        for (core, want) in [
             ("gameboy-mister", PACKED_LEN_MISTER),
             ("sgb-mister", PACKED_LEN_MISTER),
             ("budude2-gbc", PACKED_LEN_POCKET),
             ("spiritualized-gb", PACKED_LEN_POCKET),
         ] {
             let header = Header::default()
-                .source(Source::default().app(Name::parse(app).unwrap()))
+                .source(Source::default().core(Name::parse(core).unwrap()))
                 .extensions(split.extensions());
             let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
-            assert_eq!(form_of(&bundle), ClockForm::Packed(want), "{app}");
-            assert_eq!(footer_of(&bundle).map(|f| f.len()), Some(want), "{app}");
+            assert_eq!(form_of(&bundle), ClockForm::Packed(want), "{core}");
+            assert_eq!(footer_of(&bundle).map(|f| f.len()), Some(want), "{core}");
         }
     }
 
@@ -1142,7 +1143,7 @@ mod tests {
 
     #[test]
     fn the_producer_decides_which_shape_is_written_back() {
-        // Four producers, one clock, four encodings. The bundle records the clock; `source.app`
+        // Four producers, one clock, four encodings. The bundle records the clock; `source.core`
         // is what says which shape to put it back in, so a round trip returns the file the
         // emulator would have written rather than some other emulator's idea of it.
         use one_saves::{Header, Name, Part, Source};
@@ -1154,17 +1155,17 @@ mod tests {
             clock: Clock::Mbc3(clock),
         };
 
-        for (app, want) in [
+        for (core, want) in [
             ("budude2-gbc", ClockForm::Packed(PACKED_LEN_POCKET)),
             ("gambatte", ClockForm::Sidecar),
             ("sameboy", ClockForm::Mbc3Appended),
             ("mgba", ClockForm::Mbc3Appended),
         ] {
             let header = Header::default()
-                .source(Source::default().app(Name::parse(app).unwrap()))
+                .source(Source::default().core(Name::parse(core).unwrap()))
                 .extensions(split.extensions());
             let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
-            assert_eq!(form_of(&bundle), want, "{app}");
+            assert_eq!(form_of(&bundle), want, "{core}");
 
             match want {
                 // A sidecar is not appended, so there is nothing for the save to carry.
@@ -1177,6 +1178,31 @@ mod tests {
                 }
                 _ => assert_eq!(footer_of(&bundle).map(|f| f.len()), Some(MBC3_LEN_64)),
             }
+        }
+    }
+
+    #[test]
+    fn the_core_picks_the_layout_and_the_app_around_it_does_not() {
+        // RetroArch writes whatever its core writes, so the same app lays a clock down two ways.
+        // And an `app` of `gambatte` is a 0.3 spelling that now names an app nobody listed: read
+        // as written, it says nothing about a core, so it gets the common form.
+        use one_saves::{Header, Name, Part, Source};
+        let clock = parse_packed(&POCKET_FIRST).expect("a clock");
+        let split = Split {
+            sram: Vec::new(),
+            footer: Vec::new(),
+            reading: Some(clock.reading()),
+            clock: Clock::Mbc3(clock),
+        };
+        let name = |text| Name::parse(text).ok();
+        for (source, want) in [
+            (Source::default().app(name("retroarch")).core(name("gambatte")), ClockForm::Sidecar),
+            (Source::default().app(name("retroarch")).core(name("sameboy")), ClockForm::Mbc3Appended),
+            (Source::default().app(name("gambatte")), ClockForm::Mbc3Appended),
+        ] {
+            let header = Header::default().source(source.clone()).extensions(split.extensions());
+            let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
+            assert_eq!(form_of(&bundle), want, "{source:?}");
         }
     }
 
@@ -1195,7 +1221,7 @@ mod tests {
             clock: Clock::Mbc3(clock),
         };
 
-        for (app, want) in [
+        for (core, want) in [
             // An openFPGA Game Boy port whose slug does not end in `-gb`. The suffix rule read
             // this as an appended footer and wrote 48 bytes where the core wants 16.
             ("spiritualized-supergb", ClockForm::Packed(PACKED_LEN_POCKET)),
@@ -1208,10 +1234,10 @@ mod tests {
             ("pcsx2", ClockForm::Mbc3Appended),
         ] {
             let header = Header::default()
-                .source(Source::default().app(Name::parse(app).unwrap()))
+                .source(Source::default().core(Name::parse(core).unwrap()))
                 .extensions(split.extensions());
             let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
-            assert_eq!(form_of(&bundle), want, "{app}");
+            assert_eq!(form_of(&bundle), want, "{core}");
         }
     }
 

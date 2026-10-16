@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crate::registry::{Clocks, Registries};
+use crate::registry::{App, Clocks, Registries};
 
 /// A Rust string literal.
 fn lit(text: &str) -> String {
@@ -72,6 +72,27 @@ fn core_kind(kind: &str) -> Result<&'static str, String> {
     }
 }
 
+/// The `AppCores` expression for one app's **Cores** column.
+///
+/// The column holds a core kind, for an app that loads every core of it, or the slugs of the cores
+/// an app runs alone. Anything else — two kinds, a kind beside a slug, a slug nobody listed — is a
+/// registry change this generator has not been taught, and is refused rather than guessed at.
+fn app_cores(app: &App, data: &Registries) -> Result<String, String> {
+    let listed = |slug: &String| data.cores.iter().any(|c| &c.slug == slug);
+    if let [only] = app.cores.as_slice()
+        && let Ok(kind) = core_kind(only)
+    {
+        return Ok(format!("AppCores::Kind(CoreKind::{kind})"));
+    }
+    if !app.cores.is_empty() && app.cores.iter().all(listed) {
+        return Ok(format!("AppCores::Only({})", lits(&app.cores)));
+    }
+    Err(format!(
+        "apps.md: {:?} runs {:?}, which is neither one core kind nor a list of listed cores",
+        app.slug, app.cores
+    ))
+}
+
 /// Writes the generated tables, then formats them so the file is byte-stable.
 ///
 /// Formatting here rather than leaving it to a later `cargo fmt` is what lets CI regenerate and
@@ -101,12 +122,17 @@ pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(),
         .unwrap();
     writeln!(w, "// so a change starts there, lands in the JSON, and reaches this file last.").unwrap();
     writeln!(w).unwrap();
-    writeln!(w, "use crate::{{Binding, CardFormat, Core, DeviceKind, Role, RolePrefix, System, Vendor}};")
-        .unwrap();
+    writeln!(
+        w,
+        "use crate::{{App, Binding, CardFormat, Core, DeviceKind, Platform, Role, RolePrefix, System, Vendor}};"
+    )
+    .unwrap();
     writeln!(w).unwrap();
 
     emit_systems(w, data)?;
     emit_cores(w, data, clocks, kinds)?;
+    emit_apps(w, data)?;
+    emit_platforms(w, data)?;
     table(
         w,
         "Registered save roles that are compared whole, sorted by name.",
@@ -256,6 +282,72 @@ fn emit_cores(w: &mut String, data: &Registries, clocks: &Clocks, kinds: Vec<&st
 
     table(w, "Every known emulator core, sorted by slug.", "CORES", "Core", &cores, |(_, name)| {
         format!("cores::{name}")
+    });
+
+    Ok(())
+}
+
+/// Apps the same way as cores: a const each, then the table built out of them.
+///
+/// Like everything here it fails into the buffer rather than the file, so a refusal below still
+/// leaves the committed tables untouched.
+fn emit_apps(w: &mut String, data: &Registries) -> Result<(), String> {
+    let runs: Vec<String> = data.apps.iter().map(|a| app_cores(a, data)).collect::<Result<_, _>>()?;
+
+    // A device whose firmware loads cores itself is the app, so the two pages are kept disjoint
+    // by the specification. A name on both would give one producer two readings.
+    for app in &data.apps {
+        if data.platforms.iter().any(|p| p.slug == app.slug) {
+            return Err(format!("{:?} is listed as both an app and a platform", app.slug));
+        }
+    }
+
+    let app_names = const_names(data.apps.iter().map(|a| a.slug.as_str()))?;
+    let apps: Vec<_> = data.apps.iter().zip(&runs).zip(&app_names).collect();
+    // `CoreKind` is only named by an app that loads a whole kind, so it is only imported then.
+    let kind_import = if runs.iter().any(|r| r.contains("CoreKind")) { ", CoreKind" } else { "" };
+    writeln!(w, "/// A named const per listed app, for a producer that knows which one it is.").unwrap();
+    writeln!(w, "pub mod apps {{").unwrap();
+    writeln!(w, "    use crate::{{App, AppCores{kind_import}}};\n").unwrap();
+    for ((a, runs), name) in &apps {
+        writeln!(w, "    /// {}.", a.name).unwrap();
+        writeln!(
+            w,
+            "    pub const {name}: App = App {{ slug: {}, name: {}, cores: {runs} }};",
+            lit(&a.slug),
+            lit(&a.name),
+        )
+        .unwrap();
+    }
+    writeln!(w, "}}\n").unwrap();
+
+    table(w, "Every known app, sorted by slug.", "APPS", "App", &apps, |(_, name)| format!("apps::{name}"));
+
+    Ok(())
+}
+
+/// Platforms the same way again.
+fn emit_platforms(w: &mut String, data: &Registries) -> Result<(), String> {
+    let platform_names = const_names(data.platforms.iter().map(|p| p.slug.as_str()))?;
+    writeln!(w, "/// A named const per listed platform, for a producer that knows which one it runs on.")
+        .unwrap();
+    writeln!(w, "pub mod platforms {{").unwrap();
+    writeln!(w, "    use crate::Platform;\n").unwrap();
+    for (p, name) in data.platforms.iter().zip(&platform_names) {
+        writeln!(w, "    /// {}.", p.name).unwrap();
+        writeln!(
+            w,
+            "    pub const {name}: Platform = Platform {{ slug: {}, name: {} }};",
+            lit(&p.slug),
+            lit(&p.name),
+        )
+        .unwrap();
+    }
+    writeln!(w, "}}\n").unwrap();
+
+    let platforms: Vec<_> = data.platforms.iter().zip(&platform_names).collect();
+    table(w, "Every known platform, sorted by slug.", "PLATFORMS", "Platform", &platforms, |(_, name)| {
+        format!("platforms::{name}")
     });
 
     Ok(())

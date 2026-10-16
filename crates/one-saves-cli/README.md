@@ -24,9 +24,21 @@ $ 1saves extract card.1saves --part 1   # pull one save out as its own bundle
 $ 1saves profiles                # what --from accepts
 ```
 
-`--from` names either a producer (`mgba`, `duckstation`, `pcsx2`, or any of the 122 cores in the
-registry) or an input format (`ps1`, `raw`). A producer says who wrote the bytes; the format is
-still detected from the bytes themselves.
+`--from` names either a producer (`mgba`, `duckstation`, `pcsx2`, or any of the apps and 122 cores
+in the registry) or an input format (`ps1`, `raw`). A producer says who wrote the bytes; the format
+is still detected from the bytes themselves.
+
+A bundle's `source` names three layers: the app, the core it ran, and the platform under it.
+`--from retroarch` names only the app, so add the rest when you know them:
+
+```console
+$ 1saves convert crystal.srm --from retroarch --core gambatte --platform muos
+```
+
+Each is written as its registry slug, whatever it was called on the command line, and checked: a
+core the app cannot run is refused. A producer neither registry lists — PCSX2, Dolphin, a cartridge
+reader — is left out of `source` rather than given a reverse-DNS name `1saves` does not own, so its
+profile settles only the device kind and the system. `1saves profiles` shows which is which.
 
 `--rom` reads a ROM's header for a title and product code and hashes it; `--dat` resolves that
 digest against a No-Intro, Redump or TOSEC catalog to get a canonical name.

@@ -378,8 +378,9 @@ impl AsRef<str> for ReverseDnsName {
 
 /// A minted name: a bare slug, or a reverse-DNS name.
 ///
-/// Two fields hold one: a part's `kind` and a source's `app`. Both name something belonging to
-/// the producer rather than to everybody, which is why a producer may mint into them at all.
+/// Four fields hold one: a part's `kind`, and a source's `app`, `core` and `platform`. All four
+/// name something belonging to its owner rather than to everybody, which is why a producer may
+/// mint into them at all.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Name {
     /// A bare slug, belonging to the spec or to a registry.

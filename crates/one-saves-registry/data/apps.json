@@ -1,0 +1,23 @@
+[
+  {
+    "slug": "analogue-pocket",
+    "name": "Analogue Pocket",
+    "cores": [
+      "openfpga"
+    ]
+  },
+  {
+    "slug": "mister",
+    "name": "MiSTer",
+    "cores": [
+      "mister"
+    ]
+  },
+  {
+    "slug": "retroarch",
+    "name": "RetroArch",
+    "cores": [
+      "libretro"
+    ]
+  }
+]

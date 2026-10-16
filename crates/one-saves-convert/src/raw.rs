@@ -252,16 +252,16 @@ mod tests {
     fn wraps_a_save_with_what_the_profile_knows() {
         let options = RawOptions {
             system: Some("gba".into()),
-            source: Some(profile("mgba").unwrap().source(Some("0.10.3".into()))),
+            source: Some(profile("mgba").unwrap().source().core_version("0.10.3")),
             ..RawOptions::default()
         };
         let bundle = wrap(&vec![7u8; 32768], &options).expect("wraps");
 
         assert_eq!(bundle.header.system.as_ref().unwrap().as_str(), "gba");
         let source = bundle.header.source.as_ref().unwrap();
-        assert_eq!(source.app.as_ref().unwrap().as_str(), "mgba");
+        assert_eq!(source.core.as_ref().unwrap().as_str(), "mgba");
         assert_eq!(source.device_kind.as_ref().unwrap().as_str(), "emulator");
-        assert_eq!(source.app_version.as_deref(), Some("0.10.3"));
+        assert_eq!(source.core_version.as_deref(), Some("0.10.3"));
 
         // The role stays absent, which means `primary`, and writing it out would be malformed.
         assert!(bundle.parts[0].role.is_none());
