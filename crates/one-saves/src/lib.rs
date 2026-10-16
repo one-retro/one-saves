@@ -88,9 +88,8 @@
 //! ```
 //! use one_saves::{Bundle, Header, Part, PartKind};
 //!
-//! let save = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
-//! let mut entry = Part::new(0, save.to_vec()?);
-//! entry.kind = PartKind::Bundle;
+//! let save = Bundle::new(Header::default(), vec![Part::new(0, *b"SAVE")]);
+//! let entry = Part::new(0, save.to_vec()?).kind(PartKind::Bundle);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!

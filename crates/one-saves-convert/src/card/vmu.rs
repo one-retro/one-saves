@@ -43,9 +43,9 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
     let mut parts = Vec::new();
     for save in vmu.saves() {
-        let game = Some(Game { title: Some(save.name.clone()), ..Game::default() });
+        let game = Game::default().title(save.name.clone());
 
-        let mut part = save_part(Format::Vmu, parts.len(), save.data.clone(), game, options)?;
+        let mut part = save_part(Format::Vmu, parts.len(), save.data.clone(), Some(game), options)?;
         part.path = Some(save.name.clone());
         part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
         part.dirent = Some(save.dirent.clone());
@@ -56,8 +56,8 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         parts.push(card_image_part(0, vmu.image(), &options.role_for(Format::Vmu)));
     }
 
-    Ok(Bundle {
-        header: card_header(
+    Ok(Bundle::new(
+        card_header(
             Format::Vmu,
             vmu.capacity(),
             // The root block carries the VMU's custom colour and icon shape, which belong to no
@@ -66,7 +66,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             options,
         ),
         parts,
-    })
+    ))
 }
 
 /// Writes a bundle back out as a raw 128 KiB VMU image.

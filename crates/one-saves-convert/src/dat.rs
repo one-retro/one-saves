@@ -338,12 +338,10 @@ game (
     #[test]
     fn enriching_takes_the_catalog_name_and_keeps_the_header_serial() {
         let catalog = Catalog::parse(LOGIQX).expect("parses");
-        let mut game = Game {
-            title: Some("POKEMON RED".into()),
-            serial: Some("FROM-HEADER".into()),
-            rom_hashes: vec![hash_from_hex(HashAlgorithm::Crc32, "9F7FDD53").unwrap()],
-            ..Game::default()
-        };
+        let mut game = Game::default()
+            .title("POKEMON RED")
+            .serial("FROM-HEADER")
+            .rom_hash(hash_from_hex(HashAlgorithm::Crc32, "9F7FDD53").unwrap());
 
         assert!(catalog.enrich(&mut game));
         // The canonical set name replaces the shouty header title.
@@ -358,11 +356,9 @@ game (
     #[test]
     fn enriching_a_rom_no_catalog_lists_changes_nothing() {
         let catalog = Catalog::parse(LOGIQX).expect("parses");
-        let mut game = Game {
-            title: Some("UNKNOWN".into()),
-            rom_hashes: vec![hash_from_hex(HashAlgorithm::Crc32, "DEADBEEF").unwrap()],
-            ..Game::default()
-        };
+        let mut game = Game::default()
+            .title("UNKNOWN")
+            .rom_hash(hash_from_hex(HashAlgorithm::Crc32, "DEADBEEF").unwrap());
         let before = game.clone();
         assert!(!catalog.enrich(&mut game));
         assert_eq!(game, before);

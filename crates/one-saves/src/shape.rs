@@ -94,7 +94,7 @@ impl Bundle {
     /// ```
     /// use one_saves::{Bundle, Header, Part, Shape};
     ///
-    /// let save = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
+    /// let save = Bundle::new(Header::default(), vec![Part::new(0, *b"SAVE")]);
     /// assert_eq!(save.shape(), &Shape::Save);
     /// ```
     ///

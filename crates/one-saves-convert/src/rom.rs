@@ -190,18 +190,15 @@ pub fn hashes(bytes: &[u8]) -> Vec<HashValue> {
 #[must_use]
 pub fn game_from_rom(bytes: &[u8], filename: Option<&str>) -> Game {
     let info = identify(bytes).unwrap_or_default();
-    Game {
-        game_id: std::collections::BTreeMap::new(),
-        rom_hashes: hashes(bytes),
-        rom_filename: filename.map(ToOwned::to_owned),
-        serial: info.serial,
-        title: info.title,
-        // Which system's release these hints identify, which the ROM header is exactly the thing
-        // that knows. Distinct from the header's `system`, which says what will load the save.
-        system: info.system.and_then(|slug| slug.parse().ok()),
-        extensions: one_saves::Extensions::new(),
-        unknown: one_saves::UnknownKeys::new(),
-    }
+    let mut game = Game::default();
+    game.rom_hashes = hashes(bytes);
+    game.rom_filename = filename.map(ToOwned::to_owned);
+    game.serial = info.serial;
+    game.title = info.title;
+    // Which system's release these hints identify, which the ROM header is exactly the thing that
+    // knows. Distinct from the header's `system`, which says what will load the save.
+    game.system = info.system.and_then(|slug| slug.parse().ok());
+    game
 }
 
 #[cfg(test)]

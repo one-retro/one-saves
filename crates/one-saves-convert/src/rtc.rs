@@ -1240,14 +1240,10 @@ mod tests {
             ("budude2-gbc", PACKED_LEN_POCKET),
             ("spiritualized-gb", PACKED_LEN_POCKET),
         ] {
-            let bundle = one_saves::Bundle {
-                header: Header {
-                    source: Some(Source { app: Name::parse(app).ok(), ..Source::default() }),
-                    extensions: split.extensions(),
-                    ..Header::default()
-                },
-                parts: vec![Part::new(0, *b"SAVE")],
-            };
+            let header = Header::default()
+                .source(Source::default().app(Name::parse(app).unwrap()))
+                .extensions(split.extensions());
+            let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
             assert_eq!(form_of(&bundle), ClockForm::Packed(want), "{app}");
             assert_eq!(footer_of(&bundle).map(|f| f.len()), Some(want), "{app}");
         }
@@ -1285,14 +1281,10 @@ mod tests {
             ("sameboy", ClockForm::Mbc3Appended),
             ("mgba", ClockForm::Mbc3Appended),
         ] {
-            let bundle = one_saves::Bundle {
-                header: Header {
-                    source: Some(Source { app: Name::parse(app).ok(), ..Source::default() }),
-                    extensions: split.extensions(),
-                    ..Header::default()
-                },
-                parts: vec![Part::new(0, *b"SAVE")],
-            };
+            let header = Header::default()
+                .source(Source::default().app(Name::parse(app).unwrap()))
+                .extensions(split.extensions());
+            let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
             assert_eq!(form_of(&bundle), want, "{app}");
 
             match want {
@@ -1336,14 +1328,10 @@ mod tests {
             // A producer the registry does not list still gets the common form.
             ("pcsx2", ClockForm::Mbc3Appended),
         ] {
-            let bundle = one_saves::Bundle {
-                header: Header {
-                    source: Some(Source { app: Name::parse(app).ok(), ..Source::default() }),
-                    extensions: split.extensions(),
-                    ..Header::default()
-                },
-                parts: vec![Part::new(0, *b"SAVE")],
-            };
+            let header = Header::default()
+                .source(Source::default().app(Name::parse(app).unwrap()))
+                .extensions(split.extensions());
+            let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
             assert_eq!(form_of(&bundle), want, "{app}");
         }
     }

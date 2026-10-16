@@ -127,8 +127,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
     let mut parts = Vec::new();
     for save in card.saves() {
-        let game = ps1_memcard::serial_from_filename(&save.name)
-            .map(|serial| Game { serial: Some(serial.to_owned()), ..Game::default() });
+        let game = ps1_memcard::serial_from_filename(&save.name).map(|serial| Game::default().serial(serial));
 
         // The title and the picture are both in the save's first block, so both travel with it.
         let mut inner = one_saves::Extensions::new();
@@ -150,15 +149,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         parts.push(card_image_part(0, card.image(), &options.role_for(Format::Ps1Card)));
     }
 
-    Ok(Bundle {
-        header: card_header(
-            Format::Ps1Card,
-            card.capacity(),
-            card.system_area().map(<[u8]>::to_vec),
-            options,
-        ),
+    Ok(Bundle::new(
+        card_header(Format::Ps1Card, card.capacity(), card.system_area().map(<[u8]>::to_vec), options),
         parts,
-    })
+    ))
 }
 
 /// Writes a bundle back out as a raw 128 KiB card.

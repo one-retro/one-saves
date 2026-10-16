@@ -99,7 +99,9 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
     let mut parts = Vec::new();
     for (index, save) in saves.iter().enumerate() {
-        let game = Some(Game { serial: serial_from_name(&save.name), ..Game::default() });
+        let mut game = Game::default();
+        game.serial = serial_from_name(&save.name);
+        let game = Some(game);
         // The directory's record of the save: when it was made and when it was last written, both
         // qualified by the zone a PS2 keeps them in.
         let times = entry_seconds(&save.dirent, CREATED_AT)
@@ -131,18 +133,13 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         if let Some(title) = title_of(save) {
             extensions.insert(label_key(), title);
         }
-        let inner = Bundle {
-            header: Header {
-                // A PS2 save is a directory, so this nested bundle has a part per file — still
-                // one game's state, and so still a save.
-                shape: one_saves::Shape::Save,
-                system: Some(slug(SYSTEM)),
-                game: game.clone(),
-                extensions,
-                ..Header::default()
-            },
-            parts: inner_parts,
-        };
+        // A PS2 save is a directory, so this nested bundle has a part per file — still one game's
+        // state, and so still a save.
+        let header = Header::new(one_saves::Shape::Save)
+            .system(slug(SYSTEM))
+            .game(game.clone())
+            .extensions(extensions);
+        let inner = Bundle::new(header, inner_parts);
 
         let mut part = Part::new(u64::try_from(parts.len()).expect("fits"), inner.to_vec()?);
         part.kind = PartKind::Bundle;
@@ -166,7 +163,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     // The capacity is the card's data capacity, which is not the length of a dump of it: an 8 MB
     // card dumps to 8650752 bytes because every page carries a 16-byte spare area. Nothing on a
     // PS2 card belongs to no save, so there is no system area to keep.
-    Ok(Bundle { header: card_header(Format::Ps2Card, card.capacity(), None, options), parts })
+    Ok(Bundle::new(card_header(Format::Ps2Card, card.capacity(), None, options), parts))
 }
 
 /// Writes a bundle back out as a card image.

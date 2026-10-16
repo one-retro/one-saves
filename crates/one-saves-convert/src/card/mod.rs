@@ -185,19 +185,16 @@ with_a_card_format! {
         system_area: Option<Vec<u8>>,
         options: &CardOptions,
     ) -> one_saves::Header {
-        one_saves::Header {
-            // The card map is what makes it a card, and the shape says so outright since 0.2.
-            shape: one_saves::Shape::Card,
-            system: format.system().map(slug),
-            card: Some(one_saves::Card {
-                format: slug(format.card_format().expect("a card format names a slug")),
-                capacity: capacity as u64,
-                system_area,
-                unknown: one_saves::UnknownKeys::new(),
-            }),
-            source: options.source.clone(),
-            ..one_saves::Header::default()
-        }
+        let mut card = one_saves::Card::new(
+            slug(format.card_format().expect("a card format names a slug")),
+            capacity as u64,
+        );
+        card.system_area = system_area;
+        // The card map is what makes it a card, and the shape says so outright since 0.2.
+        one_saves::Header::new(one_saves::Shape::Card)
+            .card(card)
+            .system(format.system().map(slug))
+            .source(options.source.clone())
     }
 
 }
@@ -333,16 +330,11 @@ pub(crate) fn save_part_with(
     extensions: one_saves::Extensions,
 ) -> Result<Part> {
     let system = format.system().map(slug);
-    let inner = Bundle {
-        header: one_saves::Header {
-            shape: one_saves::Shape::Save,
-            system: system.clone(),
-            game: game.clone(),
-            extensions,
-            ..one_saves::Header::default()
-        },
-        parts: vec![Part::new(0, payload)],
-    };
+    let header = one_saves::Header::new(one_saves::Shape::Save)
+        .system(system.clone())
+        .game(game.clone())
+        .extensions(extensions);
+    let inner = Bundle::new(header, vec![Part::new(0, payload)]);
 
     let mut part = Part::new(u64::try_from(id).expect("part count fits"), inner.to_vec()?);
     part.kind = PartKind::Bundle;
