@@ -110,22 +110,22 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<one_saves::Bundle> {
             inner.insert(value);
         }
 
-        let mut part = save_part_with(Format::SaturnBup, index, save.data.clone(), None, options, inner)?;
-        // `save_part_with` takes the caller's role or the format's default; neither knows which
-        // medium this is, so the one worked out above replaces it.
-        part.role = Some(role.clone());
+        let mut part = save_part_with(Format::SaturnBup, index, save.data.clone(), None, options, inner)?
+            // `save_part_with` takes the caller's role or the format's default; neither knows which
+            // medium this is, so the one worked out above replaces it.
+            .role(role.clone())
+            .slot(u64::try_from(index).expect("slot fits"))
+            // The entry's own thirty bytes, verbatim, like every other format's. Where they sit is
+            // what makes this format unusual — the head of the save's first block rather than a
+            // directory region — and nothing in them depends on that: name, language, comment,
+            // date and length are the save's wherever it lands. Only the block list after them
+            // moves, and a writer rebuilds that for every format here.
+            .dirent(save.entry.clone())
+            // The date again, decoded, for a consumer that will not parse thirty opaque bytes. The
+            // volume records a write and no creation — the shape `x.1sav.dirent` admits for exactly
+            // this. No zone: the console keeps a wall clock and does not know one.
+            .extension(modified_only(save.written_at(), None));
         part.path = (!save.name.is_empty()).then(|| save.name.clone());
-        part.slot = Some(u64::try_from(index).expect("slot fits"));
-        // The entry's own thirty bytes, verbatim, like every other format's. Where they sit is
-        // what makes this format unusual — the head of the save's first block rather than a
-        // directory region — and nothing in them depends on that: name, language, comment, date
-        // and length are the save's wherever it lands. Only the block list after them moves, and
-        // a writer rebuilds that for every format here.
-        part.dirent = Some(save.entry.clone());
-        // The date again, decoded, for a consumer that will not parse thirty opaque bytes. The
-        // volume records a write and no creation — the shape `x.1sav.dirent` admits for exactly
-        // this. No zone: the console keeps a wall clock and does not know one.
-        part.extensions.insert(modified_only(save.written_at(), None));
         parts.push(part);
     }
 

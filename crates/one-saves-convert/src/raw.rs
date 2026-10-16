@@ -167,9 +167,7 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
     // cartridge keeps one clock, so it is said once for the bundle; splitting a dump into several
     // parts does not turn one reading into several.
     let payload = split.as_ref().map_or(bytes, |split| split.sram.as_slice());
-    let mut save = Part::new(0, payload);
-    save.role = role;
-    parts.push(save);
+    parts.push(Part::new(0, payload).role(role));
     if let Some(split) = &split {
         extensions = split.extensions();
     }
@@ -282,9 +280,7 @@ mod tests {
     #[test]
     fn refuses_to_guess_between_several_saves() {
         let mut bundle = wrap(&[1u8; 16], &RawOptions::default()).unwrap();
-        let mut second = Part::new(1, [2u8; 16]);
-        second.role = Some(Slug::parse("cartridge").unwrap());
-        bundle.parts.push(second);
+        bundle.parts.push(Part::new(1, [2u8; 16]).role(Slug::parse("cartridge").unwrap()));
 
         assert!(unwrap(&bundle).is_err(), "two saves is ambiguous");
         assert_eq!(unwrap_part(&bundle, 1).unwrap(), vec![2u8; 16]);

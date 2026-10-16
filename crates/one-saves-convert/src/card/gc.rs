@@ -202,10 +202,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             inner.insert(label);
         }
         let mut part =
-            save_part_with(Format::GcCard, parts.len(), save.data.clone(), Some(game), options, inner)?;
-        part.path = Some(save.filename.clone());
-        part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
-        part.dirent = Some(save.dirent.clone());
+            save_part_with(Format::GcCard, parts.len(), save.data.clone(), Some(game), options, inner)?
+                .path(save.filename.clone())
+                .slot(u64::try_from(save.slot).expect("slot fits"))
+                .dirent(save.dirent.clone());
         // The directory's own record of the save, which is the card's rather than the save's, so
         // it rides on the part beside the raw entry rather than in the nested bundle's header.
         if let Some(seconds) = modified_at(&save.dirent) {

@@ -45,10 +45,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     for save in vmu.saves() {
         let game = Game::default().title(save.name.clone());
 
-        let mut part = save_part(Format::Vmu, parts.len(), save.data.clone(), Some(game), options)?;
-        part.path = Some(save.name.clone());
-        part.slot = Some(u64::try_from(save.slot).expect("slot fits"));
-        part.dirent = Some(save.dirent.clone());
+        let part = save_part(Format::Vmu, parts.len(), save.data.clone(), Some(game), options)?
+            .path(save.name.clone())
+            .slot(u64::try_from(save.slot).expect("slot fits"))
+            .dirent(save.dirent.clone());
         parts.push(part);
     }
 
