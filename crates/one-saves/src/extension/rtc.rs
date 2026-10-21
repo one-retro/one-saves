@@ -168,16 +168,22 @@ impl fmt::Display for RtcMbc3 {
     }
 }
 
-/// The latched state of a GBA cartridge's Seiko S-3511A.
+/// The latched state of a GBA cartridge's Seiko S-3511A, and the moment a producer took it.
 ///
-/// The instant the chip was read is not here: it is a Unix instant, so it is exactly what
-/// [`Rtc`] carries beside this, and holding it twice would let the two drift apart.
+/// **The moment is not the reading.** The chip runs from whatever the game last set it to, so
+/// what it showed is the components, which [`Rtc`] carries beside this read as though they were
+/// UTC. `taken_at` is the host clock the producer advances the chip from, on the producer's own
+/// scale, which is what rebuilding its file needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtcS3511a {
     /// The seven latched BCD bytes: year since 2000, month, day, weekday, hour, minute, second.
     pub components: [u8; 7],
     /// The control register as read. Bit 6 is 24-hour mode.
     pub control: u8,
+    /// The producer's clock when it took the components, in epoch seconds. The anchor, not the
+    /// reading, and not necessarily UTC: MiSTer gives its cores local standard time counted as
+    /// though it were.
+    pub taken_at: Option<i64>,
 }
 
 impl Extension for RtcS3511a {
@@ -189,6 +195,9 @@ impl From<RtcS3511a> for CBOR {
         let mut map = Map::new();
         map.insert(0u64, CBOR::to_byte_string(clock.components));
         map.insert(1u64, u64::from(clock.control));
+        if let Some(taken_at) = clock.taken_at {
+            map.insert(2u64, epoch(taken_at));
+        }
         map.into()
     }
 }
@@ -198,12 +207,13 @@ impl TryFrom<CBOR> for RtcS3511a {
 
     fn try_from(value: CBOR) -> dcbor::Result<Self> {
         let map = want_map(&value)?;
-        only_keys(map, &[0, 1])?;
+        only_keys(map, &[0, 1, 2])?;
         let components = map.get::<u64, CBOR>(0).ok_or(dcbor::Error::MissingMapKey)?;
         let components = components.as_byte_string().ok_or(dcbor::Error::WrongType)?;
         Ok(RtcS3511a {
             components: components.try_into().map_err(|_| dcbor::Error::OutOfRange)?,
             control: want_uint(&map.get::<u64, CBOR>(1).ok_or(dcbor::Error::MissingMapKey)?)?,
+            taken_at: map.get::<u64, CBOR>(2).map(|value| want_epoch(&value)).transpose()?,
         })
     }
 }
@@ -221,11 +231,16 @@ impl fmt::Display for RtcS3511a {
         let mode = if self.control & 0x40 != 0 { "24-hour" } else { "12-hour" };
         let bcd = |byte: u8| byte >> 4 <= 9 && byte & 0x0f <= 9;
         if [year, month, day, weekday, hour, minute, second].into_iter().all(bcd) {
-            write!(f, "20{year:02x}-{month:02x}-{day:02x} {hour:02x}:{minute:02x}:{second:02x}, {mode}")
+            write!(f, "20{year:02x}-{month:02x}-{day:02x} {hour:02x}:{minute:02x}:{second:02x}, {mode}")?;
         } else {
             f.write_str("not BCD: h'")?;
             self.components.iter().try_for_each(|byte| write!(f, "{byte:02x}"))?;
-            write!(f, "', {mode}")
+            write!(f, "', {mode}")?;
+        }
+        // On the producer's scale, which is why no zone is printed beside it.
+        match self.taken_at {
+            Some(taken_at) => write!(f, ", taken {}", Civil(taken_at)),
+            None => Ok(()),
         }
     }
 }
@@ -259,10 +274,29 @@ mod tests {
 
     #[test]
     fn a_seiko_clock_shows_its_digits() {
-        let clock = RtcS3511a { components: [0x26, 0x08, 0x12, 0x03, 0x10, 0x39, 0x43], control: 0x40 };
+        let clock = RtcS3511a {
+            components: [0x26, 0x08, 0x12, 0x03, 0x10, 0x39, 0x43],
+            control: 0x40,
+            taken_at: None,
+        };
         assert_eq!(RtcS3511a::try_from(CBOR::from(clock)).unwrap(), clock);
         assert_eq!(clock.to_string(), "2026-08-12 10:39:43, 24-hour");
-        let garbled = RtcS3511a { components: [0x01, 0x20, 0x3f, 0x00, 0x3d, 0x9c, 0xbb], control: 0 };
+        let garbled =
+            RtcS3511a { components: [0x01, 0x20, 0x3f, 0x00, 0x3d, 0x9c, 0xbb], control: 0, taken_at: None };
         assert_eq!(garbled.to_string(), "not BCD: h'01203f003d9cbb', 12-hour");
+    }
+
+    #[test]
+    fn a_seiko_clock_carries_the_moment_it_was_taken() {
+        // Key 2 is optional: a bundle written before it existed has only keys 0 and 1.
+        let clock = RtcS3511a {
+            components: [0x10, 0x01, 0x01, 0x00, 0x00, 0x08, 0x47],
+            control: 0x40,
+            taken_at: Some(1_792_576_838),
+        };
+        let encoded = CBOR::from(clock);
+        assert_eq!(encoded.as_map().unwrap().len(), 3);
+        assert_eq!(RtcS3511a::try_from(encoded).unwrap(), clock);
+        assert_eq!(clock.to_string(), "2010-01-01 00:08:47, 24-hour, taken 2026-10-21 10:00:38");
     }
 }

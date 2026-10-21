@@ -3,9 +3,9 @@
 //! Everything here came off an actual emulator or FPGA core rather than being constructed, which
 //! is the point: a synthetic fixture proves the code agrees with itself, and these prove it
 //! agrees with the thing it has to interoperate with. Between them they cover four producers and
-//! four on-disk shapes of the same cartridge clock, and six Sega CD backup RAMs off two more —
-//! both sockets, both of the filesystem's storage modes, a volume with nothing on it, and one
-//! save sitting on two volumes at once.
+//! four on-disk shapes of the same cartridge clock, a GBA's Seiko clock off a fifth, and six Sega
+//! CD backup RAMs off two more — both sockets, both of the filesystem's storage modes, a volume
+//! with nothing on it, and one save sitting on two volumes at once.
 //!
 //! The expected clock values are recorded here rather than beside the files. They are assertions,
 //! not data, and the Gambatte capture instant in particular **cannot** be taken from the
@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use one_saves::Bundle;
-use one_saves::extension::Rtc;
+use one_saves::extension::{Rtc, RtcS3511a};
 use one_saves_convert::{Format, detect, profile, raw, rtc};
 
 /// The workspace's fixtures, which are not packaged with the crate — see this file's header.
@@ -272,6 +272,45 @@ fn one_cartridge_clock_reads_the_same_through_every_producer() {
         assert_eq!(reading.accuracy_ms, None, "{}: no accuracy", fixture.path);
     }
     assert!(shapes.len() >= 3, "the fixtures should cover several shapes, got {shapes:?}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The GBA's Seiko clock.
+// ---------------------------------------------------------------------------------------------
+
+/// A Pokémon Ruby save GBA_MiSTer wrote after about nine minutes of play, on a MiSTer in Pacific
+/// time, copied off it at 11:00:40 PDT on 2026-10-21. The cartridge's flash, then one SD block of
+/// clock.
+const RUBY_MISTER: &str = "GBA/Pokemon Ruby/GBA_MiSTer/Pokemon - Ruby Version (USA, Europe) (Rev 2).sav";
+
+#[test]
+fn a_real_gba_mister_save_reads_its_seiko_clock_and_round_trips() {
+    if skip_if_absent() {
+        return;
+    }
+    let bytes = std::fs::read(fixtures_root().join(RUBY_MISTER)).expect("read fixture");
+    assert_eq!(bytes.len(), 131_584, "128 KiB of flash and a 512-byte block");
+    let options = raw::RawOptions {
+        system: Some("gba".to_owned()),
+        source: Some(profile("gba-mister").expect("a listed core").source()),
+        ..raw::RawOptions::default()
+    };
+    let bundle = raw::wrap(&bytes, &options).expect("wraps");
+    assert_eq!(bundle.parts[0].payload.len(), 131_072, "the block is split off the flash");
+
+    // The core powers the chip on at 2009-12-31 23:59:45 and Ruby never set it, so nine minutes
+    // and two seconds of play later it read this, the weekday rolled from Saturday to Sunday.
+    let chip = bundle.header.extensions.get::<RtcS3511a>().expect("the chip");
+    assert_eq!(chip.components, [0x10, 0x01, 0x01, 0x00, 0x00, 0x08, 0x47]);
+    assert_eq!(chip.control, 0x40, "the core never stores the register and comes up in 24-hour mode");
+    // The anchor is MiSTer's local standard time counted as though it were UTC: 10:00:38 on that
+    // scale is 18:00:38 UTC, two seconds before the copy, eight hours rather than PDT's seven.
+    assert_eq!(chip.taken_at, Some(1_792_576_838));
+    // The reading is the calendar, not the anchor, sixteen years away from it.
+    assert_eq!(reading_of(&bundle), Some(1_262_304_527));
+
+    assert_eq!(rtc::form_of(&bundle), rtc::ClockForm::S3511aPacked(512));
+    assert_eq!(raw::unwrap(&bundle).expect("unwraps"), bytes, "the core's file, byte for byte");
 }
 
 // ---------------------------------------------------------------------------------------------

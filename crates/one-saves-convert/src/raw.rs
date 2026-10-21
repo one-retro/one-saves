@@ -159,7 +159,7 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
             footer: Vec::new(),
             // For an origin, the anchor plus the elapsed time the counters describe, never the
             // anchor itself.
-            reading: Some(clock.reading()),
+            reading: clock.reading(),
             clock,
         };
         extensions = sidecar_split.extensions();
@@ -339,8 +339,10 @@ mod tests {
         let bundle = wrap(&vec![7u8; 131_072], &options).expect("wraps");
 
         let extensions = &bundle.header.extensions;
-        assert_eq!(extensions.get::<one_saves::extension::Rtc>().expect("a reading").reading, 1_786_556_383);
-        assert!(extensions.get::<one_saves::extension::RtcS3511a>().is_some());
+        // The calendar is the reading; the instant the record holds is the anchor, kept as key 2.
+        assert_eq!(extensions.get::<one_saves::extension::Rtc>().expect("a reading").reading, 1_786_531_183);
+        let chip = extensions.get::<one_saves::extension::RtcS3511a>().expect("the chip");
+        assert_eq!(chip.taken_at, Some(1_786_556_383));
         bundle.validate().expect("valid bundle");
 
         // The save goes back the size a cartridge's is, and the clock to its own file.
