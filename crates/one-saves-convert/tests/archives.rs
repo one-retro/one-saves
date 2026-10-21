@@ -25,16 +25,16 @@ fn zip(members: &[(&str, Vec<u8>)]) -> Vec<u8> {
 }
 
 fn fixture(rest: &str) -> Vec<u8> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1").join(rest);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(rest);
     std::fs::read(path).expect("a vendored fixture")
 }
 
 fn a_card() -> Vec<u8> {
-    fixture("Fragmented card/one-saves/fragmented.mcd")
+    fixture("one-saves/fragmented.mcd")
 }
 
 fn a_save() -> Vec<u8> {
-    fixture("Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV")
+    fixture("ps3/BASLUS-01360464634.PSV")
 }
 
 #[test]
@@ -55,10 +55,8 @@ fn an_archived_card_is_read_as_that_card() {
 /// The case the format is actually shared in: the saves, not a card.
 #[test]
 fn archived_loose_saves_are_assembled_onto_a_card() {
-    let archive = zip(&[
-        ("BASLUS-01360464634.PSV", a_save()),
-        ("BISLPM-87053.PSV", fixture("Capcom vs SNK Millennium Fight 2000 Pro/PS3/BISLPM-87053.PSV")),
-    ]);
+    let archive =
+        zip(&[("BASLUS-01360464634.PSV", a_save()), ("BISLPM-87053.PSV", fixture("ps3/BISLPM-87053.PSV"))]);
     let unpacked = unpack(&archive).expect("unpacks");
     assert!(unpacked.assembled, "no card was in there, so one was built");
 

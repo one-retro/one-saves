@@ -13,19 +13,29 @@ use saturn_backup::{BackupBuilder, BackupRam, Geometry, detect};
 
 /// A dump off one game's internal memory, or off its cart, as Beetle Saturn wrote it.
 fn fixture(game: &str, extension: &str) -> Vec<u8> {
-    producer_fixture(game, "Beetle Saturn", extension)
+    producer_fixture(game, "retroarch/beetle-saturn", extension)
 }
 
-/// The same, naming the producer.
+/// The same, naming the producer's folder under `data/saves`.
 fn producer_fixture(game: &str, producer: &str, extension: &str) -> Vec<u8> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../data/saves/Saturn")
-        .join(game)
-        .join(producer);
+    // One folder holds every game its producer saved, so the game picks out the file by the name
+    // it was saved under.
+    let stem = match game {
+        "Panzer Dragoon Saga" => "Panzer Dragoon Saga (Europe) (Disc 1)",
+        "NiGHTS into Dreams" => "Nights into Dreams... (USA, Brazil)",
+        "Sonic 3D Blast" => "Sonic 3D Blast (USA)",
+        "Saturn BIOS" => "mpr-17933",
+        other => panic!("no Saturn fixture for {other}"),
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(producer);
     let entry = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
         .filter_map(std::result::Result::ok)
-        .find(|e| e.path().extension().is_some_and(|x| x == extension))
+        .find(|e| {
+            let path = e.path();
+            path.extension().is_some_and(|x| x == extension)
+                && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(stem))
+        })
         .unwrap_or_else(|| panic!("a .{extension} fixture in {}", dir.display()));
     std::fs::read(entry.path()).expect("reads")
 }
@@ -247,7 +257,7 @@ fn yabause_writes_the_address_space_and_it_reads_the_same() {
     // The second producer, and the one that proves the container is worth telling apart. Yabause
     // dumps the address space the 68000 sees rather than the data: 64 KiB for 32 KiB of volume,
     // each byte behind the 0xFF an unmapped even address reads. Same filesystem underneath.
-    let wide = producer_fixture("NiGHTS into Dreams", "Yabause", "srm");
+    let wide = producer_fixture("NiGHTS into Dreams", "retroarch/yabause", "srm");
     assert_eq!(wide.len(), 65_536, "twice the volume it holds");
     assert!((0..wide.len()).step_by(2).all(|i| wide[i] == 0xFF), "every even address is open bus");
 
@@ -271,7 +281,7 @@ fn yabause_writes_the_address_space_and_it_reads_the_same() {
 fn a_wide_dump_rebuilds_byte_for_byte() {
     // The container survives the round trip, so a Yabause volume comes back as Yabause wrote it
     // rather than in the form this crate happens to work in.
-    let wide = producer_fixture("NiGHTS into Dreams", "Yabause", "srm");
+    let wide = producer_fixture("NiGHTS into Dreams", "retroarch/yabause", "srm");
     let volume = BackupRam::parse(&wide).expect("reads");
     assert_eq!(BackupBuilder::from_volume(&volume).build().expect("writes"), wide);
 
@@ -290,14 +300,14 @@ fn standalone_mednafen_writes_packed_and_gzips_only_the_cart() {
     // — so the fork's container is not a libretro invention — but the Backup RAM Cart it writes
     // is a gzip member. This crate depends on nothing and so does not inflate it; what it does is
     // say which of those two things went wrong.
-    let internal = producer_fixture("NiGHTS into Dreams", "Mednafen", "bkr");
+    let internal = producer_fixture("NiGHTS into Dreams", "macos/mednafen", "bkr");
     let volume = BackupRam::parse(&internal).expect("reads");
     assert_eq!(volume.container(), saturn_backup::Container::Packed);
     assert_eq!(volume.geometry().block, 64);
     assert_eq!(volume.saves().len(), 2);
     assert_eq!(BackupBuilder::from_volume(&volume).build().expect("writes"), internal);
 
-    let cart = producer_fixture("NiGHTS into Dreams", "Mednafen", "bcr");
+    let cart = producer_fixture("NiGHTS into Dreams", "macos/mednafen", "bcr");
     assert_eq!(&cart[..2], &saturn_backup::GZIP_MAGIC, "gzip, not a volume");
     assert_eq!(cart.len(), 804, "512 KiB of mostly-empty volume comes down to this");
     check_gzipped_cart(&cart);
@@ -340,8 +350,9 @@ fn three_producers_agree_on_the_filesystem() {
     // in content because they are different play sessions; what must match is the shape.
     let volumes = [
         BackupRam::parse(&fixture("NiGHTS into Dreams", "srm")).expect("Beetle Saturn"),
-        BackupRam::parse(&producer_fixture("NiGHTS into Dreams", "Yabause", "srm")).expect("Yabause"),
-        BackupRam::parse(&producer_fixture("NiGHTS into Dreams", "Mednafen", "bkr")).expect("Mednafen"),
+        BackupRam::parse(&producer_fixture("NiGHTS into Dreams", "retroarch/yabause", "srm"))
+            .expect("Yabause"),
+        BackupRam::parse(&producer_fixture("NiGHTS into Dreams", "macos/mednafen", "bkr")).expect("Mednafen"),
     ];
     for volume in &volumes {
         assert_eq!(volume.geometry().block, 64);
@@ -366,8 +377,8 @@ fn a_fragmented_volume_reads_and_rebuilds_as_the_console_left_it() {
     // it was: still on blocks 2, 4, 6, 8 …, still threaded through the other save. So this is a
     // layout a console produces and maintains, not one this crate invented, and the reader
     // following the block list rather than walking forward is what the console itself requires.
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../data/saves/Saturn/Fragmented card/one-saves/fragmented.bkr");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/one-saves/fragmented.bkr");
     let image = std::fs::read(&path).expect("the fixture");
     let volume = BackupRam::parse(&image).expect("reads");
 
@@ -399,8 +410,8 @@ fn rebuilding_keeps_a_layout_and_allocating_afresh_does_not() {
     // The two halves of the contract, told apart. `from_volume` puts every save back where it
     // was; a builder given the same saves with nothing said about placement lays them out in
     // runs. Both are right, and only one of them reproduces a file.
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../data/saves/Saturn/Fragmented card/one-saves/fragmented.bkr");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/one-saves/fragmented.bkr");
     let volume = BackupRam::parse(&std::fs::read(&path).expect("the fixture")).expect("reads");
 
     let mut fresh =

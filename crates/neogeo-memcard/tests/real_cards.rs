@@ -16,17 +16,18 @@ use neogeo_memcard::{
 /// `set` is `NEOGEO` for the 2 KiB card a cartridge system takes, `NEOGEO-CD` for the 8 KiB one
 /// a Neo Geo CD keeps inside itself.
 ///
-/// `tests/` symlinks the workspace's `data/saves`, which cargo follows when packaging, so the
-/// cards travel with the crate and these tests run from a published tarball too.
 fn fixture_in(set: &str, name: &str) -> Vec<u8> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(set);
-    let dir = path.join(name).join("MiSTer");
-    let entry = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
-        .filter_map(std::result::Result::ok)
-        .find(|e| e.path().extension().is_some_and(|x| x == "sav"))
-        .expect("a .sav fixture");
-    std::fs::read(entry.path()).expect("reads")
+    // The core keeps both sets in one folder, so the set and the game together pick out the file.
+    let file = match (set, name) {
+        ("NEOGEO", "Fatal Fury 2") => "Fatal Fury 2 (fatfury2).sav",
+        ("NEOGEO", "Metal Slug X") => "Metal Slug X (mslugx).sav",
+        ("NEOGEO-CD", "Fatal Fury 2") => "Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).sav",
+        ("NEOGEO-CD", "King of Fighters '96") => "King of Fighters '96, The (Japan, USA) (En,Ja).sav",
+        ("NEOGEO-CD", "Metal Slug") => "Metal Slug (Japan) (En,Ja).sav",
+        other => panic!("no MiSTer card for {other:?}"),
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/mister/neogeo-mister");
+    std::fs::read(path.join(file)).expect("reads")
 }
 
 /// A card off a cartridge system.
@@ -36,16 +37,13 @@ fn fixture(name: &str) -> Vec<u8> {
 
 /// A bare card, as the NeoCD libretro core writes it: no container and no word swap.
 fn neocd_fixture(name: &str) -> Vec<u8> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../data/saves/NEOGEO-CD")
-        .join(name)
-        .join("NeoCD");
-    let entry = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
-        .filter_map(std::result::Result::ok)
-        .find(|e| e.path().extension().is_some_and(|x| x == "srm"))
-        .expect("a .srm fixture");
-    std::fs::read(entry.path()).expect("reads")
+    let file = match name {
+        "Fatal Fury 2" => "Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).srm",
+        "Metal Slug" => "Metal Slug (Japan) (En,Ja).srm",
+        other => panic!("no NeoCD card for {other}"),
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/retroarch/neocd");
+    std::fs::read(path.join(file)).expect("reads")
 }
 
 #[test]

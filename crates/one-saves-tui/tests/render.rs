@@ -10,8 +10,8 @@ use crossterm::event::KeyCode;
 use one_saves_tui::app::{App, Mode, Pending};
 use one_saves_tui::model::Card;
 
-const PS2: &str = "PS2/Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2";
-const PS1: &str = "PS1/Gran Turismo/DuckStation/shared_card_1.mcd";
+const PS2: &str = "macos/pcsx2/Mcd001.ps2";
+const PS1: &str = "macos/duckstation/shared_card_1.mcd";
 
 fn card() -> Card {
     open(PS2)
@@ -107,10 +107,9 @@ fn copying_with_one_card_open_says_what_is_missing() {
 /// Adding a save to a card is not a question; landing on top of one is.
 #[test]
 fn a_copy_only_asks_when_a_save_of_that_name_is_already_there() {
-    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
-    let one = Card::open(ps1.join("Gran Turismo/DuckStation/shared_card_1.mcd")).expect("opens");
-    let two = Card::open(ps1.join("Castlevania Symphony of the Night/DuckStation/shared_card_2.mcd"))
-        .expect("opens");
+    let saves = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves");
+    let one = Card::open(saves.join("macos/duckstation/shared_card_1.mcd")).expect("opens");
+    let two = Card::open(saves.join("macos/duckstation/shared_card_2.mcd")).expect("opens");
 
     // Different saves: it just happens, and says so.
     let mut app = App::new(vec![one, two], picker());
@@ -253,10 +252,9 @@ fn an_animated_icon_advances_and_a_still_one_does_not() {
 /// The card being acted on is obvious without reading the border characters.
 #[test]
 fn the_focused_card_is_marked() {
-    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
-    let one = Card::open(ps1.join("Gran Turismo/DuckStation/shared_card_1.mcd")).expect("opens");
-    let two = Card::open(ps1.join("Castlevania Symphony of the Night/DuckStation/shared_card_2.mcd"))
-        .expect("opens");
+    let saves = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves");
+    let one = Card::open(saves.join("macos/duckstation/shared_card_1.mcd")).expect("opens");
+    let two = Card::open(saves.join("macos/duckstation/shared_card_2.mcd")).expect("opens");
     let mut app = App::new(vec![one, two], picker());
 
     let drawn = screen(&mut app, 86, 20);
@@ -279,9 +277,9 @@ fn map_row(drawn: &str) -> String {
 /// The blocks a card holds, one cell each, so a save's size is visible rather than read.
 #[test]
 fn a_cards_blocks_are_drawn_one_cell_each() {
-    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
+    let saves = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves");
     let mut app = App::new(
-        vec![Card::open(ps1.join("Gran Turismo/DuckStation/shared_card_1.mcd")).expect("opens")],
+        vec![Card::open(saves.join("macos/duckstation/shared_card_1.mcd")).expect("opens")],
         picker(),
     );
     let drawn = screen(&mut app, 86, 20);
@@ -381,14 +379,13 @@ fn y_and_n_point_at_a_button_without_committing() {
 
 /// Two cards, opened on copies so a test that writes never touches what is vendored.
 fn two_cards(tag: &str) -> App {
-    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
+    let saves = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves");
     let mut cards = Vec::new();
-    for (name, from) in [
-        ("a", "Gran Turismo/DuckStation/shared_card_1.mcd"),
-        ("b", "Castlevania Symphony of the Night/DuckStation/shared_card_2.mcd"),
-    ] {
+    for (name, from) in
+        [("a", "macos/duckstation/shared_card_1.mcd"), ("b", "macos/duckstation/shared_card_2.mcd")]
+    {
         let to = std::env::temp_dir().join(format!("1cards-{tag}-{name}.mcd"));
-        std::fs::copy(ps1.join(from), &to).expect("copies the fixture");
+        std::fs::copy(saves.join(from), &to).expect("copies the fixture");
         cards.push(Card::open(&to).expect("opens"));
     }
     App::new(cards, picker())
@@ -482,9 +479,8 @@ fn a_question_that_wraps_still_shows_its_buttons() {
     let deep = std::env::temp_dir().join("Library/Application Support/DuckStation/memcards");
     std::fs::create_dir_all(&deep).expect("a deep directory");
     let target = deep.join("shared_card_1.mcd");
-    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
-    std::fs::copy(ps1.join("Gran Turismo/DuckStation/shared_card_1.mcd"), &target)
-        .expect("copies the fixture");
+    let saves = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves");
+    std::fs::copy(saves.join("macos/duckstation/shared_card_1.mcd"), &target).expect("copies the fixture");
 
     let mut app = App::new(vec![Card::open(&target).expect("opens")], picker());
     app.cards[0].remove(0).expect("something to write");
@@ -508,9 +504,9 @@ fn a_question_that_wraps_still_shows_its_buttons() {
 /// The block map takes as many rows as its blocks need, rather than one line and a shrug.
 #[test]
 fn the_block_map_wraps_onto_as_many_rows_as_it_needs() {
-    let ps1 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1");
+    let saves = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves");
     let mut app = App::new(
-        vec![Card::open(ps1.join("Gran Turismo/DuckStation/shared_card_1.mcd")).expect("opens")],
+        vec![Card::open(saves.join("macos/duckstation/shared_card_1.mcd")).expect("opens")],
         picker(),
     );
 
@@ -562,8 +558,7 @@ fn an_archived_card_is_marked_read_only() {
     use std::io::Write;
 
     let save = std::fs::read(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../data/saves/PS1/Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/ps3/BASLUS-01360464634.PSV"),
     )
     .expect("a vendored save");
 

@@ -8,13 +8,12 @@
 use std::path::{Path, PathBuf};
 
 fn card(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS2").join(name)
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(name)
 }
 
 #[test]
 fn a_real_card_holds_the_files_each_save_is_made_of() {
-    let bytes =
-        std::fs::read(card("Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2")).expect("the vendored card");
+    let bytes = std::fs::read(card("macos/pcsx2/Mcd001.ps2")).expect("the vendored card");
     // 8 MB of data plus a 16-byte spare area on every 512-byte page.
     assert_eq!(bytes.len(), 8_650_752);
 
@@ -43,7 +42,7 @@ fn a_real_card_holds_the_files_each_save_is_made_of() {
 
 #[test]
 fn a_formatted_card_with_nothing_on_it_is_still_a_card() {
-    let bytes = std::fs::read(card("Formatted empty card/PCSX2/Mcd002.ps2")).expect("the vendored card");
+    let bytes = std::fs::read(card("macos/pcsx2/Mcd002.ps2")).expect("the vendored card");
     let card = ps2_memcard::MemoryCard::parse(&bytes).expect("a formatted card parses");
     assert!(card.had_spare());
     assert_eq!(card.capacity(), 8_388_608);
@@ -63,7 +62,7 @@ fn a_formatted_card_with_nothing_on_it_is_still_a_card() {
 /// code that reads it.
 #[test]
 fn the_consoles_timezone_setting_does_not_move_what_the_card_records() {
-    let raw = std::fs::read(card("Formatted empty card/PCSX2/Mcd002.ps2")).expect("the card");
+    let raw = std::fs::read(card("macos/pcsx2/Mcd002.ps2")).expect("the card");
     // Every 512-byte page carries 16 further bytes of spare area holding ECC.
     let data: Vec<u8> = raw.chunks(528).flat_map(|page| page[..512].to_vec()).collect();
     let u16at = |at: usize| u16::from_le_bytes(data[at..at + 2].try_into().unwrap());
@@ -109,7 +108,7 @@ fn a_card_shaped_file_that_was_never_formatted_is_not_a_card() {
 /// can.
 #[test]
 fn a_rebuilt_superblock_matches_the_one_a_console_wrote() {
-    for name in ["Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2", "Formatted empty card/PCSX2/Mcd002.ps2"] {
+    for name in ["macos/pcsx2/Mcd001.ps2", "macos/pcsx2/Mcd002.ps2"] {
         let original = std::fs::read(card(name)).expect("a vendored card");
         let parsed = ps2_memcard::MemoryCard::parse(&original).expect("parses");
 

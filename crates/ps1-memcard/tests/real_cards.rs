@@ -17,7 +17,7 @@ use ps1_memcard::{CardBuilder, MemoryCard};
 const DIRECTORY: std::ops::Range<usize> = 0..(63 * 128);
 
 fn card(rest: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1").join(rest);
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(rest);
     std::fs::read(path).expect("a vendored card")
 }
 
@@ -28,10 +28,7 @@ fn card(rest: &str) -> Vec<u8> {
 /// against a card something else produced.
 #[test]
 fn a_rebuilt_card_matches_the_one_a_console_wrote() {
-    for name in [
-        "Gran Turismo/DuckStation/shared_card_1.mcd",
-        "Castlevania Symphony of the Night/DuckStation/shared_card_2.mcd",
-    ] {
+    for name in ["macos/duckstation/shared_card_1.mcd", "macos/duckstation/shared_card_2.mcd"] {
         let original = card(name);
         let parsed = MemoryCard::parse(&original).expect("parses");
 
@@ -61,7 +58,7 @@ fn a_rebuilt_card_matches_the_one_a_console_wrote() {
 #[test]
 fn a_continuation_entry_carries_no_size() {
     // Gran Turismo spans five blocks, so its chain has one first entry and four continuations.
-    let original = card("Gran Turismo/DuckStation/shared_card_1.mcd");
+    let original = card("macos/duckstation/shared_card_1.mcd");
     let parsed = MemoryCard::parse(&original).expect("parses");
     let mut builder = CardBuilder::new();
     for save in parsed.saves() {

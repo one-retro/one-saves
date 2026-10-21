@@ -254,19 +254,29 @@ mod tests {
     /// A real volume off the workspace's `data/saves`, for the tests that need a console to have
     /// written the bytes.
     fn fixture(game: &str, extension: &str) -> Vec<u8> {
-        producer_fixture(game, "Beetle Saturn", extension)
+        producer_fixture(game, "retroarch/beetle-saturn", extension)
     }
 
-    /// The same, naming the producer.
+    /// The same, naming the producer's folder under `data/saves`.
     fn producer_fixture(game: &str, producer: &str, extension: &str) -> Vec<u8> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../data/saves/Saturn")
-            .join(game)
-            .join(producer);
+        // One folder holds every game its producer saved, so the game picks out the file by the name
+        // it was saved under.
+        let stem = match game {
+            "Panzer Dragoon Saga" => "Panzer Dragoon Saga (Europe) (Disc 1)",
+            "NiGHTS into Dreams" => "Nights into Dreams... (USA, Brazil)",
+            "Sonic 3D Blast" => "Sonic 3D Blast (USA)",
+            "Saturn BIOS" => "mpr-17933",
+            other => panic!("no Saturn fixture for {other}"),
+        };
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(producer);
         let entry = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
             .filter_map(std::result::Result::ok)
-            .find(|e| e.path().extension().is_some_and(|x| x == extension))
+            .find(|e| {
+                let path = e.path();
+                path.extension().is_some_and(|x| x == extension)
+                    && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(stem))
+            })
             .unwrap_or_else(|| panic!("a .{extension} fixture"));
         std::fs::read(entry.path()).expect("reads")
     }
@@ -322,7 +332,7 @@ mod tests {
         // from one holds the same saves as a bundle made from the other. What it does not hold is
         // which container it came from, so `extract` writes the packed form — a stated decision
         // rather than an accident, and the same one a Neo Geo card read out of a MiSTer save gets.
-        let wide = producer_fixture("NiGHTS into Dreams", "Yabause", "srm");
+        let wide = producer_fixture("NiGHTS into Dreams", "retroarch/yabause", "srm");
         let bundle = read(&wide, &CardOptions::default()).expect("reads");
         assert_eq!(bundle.parts.len(), 2);
         assert_eq!(bundle.parts[0].path.as_deref(), Some("NIGHTS___01"));

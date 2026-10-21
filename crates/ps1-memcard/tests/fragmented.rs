@@ -140,21 +140,14 @@ fn writing_a_scattered_card_back_packs_it_without_losing_a_byte() {
 
 /// Where the vendored saves live, and how many blocks each takes.
 fn real_saves() -> Vec<ps1_memcard::Save> {
-    let at = |rest: &str| {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1").join(rest)
-    };
+    let at =
+        |rest: &str| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(rest);
     let mut saves = Vec::new();
-    for rest in [
-        "Gran Turismo/DuckStation/shared_card_1.mcd",
-        "Castlevania Symphony of the Night/DuckStation/shared_card_2.mcd",
-    ] {
+    for rest in ["macos/duckstation/shared_card_1.mcd", "macos/duckstation/shared_card_2.mcd"] {
         let bytes = std::fs::read(at(rest)).expect("a vendored card");
         saves.extend(ps1_memcard::MemoryCard::parse(&bytes).expect("parses").into_saves());
     }
-    for rest in [
-        "Capcom vs SNK Millennium Fight 2000 Pro/PS3/BISLPM-87053.PSV",
-        "Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV",
-    ] {
+    for rest in ["ps3/BISLPM-87053.PSV", "ps3/BASLUS-01360464634.PSV"] {
         let bytes = std::fs::read(at(rest)).expect("a vendored save");
         saves.push(ps1_memcard::read_single(&bytes).expect("a save"));
     }
@@ -205,7 +198,7 @@ fn real_saves_survive_being_scattered_across_a_card() {
 
     // And it is still the card a BIOS was shown, byte for byte.
     let vendored = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../data/saves/PS1/Fragmented card/one-saves/fragmented.mcd");
+        .join("../../data/saves/one-saves/fragmented.mcd");
     assert_eq!(card, std::fs::read(vendored).expect("the vendored card"));
 }
 
@@ -213,7 +206,7 @@ fn real_saves_survive_being_scattered_across_a_card() {
 #[test]
 fn the_vendored_fragmented_card_reads() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../data/saves/PS1/Fragmented card/one-saves/fragmented.mcd");
+        .join("../../data/saves/one-saves/fragmented.mcd");
     let card =
         ps1_memcard::MemoryCard::parse(&std::fs::read(path).expect("the vendored card")).expect("parses");
     let listed: Vec<(usize, &str, usize)> =

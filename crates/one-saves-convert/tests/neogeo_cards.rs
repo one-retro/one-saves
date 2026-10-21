@@ -15,17 +15,17 @@ use one_saves_convert::card::neogeo::{read, write};
 
 /// The real MiSTer cards under `data/`: `NEOGEO` for a cartridge system, `NEOGEO-CD` for a CD.
 fn fixture_in(set: &str, name: &str) -> Vec<u8> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../data/saves")
-        .join(set)
-        .join(name)
-        .join("MiSTer");
-    let entry = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
-        .filter_map(std::result::Result::ok)
-        .find(|e| e.path().extension().is_some_and(|x| x == "sav"))
-        .expect("a .sav fixture");
-    std::fs::read(entry.path()).expect("reads")
+    // The core keeps both sets in one folder, so the set and the game together pick out the file.
+    let file = match (set, name) {
+        ("NEOGEO", "Fatal Fury 2") => "Fatal Fury 2 (fatfury2).sav",
+        ("NEOGEO", "Metal Slug X") => "Metal Slug X (mslugx).sav",
+        ("NEOGEO-CD", "Fatal Fury 2") => "Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).sav",
+        ("NEOGEO-CD", "King of Fighters '96") => "King of Fighters '96, The (Japan, USA) (En,Ja).sav",
+        ("NEOGEO-CD", "Metal Slug") => "Metal Slug (Japan) (En,Ja).sav",
+        other => panic!("no MiSTer card for {other:?}"),
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/mister/neogeo-mister");
+    std::fs::read(path.join(file)).expect("reads")
 }
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -162,14 +162,9 @@ fn a_save_with_no_title_carries_no_label() {
     // The CD's memory belongs to the console, so this file holds Metal Slug's save as well as the
     // one the filename promises. Fatal Fury 2 is NGH-0047.
     let bytes = {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../data/saves/NEOGEO-CD/Fatal Fury 2/NeoCD");
-        let entry = std::fs::read_dir(&dir)
-            .expect("the fixture directory")
-            .filter_map(std::result::Result::ok)
-            .find(|e| e.path().extension().is_some_and(|x| x == "srm"))
-            .expect("a .srm fixture");
-        std::fs::read(entry.path()).expect("reads")
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../data/saves/retroarch/neocd/Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).srm");
+        std::fs::read(path).expect("reads")
     };
     let bundle = read(&bytes, &CardOptions::default()).expect("reads");
     let saves: Vec<Bundle> = bundle

@@ -15,7 +15,7 @@ fn open_copy(rest: &str, name: &str) -> Card {
     Card::open(&to).expect("opens")
 }
 
-const PS2: &str = "PS2/Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2";
+const PS2: &str = "macos/pcsx2/Mcd001.ps2";
 
 #[test]
 fn a_card_lists_what_is_on_it_with_its_block_usage() {
@@ -51,7 +51,7 @@ fn deleting_a_save_frees_its_blocks() {
 
 #[test]
 fn a_save_only_goes_on_a_card_its_system_can_read() {
-    let gc = fixture("GameCube");
+    let gc = fixture("macos/dolphin");
     assert!(gc.exists(), "the GameCube fixtures are .gci, not cards, so this stays a PS2 test");
 
     let source = Card::open(fixture(PS2)).expect("opens");
@@ -96,7 +96,7 @@ fn writing_a_card_back_keeps_what_is_on_it() {
     assert_eq!(got, expected);
 }
 
-const PS2_EMPTY: &str = "PS2/Formatted empty card/PCSX2/Mcd002.ps2";
+const PS2_EMPTY: &str = "macos/pcsx2/Mcd002.ps2";
 
 /// A card with nothing on it carries an image of itself, and gaining a save makes that untrue.
 ///
@@ -162,7 +162,7 @@ fn a_written_ps2_card_keeps_the_spare_areas_a_console_reads() {
 /// the card would not be.
 #[test]
 fn a_save_with_no_title_is_named_by_its_serial() {
-    const CARD: &str = "NEOGEO-CD/Fatal Fury 2/NeoCD/Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).srm";
+    const CARD: &str = "retroarch/neocd/Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).srm";
     let card = Card::open(fixture(CARD)).expect("opens");
 
     let entries = card.entries();
@@ -197,8 +197,8 @@ fn an_archive_of_loose_saves_opens_as_a_card() {
     let card = open_archive(
         "1cards-loose.zip",
         &[
-            ("BASLUS-01360464634.PSV", save("PS1/Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV")),
-            ("BISLPM-87053.PSV", save("PS1/Capcom vs SNK Millennium Fight 2000 Pro/PS3/BISLPM-87053.PSV")),
+            ("BASLUS-01360464634.PSV", save("ps3/BASLUS-01360464634.PSV")),
+            ("BISLPM-87053.PSV", save("ps3/BISLPM-87053.PSV")),
         ],
     );
 
@@ -217,8 +217,7 @@ fn an_archive_of_loose_saves_opens_as_a_card() {
 /// held, so this refuses before it rebuilds anything and says where the saves can go instead.
 #[test]
 fn a_card_out_of_an_archive_is_not_written_back_into_it() {
-    let save = std::fs::read(fixture("PS1/Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV"))
-        .expect("a vendored save");
+    let save = std::fs::read(fixture("ps3/BASLUS-01360464634.PSV")).expect("a vendored save");
     let mut card = open_archive("1cards-readonly.zip", &[("BASLUS-01360464634.PSV", save)]);
 
     let before = std::fs::read(&card.path).expect("the archive");

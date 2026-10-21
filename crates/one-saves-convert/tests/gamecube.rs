@@ -57,13 +57,9 @@ fn digest(bytes: &[u8]) -> String {
 #[test]
 fn a_gamecube_save_carries_its_icon_and_banner_as_png() {
     for (path, frame_digest, banner_digest) in [
+        ("data/saves/macos/dolphin/8P-GFZE-f_zero.dat.gci", "9b587ad1c35b8e1e", "3953a42ad0a9b6a8"),
         (
-            "data/saves/GameCube/F-Zero GX/Dolphin/8P-GFZE-f_zero.dat.gci",
-            "9b587ad1c35b8e1e",
-            "3953a42ad0a9b6a8",
-        ),
-        (
-            "data/saves/GameCube/Super Smash Bros. Melee/Dolphin/01-GALE-SuperSmashBros0110290334.gci",
+            "data/saves/macos/dolphin/01-GALE-SuperSmashBros0110290334.gci",
             "aec55b9f51c1a738",
             "2c34ebbfdb330623",
         ),
@@ -100,9 +96,9 @@ fn a_gamecube_save_carries_its_icon_and_banner_as_png() {
 #[test]
 fn a_gamecube_save_is_labelled_by_the_lines_the_console_shows() {
     for (path, title, detail) in [
-        ("data/saves/GameCube/F-Zero GX/Dolphin/8P-GFZE-f_zero.dat.gci", "F-ZERO GX", "26/08/20 HANS"),
+        ("data/saves/macos/dolphin/8P-GFZE-f_zero.dat.gci", "F-ZERO GX", "26/08/20 HANS"),
         (
-            "data/saves/GameCube/Super Smash Bros. Melee/Dolphin/01-GALE-SuperSmashBros0110290334.gci",
+            "data/saves/macos/dolphin/01-GALE-SuperSmashBros0110290334.gci",
             "Super Smash Bros. Melee",
             "Game Data 2026/09/17",
         ),
@@ -127,7 +123,7 @@ fn a_gamecube_save_is_labelled_by_the_lines_the_console_shows() {
 fn a_card_read_without_the_feature_still_reads() {
     // The key is optional to carry, so its absence is not a degraded read. This asserts the shape
     // of the bundle is the same either way, which is what lets the feature default to off.
-    let card = card_from_gci("data/saves/GameCube/F-Zero GX/Dolphin/8P-GFZE-f_zero.dat.gci");
+    let card = card_from_gci("data/saves/macos/dolphin/8P-GFZE-f_zero.dat.gci");
     let bundle =
         one_saves_convert::card::read(Format::GcCard, &card, &CardOptions::default()).expect("reads");
     assert_eq!(bundle.parts.len(), 1);

@@ -59,7 +59,7 @@ fn fixtures() -> Vec<Fixture> {
     vec![
         // Appended, 48 bytes: ten little-endian registers and a write time.
         Fixture {
-            path: "GBC/Pokemon Crystal/Sameboy",
+            path: "retroarch/sameboy",
             file: CRYSTAL,
             producer: "sameboy",
             system: "gb",
@@ -71,7 +71,7 @@ fn fixtures() -> Vec<Fixture> {
         },
         // Appended, one 512-byte SD block: a write time and the registers bit-packed.
         Fixture {
-            path: "GBC/Pokemon Crystal/mister",
+            path: "mister/gameboy-mister",
             file: CRYSTAL,
             producer: "gameboy-mister",
             system: "gb",
@@ -86,7 +86,7 @@ fn fixtures() -> Vec<Fixture> {
         // written at 11:41:00 PDT. That is 18:41:00 UTC, and the anchor says 10:41:00, exactly
         // the eight hours MiSTer's local standard time is behind it.
         Fixture {
-            path: "GB/Pokemon Gold/GAMEBOY_Mister",
+            path: "mister/gameboy-mister",
             file: GOLD,
             producer: "gameboy-mister",
             system: "gb",
@@ -98,7 +98,7 @@ fn fixtures() -> Vec<Fixture> {
         },
         // The same packing as MiSTer, in a 16-byte reserved region.
         Fixture {
-            path: "GBC/Pokemon Crystal/budude2",
+            path: "analogue-pocket/budude2-gbc",
             file: CRYSTAL,
             producer: "budude2-gbc",
             system: "gb",
@@ -111,7 +111,7 @@ fn fixtures() -> Vec<Fixture> {
         // A sidecar holding an origin rather than a reading. The instant is stated because the
         // file does not record it and its mtime does not survive a clone.
         Fixture {
-            path: "GBC/Pokemon Crystal/Gambatte",
+            path: "openemu/gambatte",
             file: CRYSTAL,
             producer: "gambatte",
             system: "gb",
@@ -127,7 +127,7 @@ fn fixtures() -> Vec<Fixture> {
 /// The second budude2 save, taken 2673 seconds after the first.
 fn budude2_later() -> PathBuf {
     fixtures_root()
-        .join("GBC/Pokemon Crystal/budude2/Pokemon - Crystal Version (USA, Europe) (Rev 1).5min.sav")
+        .join("analogue-pocket/budude2-gbc/Pokemon - Crystal Version (USA, Europe) (Rev 1).5min.sav")
 }
 
 /// The instant a bundle's `x.1sav.rtc` carries, read back the way any consumer would.
@@ -305,7 +305,7 @@ fn one_cartridge_clock_reads_the_same_through_every_producer() {
 /// A Pokémon Ruby save GBA_MiSTer wrote after about nine minutes of play, on a MiSTer in Pacific
 /// time, copied off it at 11:00:40 PDT on 2026-10-21. The cartridge's flash, then one SD block of
 /// clock.
-const RUBY_MISTER: &str = "GBA/Pokemon Ruby/GBA_MiSTer/Pokemon - Ruby Version (USA, Europe) (Rev 2).sav";
+const RUBY_MISTER: &str = "mister/gba-mister/Pokemon - Ruby Version (USA, Europe) (Rev 2).sav";
 
 #[test]
 fn a_real_gba_mister_save_reads_its_seiko_clock_and_round_trips() {
@@ -337,19 +337,9 @@ fn a_real_gba_mister_save_reads_its_seiko_clock_and_round_trips() {
     assert_eq!(raw::unwrap(&bundle).expect("unwraps"), bytes, "the core's file, byte for byte");
 }
 
-/// Saves off an Analogue Pocket running mincer_ray's GBA core, in `data/by_cores`, which files
-/// them by the platform and core that wrote them rather than by system and game.
+/// Saves off an Analogue Pocket running mincer_ray's GBA core.
 fn mincer_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/by_cores/Analogue Pocket/mincer_ray")
-}
-
-/// Skips rather than fails without the Pocket saves, for the reason [`skip_if_absent`] gives.
-fn skip_if_no_mincer() -> bool {
-    if mincer_root().is_dir() {
-        return false;
-    }
-    println!("skipping: {} is not present", mincer_root().display());
-    true
+    fixtures_root().join("analogue-pocket/mincer-ray-gba")
 }
 
 /// The same core, raw options and all, for a save with or without a clock beside it.
@@ -367,7 +357,7 @@ const EMERALD: &str = "Pokemon - Emerald Version (USA, Europe)";
 
 #[test]
 fn a_real_mincer_save_reads_its_clock_from_the_sidecar_and_round_trips() {
-    if skip_if_no_mincer() {
+    if skip_if_absent() {
         return;
     }
     let save = std::fs::read(mincer_root().join(format!("{EMERALD}.sav"))).expect("read save");
@@ -396,7 +386,7 @@ fn a_real_mincer_save_reads_its_clock_from_the_sidecar_and_round_trips() {
 
 #[test]
 fn a_real_mincer_save_with_no_clock_carries_none() {
-    if skip_if_no_mincer() {
+    if skip_if_absent() {
         return;
     }
     // The Pocket writes a `.rtc` only for a game whose cartridge has the chip, so these two have
@@ -438,7 +428,7 @@ fn backup_rams() -> Vec<BackupRam> {
         // Three unprotected files, eleven blocks each, laid end to end from block 1:
         // SONICCD, SONICCD__01, SONICCD__02.
         BackupRam {
-            path: "MegaCD/Sonic CD/MegaCD_MiSTer/Sonic CD (USA).sav",
+            path: "mister/megacd-mister/Sonic CD (USA).sav",
             producer: "megacd-mister",
             len: 8192,
             counters: (91, 3),
@@ -446,7 +436,7 @@ fn backup_rams() -> Vec<BackupRam> {
         // Two ECC-protected files, and one of them is 99 blocks — which is most of the volume,
         // and the reason the Backup RAM Cart exists: SFCD_DAT_09 (1 block), SFCD_DAT_00 (99).
         BackupRam {
-            path: "MegaCD/Shining Force CD/MegaCD_MiSTer/Shining Force CD (USA) (3R).sav",
+            path: "mister/megacd-mister/Shining Force CD (USA) (3R).sav",
             producer: "megacd-mister",
             len: 8192,
             counters: (24, 2),
@@ -455,7 +445,7 @@ fn backup_rams() -> Vec<BackupRam> {
         // directory and the counters are untouched and only contents moved. See
         // `one_saved_file_moving_does_not_move_the_others`.
         BackupRam {
-            path: "MegaCD/Shining Force CD/MegaCD_MiSTer/Shining Force CD (USA) (3R).later.sav",
+            path: "mister/megacd-mister/Shining Force CD (USA) (3R).later.sav",
             producer: "megacd-mister",
             len: 8192,
             counters: (24, 2),
@@ -463,7 +453,7 @@ fn backup_rams() -> Vec<BackupRam> {
         // The console's own volume rather than one game's: Genesis Plus GX names this after the
         // BIOS region, so every US disc played shares it. One file so far, SONICCD at block 1.
         BackupRam {
-            path: "MegaCD/Sonic CD/Genesis Plus GX Wide/scd_U.brm",
+            path: "retroarch/genesis-plus-gx-wide/scd_U.brm",
             producer: "genesis-plus-gx-wide",
             len: 8192,
             counters: (114, 1),
@@ -472,7 +462,7 @@ fn backup_rams() -> Vec<BackupRam> {
         // to handle when there is nothing to nest. Its three unusable blocks are the reserved
         // first, the footer, and one held back for the directory entry a first save would need.
         BackupRam {
-            path: "MegaCD/Sonic CD/Genesis Plus GX Wide/4Mbit_cart.empty.brm",
+            path: "retroarch/genesis-plus-gx-wide/4Mbit_cart.empty.brm",
             producer: "genesis-plus-gx-wide",
             len: 524_288,
             counters: (8189, 0),
@@ -481,7 +471,7 @@ fn backup_rams() -> Vec<BackupRam> {
         // RAM. Fourteen blocks are now spoken for: the reserved first, eleven of file, one of
         // directory and the footer — and with an odd file count nothing is held back.
         BackupRam {
-            path: "MegaCD/Sonic CD/Genesis Plus GX Wide/4Mbit_cart.brm",
+            path: "retroarch/genesis-plus-gx-wide/4Mbit_cart.brm",
             producer: "genesis-plus-gx-wide",
             len: 524_288,
             counters: (8178, 1),
@@ -494,8 +484,8 @@ fn shining_force_pair() -> (Vec<u8>, Vec<u8>) {
     let rams = backup_rams();
     let of = |path: &str| rams.iter().find(|r| r.path == path).expect("a fixture").read();
     (
-        of("MegaCD/Shining Force CD/MegaCD_MiSTer/Shining Force CD (USA) (3R).sav"),
-        of("MegaCD/Shining Force CD/MegaCD_MiSTer/Shining Force CD (USA) (3R).later.sav"),
+        of("mister/megacd-mister/Shining Force CD (USA) (3R).sav"),
+        of("mister/megacd-mister/Shining Force CD (USA) (3R).later.sav"),
     )
 }
 
@@ -657,8 +647,8 @@ fn a_save_is_the_same_bytes_whatever_volume_it_sits_on() {
     // `counters` above pin down.
     let rams = backup_rams();
     let of = |path: &str| rams.iter().find(|r| r.path == path).expect("a fixture").read();
-    let internal = of("MegaCD/Sonic CD/Genesis Plus GX Wide/scd_U.brm");
-    let cart = of("MegaCD/Sonic CD/Genesis Plus GX Wide/4Mbit_cart.brm");
+    let internal = of("retroarch/genesis-plus-gx-wide/scd_U.brm");
+    let cart = of("retroarch/genesis-plus-gx-wide/4Mbit_cart.brm");
 
     let file = |volume: &[u8]| volume[0x40..12 * 0x40].to_vec();
     assert_eq!(file(&internal), file(&cart), "one save, two volumes");
@@ -689,9 +679,9 @@ fn a_gamecube_entry_dates_the_last_write_on_the_consoles_own_clock() {
 
     for (path, want) in [
         // 2026-09-17 17:06:36, as the console's clock read it.
-        ("GameCube/Super Smash Bros. Melee/Dolphin/01-GALE-SuperSmashBros0110290334.gci", 1_789_664_796i64),
+        ("macos/dolphin/01-GALE-SuperSmashBros0110290334.gci", 1_789_664_796i64),
         // 2026-08-20 14:51:35.
-        ("GameCube/F-Zero GX/Dolphin/8P-GFZE-f_zero.dat.gci", 1_787_237_495),
+        ("macos/dolphin/8P-GFZE-f_zero.dat.gci", 1_787_237_495),
     ] {
         let bytes = std::fs::read(fixtures_root().join(path)).expect("a vendored .gci");
         let dirent = &bytes[..64];
@@ -709,7 +699,7 @@ fn a_gamecube_entry_dates_the_last_write_on_the_consoles_own_clock() {
 #[cfg(all(feature = "ps2", feature = "shift-jis"))]
 #[test]
 fn a_ps2_save_is_labelled_by_what_its_icon_sys_says() {
-    let path = fixtures_root().join("PS2/Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2");
+    let path = fixtures_root().join("macos/pcsx2/Mcd001.ps2");
     let bundle = one_saves_convert::card::read(
         one_saves_convert::Format::Ps2Card,
         &std::fs::read(path).expect("the vendored card"),
@@ -745,7 +735,7 @@ fn a_ps2_save_is_labelled_by_what_its_icon_sys_says() {
 #[cfg(feature = "ps2")]
 #[test]
 fn a_ps2_entry_dates_both_the_creation_and_the_last_write() {
-    let path = fixtures_root().join("PS2/Dragon Quest VIII and Tekken 4/PCSX2/Mcd001.ps2");
+    let path = fixtures_root().join("macos/pcsx2/Mcd001.ps2");
     let bundle = one_saves_convert::card::read(
         one_saves_convert::Format::Ps2Card,
         &std::fs::read(path).expect("the vendored card"),

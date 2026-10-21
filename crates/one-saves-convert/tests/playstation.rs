@@ -14,7 +14,7 @@ use one_saves::extension::Icon;
 use one_saves::extension::Label;
 use one_saves_convert::{CardOptions, Format};
 
-const CARD: &str = "data/saves/PS1/Gran Turismo/DuckStation/shared_card_1.mcd";
+const CARD: &str = "data/saves/macos/duckstation/shared_card_1.mcd";
 
 fn card() -> Bundle {
     let bytes =
@@ -118,7 +118,7 @@ fn an_icon_belongs_to_the_save_rather_than_to_the_card() {
 /// A save exported on its own, filed onto a card so the card reader can be pointed at it.
 #[cfg(feature = "shift-jis")]
 fn from_psv(rest: &str) -> Bundle {
-    let path = format!("{}/../../data/saves/PS1/{rest}", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../data/saves/{rest}", env!("CARGO_MANIFEST_DIR"));
     let save = ps1_memcard::read_single(&std::fs::read(path).expect("the vendored save")).expect("a save");
     let image = ps1_memcard::CardBuilder::new().add(save).build().expect("one save fits");
     let card =
@@ -134,7 +134,7 @@ fn from_psv(rest: &str) -> Bundle {
 #[cfg(feature = "shift-jis")]
 #[test]
 fn a_japanese_title_keeps_its_full_width_letters() {
-    let save = from_psv("Capcom vs SNK Millennium Fight 2000 Pro/PS3/BISLPM-87053.PSV");
+    let save = from_psv("ps3/BISLPM-87053.PSV");
     assert_eq!(label_of(&save), "ＣＡＰＣＯＭ　ＶＳ．　ＳＮＫ　ＰＲＯ");
 }
 
@@ -147,6 +147,6 @@ fn a_japanese_title_keeps_its_full_width_letters() {
 #[cfg(feature = "shift-jis")]
 #[test]
 fn a_two_block_save_is_labelled_off_its_first_block() {
-    let save = from_psv("Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV");
+    let save = from_psv("ps3/BASLUS-01360464634.PSV");
     assert_eq!(label_of(&save), "ＦＦ４　３１０７／３１０７　　　４５：２０");
 }

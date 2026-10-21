@@ -9,12 +9,12 @@ use std::path::PathBuf;
 use ps1_memcard::{BLOCK, CardBuilder, MemoryCard, read_single};
 
 fn psv(rest: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves/PS1").join(rest);
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(rest);
     std::fs::read(path).expect("a vendored save")
 }
 
-const JAPANESE: &str = "Capcom vs SNK Millennium Fight 2000 Pro/PS3/BISLPM-87053.PSV";
-const TWO_BLOCK: &str = "Final Fantasy Chronicles/PS3/BASLUS-01360464634.PSV";
+const JAPANESE: &str = "ps3/BISLPM-87053.PSV";
+const TWO_BLOCK: &str = "ps3/BASLUS-01360464634.PSV";
 
 #[test]
 fn a_psv_gives_up_its_save() {
