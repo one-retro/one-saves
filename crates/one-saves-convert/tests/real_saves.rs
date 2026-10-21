@@ -3,9 +3,9 @@
 //! Everything here came off an actual emulator or FPGA core rather than being constructed, which
 //! is the point: a synthetic fixture proves the code agrees with itself, and these prove it
 //! agrees with the thing it has to interoperate with. Between them they cover four producers and
-//! four on-disk shapes of the same cartridge clock, a GBA's Seiko clock off a fifth, and six Sega
-//! CD backup RAMs off two more — both sockets, both of the filesystem's storage modes, a volume
-//! with nothing on it, and one save sitting on two volumes at once.
+//! four on-disk shapes of the Game Boy's clock across two cartridges, the GBA's Seiko clock off
+//! two more, and six Sega CD backup RAMs off another two — both sockets, both of the filesystem's
+//! storage modes, a volume with nothing on it, and one save sitting on two volumes at once.
 //!
 //! The expected clock values are recorded here rather than beside the files. They are assertions,
 //! not data, and the Gambatte capture instant in particular **cannot** be taken from the
@@ -30,6 +30,8 @@ fn fixtures_root() -> PathBuf {
 struct Fixture {
     /// Where it sits under `data/saves/`.
     path: &'static str,
+    /// The save's file name in that folder.
+    file: &'static str,
     /// The `--from` name, which is also what picks the shape it is written back in.
     producer: &'static str,
     /// The system slug, which tells a 16-byte GBA footer from a 16-byte Game Boy one.
@@ -38,64 +40,85 @@ struct Fixture {
     len: usize,
     /// The cartridge clock: days, hours, minutes, seconds.
     clock: (u32, u32, u32, u32),
-    /// The instant the save was written: the point the counters advance *from*, never the
-    /// reading itself.
+    /// The host clock when the save was written, on the producer's own scale: the point the
+    /// counters advance *from*, never the reading itself. MiSTer's is local standard time counted
+    /// as though it were UTC.
     anchor: i64,
-    /// What the cartridge clock therefore showed — the anchor plus the elapsed time above. This
-    /// is the number `x.1sav.rtc` carries, and on the Pocket sample it is 2.8 days from the
-    /// anchor, so writing the anchor there would be visibly wrong rather than subtly so.
+    /// What the cartridge clock showed — the elapsed time above, as that long after 1970-01-01
+    /// UTC. This is the number `x.1sav.rtc` carries, and it has nothing to do with the anchor, so
+    /// writing the anchor there would be visibly wrong rather than subtly so.
     reading: i64,
     /// A sidecar clock file beside the save, and the instant it was written.
     sidecar: Option<(&'static str, i64)>,
 }
 
 const CRYSTAL: &str = "Pokemon - Crystal Version (USA, Europe) (Rev 1).sav";
+const GOLD: &str = "Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible).sav";
 
 fn fixtures() -> Vec<Fixture> {
     vec![
         // Appended, 48 bytes: ten little-endian registers and a write time.
         Fixture {
             path: "GBC/Pokemon Crystal/Sameboy",
+            file: CRYSTAL,
             producer: "sameboy",
             system: "gb",
             len: 32_816,
             clock: (0, 0, 2, 13),
             anchor: 1_786_559_074,
-            reading: 1_786_559_207,
+            reading: 133,
             sidecar: None,
         },
         // Appended, one 512-byte SD block: a write time and the registers bit-packed.
         Fixture {
             path: "GBC/Pokemon Crystal/mister",
+            file: CRYSTAL,
             producer: "gameboy-mister",
             system: "gb",
             len: 33_280,
             clock: (0, 0, 2, 17),
             anchor: 1_786_533_688,
-            reading: 1_786_533_825,
+            reading: 137,
+            sidecar: None,
+        },
+        // The same core on another cartridge, with the moment known to the second: Gold's clock
+        // set at about 11:38:48 PDT on 2026-10-21, which zeroes the counters, and the save
+        // written at 11:41:00 PDT. That is 18:41:00 UTC, and the anchor says 10:41:00, exactly
+        // the eight hours MiSTer's local standard time is behind it.
+        Fixture {
+            path: "GB/Pokemon Gold/GAMEBOY_Mister",
+            file: GOLD,
+            producer: "gameboy-mister",
+            system: "gb",
+            len: 33_280,
+            clock: (0, 0, 2, 12),
+            anchor: 1_792_579_260,
+            reading: 132,
             sidecar: None,
         },
         // The same packing as MiSTer, in a 16-byte reserved region.
         Fixture {
             path: "GBC/Pokemon Crystal/budude2",
+            file: CRYSTAL,
             producer: "budude2-gbc",
             system: "gb",
             len: 32_784,
             clock: (2, 19, 49, 7),
             anchor: 1_786_532_469,
-            reading: 1_786_776_616,
+            reading: 244_147,
             sidecar: None,
         },
         // A sidecar holding an origin rather than a reading. The instant is stated because the
         // file does not record it and its mtime does not survive a clone.
         Fixture {
             path: "GBC/Pokemon Crystal/Gambatte",
+            file: CRYSTAL,
             producer: "gambatte",
             system: "gb",
             len: 32_768,
             clock: (0, 0, 4, 54),
             anchor: 1_786_558_622,
-            reading: 1_786_558_916,
+            reading: 294,
             sidecar: Some(("Pokemon - Crystal Version (USA, Europe) (Rev 1).rtc", 1_786_558_622)),
         },
     ]
@@ -124,7 +147,7 @@ fn skip_if_absent() -> bool {
 
 impl Fixture {
     fn save_path(&self) -> PathBuf {
-        fixtures_root().join(self.path).join(CRYSTAL)
+        fixtures_root().join(self.path).join(self.file)
     }
 
     /// Wraps the save the way the CLI would, with the producer's `source` set — which is what
@@ -180,8 +203,9 @@ fn every_real_save_decodes_to_the_clock_it_was_taken_with() {
         );
         assert_eq!(clock.written_at, fixture.anchor, "{}: anchor", fixture.path);
 
-        // And the reading is the anchor plus that elapsed time, which is the distinction the key
-        // exists to make. A producer that cannot compute it omits the key; none here has to.
+        // And the reading is that elapsed time on the Unix scale, with no anchor in it, which is
+        // the distinction the key exists to make. A producer that cannot compute it omits the
+        // key; none here has to.
         assert_eq!(clock.reading().reading, fixture.reading, "{}: reading", fixture.path);
         assert_eq!(
             reading_of(&bundle),
@@ -311,6 +335,81 @@ fn a_real_gba_mister_save_reads_its_seiko_clock_and_round_trips() {
 
     assert_eq!(rtc::form_of(&bundle), rtc::ClockForm::S3511aPacked(512));
     assert_eq!(raw::unwrap(&bundle).expect("unwraps"), bytes, "the core's file, byte for byte");
+}
+
+/// Saves off an Analogue Pocket running mincer_ray's GBA core, in `data/by_cores`, which files
+/// them by the platform and core that wrote them rather than by system and game.
+fn mincer_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/by_cores/Analogue Pocket/mincer_ray")
+}
+
+/// Skips rather than fails without the Pocket saves, for the reason [`skip_if_absent`] gives.
+fn skip_if_no_mincer() -> bool {
+    if mincer_root().is_dir() {
+        return false;
+    }
+    println!("skipping: {} is not present", mincer_root().display());
+    true
+}
+
+/// The same core, raw options and all, for a save with or without a clock beside it.
+fn mincer_options(sidecar: Option<Vec<u8>>) -> raw::RawOptions {
+    raw::RawOptions {
+        system: Some("gba".to_owned()),
+        source: Some(profile("mincer-ray-gba").expect("a listed core").source()),
+        // The record holds its own instant, so the one passed beside it is ignored.
+        rtc_sidecar: sidecar.map(|bytes| (bytes, 0)),
+        ..raw::RawOptions::default()
+    }
+}
+
+const EMERALD: &str = "Pokemon - Emerald Version (USA, Europe)";
+
+#[test]
+fn a_real_mincer_save_reads_its_clock_from_the_sidecar_and_round_trips() {
+    if skip_if_no_mincer() {
+        return;
+    }
+    let save = std::fs::read(mincer_root().join(format!("{EMERALD}.sav"))).expect("read save");
+    let sidecar = std::fs::read(mincer_root().join(format!("{EMERALD}.rtc"))).expect("read sidecar");
+    assert_eq!((save.len(), sidecar.len()), (131_072, 16), "a cartridge's flash, and the record beside it");
+    let bundle = raw::wrap(&save, &mincer_options(Some(sidecar.clone()))).expect("wraps");
+
+    // Saved at 13:40:16 PDT on Wednesday 2026-10-21. With no record to restore, the core seeds the
+    // chip from the Pocket's own date and time and Emerald kept it, so the chip holds the Pocket's
+    // wall clock. Emerald's own clock showed 10:10 two minutes earlier: it adds an offset of its
+    // own, kept in save memory.
+    let chip = bundle.header.extensions.get::<RtcS3511a>().expect("the chip");
+    assert_eq!(chip.components, [0x26, 0x10, 0x21, 0x03, 0x13, 0x40, 0x16]);
+    assert_eq!(chip.control, 0x40, "the core never stores the register and comes up in 24-hour mode");
+    // The Pocket keeps no zone, so its epoch is that same wall time counted as though it were UTC:
+    // seven hours behind the instant in PDT, where MiSTer's local standard time is eight.
+    assert_eq!(chip.taken_at, Some(1_792_590_016));
+    // So here the reading and the anchor are one number, and the only reason is that the chip
+    // and the Pocket's epoch both count its wall clock.
+    assert_eq!(reading_of(&bundle), Some(1_792_590_016));
+
+    assert_eq!(rtc::form_of(&bundle), rtc::ClockForm::S3511aSidecar);
+    assert_eq!(raw::unwrap(&bundle).expect("unwraps"), save, "the save, with nothing appended");
+    assert_eq!(rtc::sidecar_of(&bundle), Some(sidecar), "and the record, byte for byte");
+}
+
+#[test]
+fn a_real_mincer_save_with_no_clock_carries_none() {
+    if skip_if_no_mincer() {
+        return;
+    }
+    // The Pocket writes a `.rtc` only for a game whose cartridge has the chip, so these two have
+    // none beside them, and nothing in their bundles claims a clock.
+    for game in ["Legend of Zelda, The - The Minish Cap (USA)", "Castlevania - Aria of Sorrow (USA)"] {
+        assert!(!mincer_root().join(format!("{game}.rtc")).exists(), "{game}: no clock record");
+        let save = std::fs::read(mincer_root().join(format!("{game}.sav"))).expect("read save");
+        assert_eq!(save.len(), 65_536, "{game}: 64 KiB of flash");
+        let bundle = raw::wrap(&save, &mincer_options(None)).expect("wraps");
+        assert!(bundle.header.extensions.get::<Rtc>().is_none(), "{game}: no reading");
+        assert!(bundle.header.extensions.get::<RtcS3511a>().is_none(), "{game}: no chip");
+        assert_eq!(raw::unwrap(&bundle).expect("unwraps"), save, "{game}: round trips");
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

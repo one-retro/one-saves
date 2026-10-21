@@ -12,8 +12,9 @@ use crate::name::ReverseDnsName;
 /// What a cartridge's clock showed, as a Unix instant.
 ///
 /// **Never the point a counting clock advances from.** An MBC3 keeps elapsed time beside a host
-/// timestamp, and that timestamp is the anchor rather than the reading: the reading is the anchor
-/// plus the elapsed time. A producer that cannot compute the reading omits the key.
+/// timestamp, and that timestamp is the anchor rather than the reading: the reading is the elapsed
+/// time itself, as that long after 1970-01-01 UTC. A producer that cannot compute the reading
+/// omits the key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rtc {
     /// What the clock showed, in whole epoch seconds.
@@ -86,7 +87,8 @@ pub struct RtcMbc3 {
     /// The latched copy the game reads, in the same order.
     pub latched: [u32; 5],
     /// The host clock when the emulator wrote the save, in epoch seconds. The anchor, not the
-    /// reading.
+    /// reading, and on the producer's own scale: MiSTer gives its cores local standard time
+    /// counted as though it were UTC.
     pub written_at: i64,
     /// How many bytes that timestamp occupied: 4 or 8, depending on the emulator.
     pub timestamp_width: u8,
@@ -164,7 +166,8 @@ impl fmt::Display for RtcMbc3 {
         if self.halted() {
             f.write_str(" (halted)")?;
         }
-        write!(f, ", written {} UTC", Civil(self.written_at))
+        // On the producer's scale, which is why no zone is printed beside it.
+        write!(f, ", written {}", Civil(self.written_at))
     }
 }
 
@@ -267,7 +270,7 @@ mod tests {
         };
         assert_eq!(RtcMbc3::try_from(CBOR::from(clock)).unwrap(), clock);
         assert_eq!(clock.days(), 300);
-        assert_eq!(clock.to_string(), "day 300 13:45:30, written 2023-11-14 22:13:20 UTC");
+        assert_eq!(clock.to_string(), "day 300 13:45:30, written 2023-11-14 22:13:20");
         // The width is 4 or 8 and nothing else, since the footer is rebuilt from it.
         assert!(RtcMbc3::try_from(CBOR::from(RtcMbc3 { timestamp_width: 6, ..clock })).is_err());
     }

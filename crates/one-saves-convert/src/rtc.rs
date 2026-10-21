@@ -296,14 +296,17 @@ impl Mbc3Clock {
             + i64::from(self.seconds)
     }
 
-    /// What this clock showed when the save was written.
+    /// What this clock showed when the save was written: the counters, put on the Unix scale as
+    /// that long after 1970-01-01 UTC.
     ///
-    /// The anchor plus the elapsed time the counters describe. The anchor alone — key 2 of
-    /// `x.1sav.rtc.mbc3`, which is what the footer stores — is wrong by exactly that elapsed
-    /// time, which on a cartridge running for days is days.
+    /// Not the anchor, which is when the host wrote the save rather than anything the cartridge
+    /// counted, and not the anchor plus the counters either. The two move at the same rate, so
+    /// their sum runs at twice real time, and the anchor is on the producer's own scale, which
+    /// MiSTer does not keep in UTC. What the game displays is this plus an offset of its own, in
+    /// save memory where only something that knows the game can find it.
     #[must_use]
     pub fn reading(self) -> Rtc {
-        Rtc::new(self.written_at + self.elapsed_seconds())
+        Rtc::new(self.elapsed_seconds())
     }
 
     /// The five live registers, in the order the footer stores them.
@@ -396,10 +399,9 @@ pub fn split(bytes: &[u8], system: Option<&str>) -> Option<Split> {
             // filing unidentified bytes under a chip's key would claim more than is known.
             continue;
         };
-        // The stored host time is the Unix instant this state corresponds to: it is what the
-        // emulator advances the clock from on the next load. The registers themselves count
-        // elapsed time from a cartridge epoch nothing records, so they are not an instant and
-        // cannot be normalized into one.
+        // The chip's own clock is the reading: an MBC3's counters as that long after 1970, a
+        // Seiko chip's calendar as though it were UTC. The host time stored beside them is the
+        // anchor the producer advances them from on the next load, which stays with the chip.
         let reading = clock.reading();
         return Some(Split { sram: bytes[..size].to_vec(), footer: footer.to_vec(), reading, clock });
     }
@@ -1100,9 +1102,12 @@ mod tests {
         let split = split(&save, Some("gb")).expect("has a footer");
         assert_eq!(split.sram.len(), 32_768);
         assert_eq!(split.footer.len(), MBC3_LEN_64);
-        // The anchor plus 300 days, 13:45:30 of elapsed cartridge time.
+        // 300 days, 13:45:30 of cartridge time, on the Unix scale. The anchor plays no part, so a
+        // save written at another moment with the same counters reads the same.
         let elapsed = 300 * 86_400 + 13 * 3_600 + 45 * 60 + 30;
-        assert_eq!(split.reading.unwrap().reading, 1_700_000_000 + elapsed);
+        assert_eq!(split.reading.unwrap().reading, elapsed);
+        let later = super::split(&crystal_save(1_800_000_000), Some("gb")).expect("has a footer");
+        assert_eq!(later.reading, split.reading);
     }
 
     #[test]
@@ -1292,6 +1297,7 @@ mod tests {
         assert_eq!((clock.hours, clock.minutes, clock.seconds), (0, 4, 54));
         assert_eq!(clock.days(), 0);
         // The reading is what the cartridge clock said, not the origin it is derived from.
+        assert_eq!(clock.reading().reading, 294);
         assert_eq!(clock.written_at, GAMBATTE_WRITTEN_AT);
         assert_eq!(clock.latched, clock.live(), "nothing was mid-read");
     }
@@ -1599,6 +1605,9 @@ mod tests {
         };
         assert_eq!(b.written_at - a.written_at, 2673);
         assert_eq!(elapsed(&b) - elapsed(&a), 2673);
+        // So the reading moves at the rate a clock does. Adding the anchor to the counters, which
+        // is what this crate used to write, moved it 5346 s between these two saves.
+        assert_eq!(b.reading().reading - a.reading().reading, 2673);
     }
 
     #[test]

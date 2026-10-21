@@ -157,8 +157,7 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
         let sidecar_split = crate::rtc::Split {
             sram: Vec::new(),
             footer: Vec::new(),
-            // For an origin, the anchor plus the elapsed time the counters describe, never the
-            // anchor itself.
+            // From an origin, the time the clock has run since it, never the origin itself.
             reading: clock.reading(),
             clock,
         };
