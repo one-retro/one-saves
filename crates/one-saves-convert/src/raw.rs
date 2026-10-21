@@ -43,9 +43,10 @@ pub struct RawOptions {
     pub split_rtc: bool,
     /// A sidecar clock file written beside the save, and the instant it was written.
     ///
-    /// Gambatte keeps the clock in its own `.rtc` file rather than appending it, and stores an
-    /// origin rather than a reading, so the instant is what turns it into one. See
-    /// [`parse_gambatte_sidecar`](crate::rtc::parse_gambatte_sidecar).
+    /// Gambatte and mincer_ray's GBA core keep the clock in a `.rtc` file of their own rather
+    /// than appending it; which one wrote it follows from its length. Gambatte's stores an origin
+    /// rather than a reading, so the instant is what turns it into one, and mincer_ray's records
+    /// its own and ignores the instant. See [`parse_sidecar`](crate::rtc::parse_sidecar).
     pub rtc_sidecar: Option<(Vec<u8>, i64)>,
 }
 
@@ -150,15 +151,16 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
     if split.is_none()
         && let Some((sidecar, captured_at)) = &options.rtc_sidecar
     {
-        let clock = crate::rtc::parse_gambatte_sidecar(sidecar, *captured_at).ok_or_else(|| {
+        let clock = crate::rtc::parse_sidecar(sidecar, *captured_at).ok_or_else(|| {
             Error::NotConvertible("this sidecar is not a clock, or its instant is wrong".into())
         })?;
         let sidecar_split = crate::rtc::Split {
             sram: Vec::new(),
             footer: Vec::new(),
-            // The anchor plus the elapsed time the counters describe, never the anchor itself.
+            // For an origin, the anchor plus the elapsed time the counters describe, never the
+            // anchor itself.
             reading: Some(clock.reading()),
-            clock: crate::rtc::Clock::Mbc3(clock),
+            clock,
         };
         extensions = sidecar_split.extensions();
     }
@@ -321,6 +323,29 @@ mod tests {
             origins.push(crate::rtc::sidecar_of(&bundle).expect("rebuilds"));
         }
         assert!(origins.iter().all(|o| *o == sidecar), "the origin is what round-trips");
+    }
+
+    #[test]
+    fn a_gba_sidecar_lands_in_the_seiko_keys_and_goes_back_beside_the_save() {
+        // mincer_ray's `.rtc`: the instant it records and the calendar packed beside it. The
+        // instant passed in is ignored, since the record does not need one.
+        let record = vec![0xdf, 0xaf, 0x7c, 0x6a, 0xc3, 0x1c, 0x34, 0x09, 0x99, 0, 0, 0, 0, 0, 0, 0];
+        let options = RawOptions {
+            system: Some("gba".into()),
+            source: Some(Source::default().core(one_saves::Name::parse("mincer-ray-gba").ok())),
+            rtc_sidecar: Some((record.clone(), 0)),
+            ..RawOptions::default()
+        };
+        let bundle = wrap(&vec![7u8; 131_072], &options).expect("wraps");
+
+        let extensions = &bundle.header.extensions;
+        assert_eq!(extensions.get::<one_saves::extension::Rtc>().expect("a reading").reading, 1_786_556_383);
+        assert!(extensions.get::<one_saves::extension::RtcS3511a>().is_some());
+        bundle.validate().expect("valid bundle");
+
+        // The save goes back the size a cartridge's is, and the clock to its own file.
+        assert_eq!(unwrap(&bundle).expect("unwraps").len(), 131_072);
+        assert_eq!(crate::rtc::sidecar_of(&bundle), Some(record));
     }
 
     #[test]

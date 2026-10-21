@@ -89,7 +89,7 @@ struct Convert {
     #[cfg(feature = "dat")]
     #[arg(long, value_name = "FILE")]
     dat: Option<PathBuf>,
-    /// A sidecar clock file written beside the save, such as Gambatte's `.rtc`.
+    /// A sidecar clock file written beside the save, such as Gambatte's or mincer_ray's `.rtc`.
     ///
     /// Found automatically next to the input when it is named after it; pass this to point
     /// somewhere else, or to supply one that has been moved away from its save.
@@ -97,12 +97,13 @@ struct Convert {
     rtc_file: Option<PathBuf>,
     /// When the sidecar clock was written, in epoch seconds.
     ///
-    /// A sidecar stores the instant the clock counts *from*, not what it reads, so turning one
-    /// into the other needs to know when it was taken — and the file does not say. Without this
-    /// the file's modification time is used, which is right only for a file an emulator wrote in
-    /// place: copying, unzipping or checking it out of git all reset it.
+    /// Gambatte's sidecar stores the instant the clock counts *from*, not what it reads, so
+    /// turning one into the other needs to know when it was taken — and the file does not say.
+    /// Without this the file's modification time is used, which is right only for a file an
+    /// emulator wrote in place: copying, unzipping or checking it out of git all reset it.
     ///
     /// The origin round-trips either way; it is the reading that depends on getting this right.
+    /// mincer_ray's sidecar records its own instant, and takes none.
     #[arg(long, value_name = "EPOCH")]
     rtc_captured_at: Option<i64>,
     /// Keep an appended real-time-clock footer inside the save rather than splitting it out.
@@ -129,7 +130,8 @@ struct Extract {
     /// Extract one part's payload by id, rather than the whole thing.
     #[arg(long, value_name = "ID")]
     part: Option<u64>,
-    /// Write the clock to a sidecar file, as Gambatte keeps it, instead of appending it.
+    /// Write the clock to a sidecar file instead of appending it: Gambatte's for a Game Boy clock,
+    /// mincer_ray's for a GBA one.
     #[arg(long, value_name = "FILE")]
     rtc_file: Option<PathBuf>,
     /// Overwrite the output if it exists.
@@ -204,11 +206,12 @@ fn unwrap_archive(
     Ok((unpacked.bytes, unpacked.extension))
 }
 
-/// The clock kept beside a save, and the instant it was read.
+/// The clock kept beside a save, and the instant it was read when the file needs one.
 ///
-/// A clock in its own file has to be found, since the save does not mention it. The file records
-/// an origin rather than a reading, so an instant is what turns one into the other.
-type Sidecar = (std::path::PathBuf, Vec<u8>, i64);
+/// A clock in its own file has to be found, since the save does not mention it. Gambatte's records
+/// an origin rather than a reading, so an instant is what turns one into the other; mincer_ray's
+/// records the instant itself, and has none here.
+type Sidecar = (std::path::PathBuf, Vec<u8>, Option<i64>);
 
 fn sidecar_clock(args: &Convert) -> Result<Option<Sidecar>, Box<dyn std::error::Error>> {
     let path = args.rtc_file.clone().or_else(|| {
@@ -223,6 +226,16 @@ fn sidecar_clock(args: &Convert) -> Result<Option<Sidecar>, Box<dyn std::error::
     };
 
     let bytes = std::fs::read(&path)?;
+    if bytes.len() != one_saves_convert::rtc::GAMBATTE_RTC_LEN {
+        if args.rtc_captured_at.is_some() {
+            return Err(format!(
+                "--rtc-captured-at was given, but {} records its own instant",
+                path.display()
+            )
+            .into());
+        }
+        return Ok(Some((path, bytes, None)));
+    }
     // Falling back to the modification time is a guess, and one that gets worse the further the
     // file has travelled: copying, unzipping and checking out all reset it. It is only the right
     // answer for a file the emulator wrote in place.
@@ -236,7 +249,7 @@ fn sidecar_clock(args: &Convert) -> Result<Option<Sidecar>, Box<dyn std::error::
             .as_secs();
         i64::try_from(mtime)?
     };
-    Ok(Some((path, bytes, captured_at)))
+    Ok(Some((path, bytes, Some(captured_at))))
 }
 
 fn convert(args: Convert) -> Fallible {
@@ -266,8 +279,9 @@ fn convert(args: Convert) -> Fallible {
     let Identified { mut game, system: rom_system } = Identified::default();
 
     let sidecar = sidecar_clock(&args)?;
-    let sidecar_path = sidecar.as_ref().map(|(path, _, _)| path.clone());
-    let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at));
+    let sidecar_path = sidecar.as_ref().map(|(path, _, at)| (path.clone(), at.is_some()));
+    // A sidecar that records its own instant ignores the one passed beside it.
+    let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at.unwrap_or_default()));
 
     let source = source_of(&args, profile.as_ref())?;
     // A profile or a core that covers exactly one system settles `system` when the user did not say.
@@ -322,8 +336,10 @@ fn convert(args: Convert) -> Fallible {
     let encoded = bundle.to_vec()?;
     write_out(&output, &encoded, args.force)?;
 
-    if let Some(path) = &sidecar_path {
-        let how = if args.rtc_captured_at.is_some() {
+    if let Some((path, needed_instant)) = &sidecar_path {
+        let how = if !needed_instant {
+            "the instant it records".to_owned()
+        } else if args.rtc_captured_at.is_some() {
             "the instant given".to_owned()
         } else {
             "its modification time (pass --rtc-captured-at if that is not when it was written)".to_owned()

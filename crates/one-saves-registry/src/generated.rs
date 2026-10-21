@@ -776,7 +776,7 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gba"],
         aliases: &[],
-        clock: None,
+        clock: Some(ClockLayout::Sidecar),
     };
     /// MSX_MiSTer — msx, msx2.
     pub const MSX_MISTER: Core = Core {

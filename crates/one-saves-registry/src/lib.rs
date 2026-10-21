@@ -123,7 +123,8 @@ pub enum CoreKind {
 /// writes it, rather than guessed from the bytes.
 ///
 /// Unlike the rest of this crate these are not drawn from the registry pages: the specifications
-/// do not describe clock layouts. They come from files real cores wrote.
+/// do not describe clock layouts. They come from files real cores wrote, or from a core's own
+/// source where no file has been sampled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClockLayout {
     /// Appended to the save, registers little-endian at their natural width. mGBA, SameBoy, VBA-M.
@@ -133,7 +134,8 @@ pub enum ClockLayout {
         /// The length in bytes the footer is padded to.
         reserved: usize,
     },
-    /// Written to a separate file beside the save, not appended to it. Gambatte.
+    /// Written to a separate file beside the save, not appended to it. Gambatte for an MBC3,
+    /// mincer_ray's GBA core for a Seiko S-3511A.
     Sidecar,
 }
 
@@ -676,6 +678,8 @@ mod tests {
     #[test]
     fn the_layouts_are_the_ones_real_cores_write() {
         assert_eq!(cores::GAMBATTE.clock, Some(ClockLayout::Sidecar));
+        // A GBA core keeps its clock in a file too, and the system says which chip is in it.
+        assert_eq!(cores::MINCER_RAY_GBA.clock, Some(ClockLayout::Sidecar));
         assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended));
         assert_eq!(cores::SAMEBOY.clock, Some(ClockLayout::Appended));
         // The MiSTer core writes a whole SD block; its openFPGA ports write sixteen bytes.

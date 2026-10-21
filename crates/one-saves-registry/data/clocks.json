@@ -2,8 +2,9 @@
   "_note": [
     "How each core lays out real-time-clock state. Unlike the other files here this one is NOT",
     "synced from the registry pages: the specifications do not describe clock layouts. These come",
-    "from files real cores wrote, cross-checked against one-saves-convert's rtc module.",
-    "A core absent from this file records no clock convention. Layouts: appended | packed | sidecar."
+    "from files real cores wrote, or the core's own source where no file has been sampled, cross-checked",
+    "against one-saves-convert's rtc module. A core absent from this file records no clock convention.",
+    "Layouts: appended | packed | sidecar. Which chip the state belongs to follows from the system."
   ],
   "cores": {
     "budude2-gb": {
@@ -23,6 +24,9 @@
     },
     "mgba": {
       "layout": "appended"
+    },
+    "mincer-ray-gba": {
+      "layout": "sidecar"
     },
     "sameboy": {
       "layout": "appended"
