@@ -129,7 +129,9 @@ pub enum CoreKind {
 pub enum ClockLayout {
     /// Appended to the save, registers little-endian at their natural width. mGBA, SameBoy, VBA-M.
     Appended,
-    /// Appended to the save, registers bit-packed and padded out to a reserved length.
+    /// Appended to the save, registers bit-packed and padded out to a reserved length. The MiSTer
+    /// Gameboy core and its Pocket ports for an MBC3, GBA_MiSTer for a Seiko S-3511A, which fills
+    /// the length with copies of its record.
     Packed {
         /// The length in bytes the footer is padded to.
         reserved: usize,
@@ -684,6 +686,8 @@ mod tests {
         assert_eq!(cores::SAMEBOY.clock, Some(ClockLayout::Appended));
         // The MiSTer core writes a whole SD block; its openFPGA ports write sixteen bytes.
         assert_eq!(cores::GAMEBOY_MISTER.clock, Some(ClockLayout::Packed { reserved: 512 }));
+        // The GBA core appends a whole block too, of a different chip's record.
+        assert_eq!(cores::GBA_MISTER.clock, Some(ClockLayout::Packed { reserved: 512 }));
         assert_eq!(cores::SPIRITUALIZED_GB.clock, Some(ClockLayout::Packed { reserved: 16 }));
         // Named without the `-gb` ending the old suffix rule looked for, and packed all the same.
         assert_eq!(cores::SPIRITUALIZED_SUPERGB.clock, Some(ClockLayout::Packed { reserved: 16 }));

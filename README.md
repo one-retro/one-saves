@@ -166,8 +166,8 @@ split a real-time-clock footer off the save, so its bytes hash the same over tim
 ```
 
 Where the clock lives varies by emulator, and the bundle hides that: mGBA and SameBoy append it to
-the save, the MiSTer Gameboy core and its Analogue Pocket ports append it bit-packed, Gambatte and
-mincer_ray's Pocket GBA core keep it in a `.rtc` file beside it. All of them arrive as the same two
+the save, the MiSTer Gameboy and GBA cores and the Gameboy core's Analogue Pocket ports append it
+bit-packed, Gambatte and mincer_ray's Pocket GBA core keep it in a `.rtc` file beside it. All of them arrive as the same two
 keys, and `extract` puts each back in the shape its producer writes — down to the reserved size,
 which is a whole 512-byte SD block on MiSTer and sixteen bytes on the Pocket. `convert` picks up a
 `.rtc` named after the save on its own; `extract --rtc-file` writes one.

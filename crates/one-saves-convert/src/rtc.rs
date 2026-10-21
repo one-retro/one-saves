@@ -12,9 +12,10 @@
 //! | its openFPGA ports | appended, 16 bytes | the same ten bytes, a smaller reserved region |
 //! | Gambatte, Game Boy | a `.rtc` file, 4 bytes | an **origin**, big-endian |
 //! | mincer_ray, GBA | a `.rtc` file, 16 bytes | an instant and the calendar **bit-packed** |
+//! | GBA_MiSTer, GBA | appended, 512 bytes | the same two, the other way round, **repeated** |
 //!
-//! Two of the appended forms are sixteen bytes and mean entirely different things by them, so the
-//! system is what tells them apart. Which shape a clock goes back into is decided by
+//! Two of the appended forms are sixteen bytes and two are 512, and each pair means entirely
+//! different things by them, so the system is what tells them apart. Which shape a clock goes back into is decided by
 //! [`form_of`] from the bundle's `source`, since the encoding belongs to the producer rather than
 //! to the cartridge.
 //!
@@ -304,19 +305,23 @@ pub fn split(bytes: &[u8], system: Option<&str>) -> Option<Split> {
         }
         let footer = &bytes[size..];
 
-        // A footer of exactly the MBC3 length that also *parses* is one. Requiring both is what
+        // A footer of exactly a known length that also *parses* is one. Requiring both is what
         // stops a 32816-byte file whose tail is save data from being mistaken for a clock.
-        // Two producers write sixteen bytes and mean different things by them, so the system
-        // decides which to try: a Seiko S-3511A is a GBA chip and an MBC3 is a Game Boy one.
-        let sixteen = if system == Some("gba") {
-            parse_s3511a(footer).map(Clock::S3511a)
-        } else {
-            parse_packed(footer).map(Clock::Mbc3)
-        };
+        // Two producers write sixteen bytes and two write 512, and each pair means different
+        // things by them, so the system decides which to try: a Seiko S-3511A is a GBA chip and
+        // an MBC3 is a Game Boy one. A GBA save read as an MBC3 gets a Game Boy clock in its
+        // header and a Game Boy footer written back in place of the one its core wrote.
+        let gba = system == Some("gba");
         let parsed = match footer.len() {
-            MBC3_LEN_32 | MBC3_LEN_64 => parse_mbc3(footer).map(Clock::Mbc3),
-            PACKED_LEN_POCKET => sixteen,
-            PACKED_LEN_MISTER => parse_packed(footer).map(Clock::Mbc3),
+            MBC3_LEN_32 | MBC3_LEN_64 if !gba => parse_mbc3(footer).map(Clock::Mbc3),
+            PACKED_LEN_POCKET if gba => parse_s3511a(footer).map(Clock::S3511a),
+            PACKED_LEN_MISTER if gba => parse_s3511a_packed(footer).map(Clock::S3511a),
+            // GBA_MiSTer's block opens every record with a word the Game Boy core's never holds
+            // there, so an unstated system can try it first without risking a misread.
+            PACKED_LEN_MISTER if system.is_none() => parse_s3511a_packed(footer)
+                .map(Clock::S3511a)
+                .or_else(|| parse_packed(footer).map(Clock::Mbc3)),
+            PACKED_LEN_POCKET | PACKED_LEN_MISTER => parse_packed(footer).map(Clock::Mbc3),
             _ => None,
         };
         let Some(clock) = parsed else {
@@ -420,6 +425,9 @@ pub enum ClockForm {
     /// A separate file holding an instant and the Seiko chip's calendar, bit-packed. mincer_ray's
     /// GBA core.
     S3511aSidecar,
+    /// Appended to the save: the Seiko chip's calendar and an instant, bit-packed behind a magic
+    /// word and repeated to fill a reserved size. GBA_MiSTer.
+    S3511aPacked(usize),
 }
 
 /// The shape a bundle's producer writes, from what its `source` says.
@@ -439,12 +447,13 @@ pub fn form_of(bundle: &one_saves::Bundle) -> ClockForm {
     let layout = core.map(one_saves::Name::as_str).and_then(one_saves_registry::core).and_then(|c| c.clock);
     // Which chip wrote the state is the save's own business — a Seiko S-3511A is a Game Boy
     // Advance part and an MBC3 a Game Boy one — so the key settles it, and what the producer
-    // settles is the layout. One GBA core keeps the chip in a file of its own; every other appends
-    // it the way mGBA does.
+    // settles is the layout. mincer_ray keeps the chip in a file of its own and GBA_MiSTer packs
+    // it; every other GBA core appends it the way mGBA does.
     if bundle.header.extensions.contains_key(&RtcS3511a::KEY) {
         return match layout {
             Some(ClockLayout::Sidecar) => ClockForm::S3511aSidecar,
-            _ => ClockForm::S3511a,
+            Some(ClockLayout::Packed { reserved }) => ClockForm::S3511aPacked(reserved),
+            Some(ClockLayout::Appended) | None => ClockForm::S3511a,
         };
     }
     match layout {
@@ -468,6 +477,13 @@ pub fn footer_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec
     // A sidecar is not appended at all, so there is no footer for the save to carry.
     if matches!(form, ClockForm::Sidecar | ClockForm::S3511aSidecar) {
         return None;
+    }
+    if let ClockForm::S3511aPacked(reserved) = form {
+        let extensions = &bundle.header.extensions;
+        let chip = extensions.get::<RtcS3511a>()?;
+        // The instant lives in the portable key, since that is what it is.
+        let reading = extensions.get::<Rtc>()?;
+        return Some(build_s3511a_packed(&chip.components, chip.control, reading.reading, reserved));
     }
     let raw = footer_of_mbc3(bundle)?;
     match form {
@@ -732,56 +748,27 @@ pub fn build_gambatte_sidecar(clock: &Mbc3Clock) -> Vec<u8> {
     u32::try_from(base).unwrap_or(0).to_be_bytes().to_vec()
 }
 
-/// The length of the sidecar clock file mincer_ray's GBA core writes beside a save.
-pub const MINCER_RTC_LEN: usize = 16;
+/// The control register the MiSTer GBA core and its Pocket port hold after loading a clock:
+/// 24-hour mode.
+///
+/// Neither core's record has room for the register, so neither stores it, and both reset it to
+/// this on every load. It is what the chip holds whenever a game first reads a restored clock.
+const MISTER_GBA_CONTROL: u8 = 0x40;
 
-/// The control register mincer_ray's core holds after loading a clock: 24-hour mode.
-///
-/// The record has no room for the register, so the core never stores it and resets it to this
-/// on every load. It is what the chip holds whenever a game first reads a restored clock.
-const MINCER_CONTROL: u8 = 0x40;
-
-/// Reads the sidecar clock file mincer_ray's GBA core writes, which unlike Gambatte's holds a
-/// reading rather than an origin.
-///
-/// It is the record the MiSTer GBA core keeps beside a save — `RTC_timestampOut` and
-/// `RTC_savedtimeOut` — moved out of the save into a file of its own as of the core's 0.8.0, so
-/// that the save is the size a cartridge's is. Five little-endian 16-bit words, then padding:
-///
-/// ```text
-/// bytes 0..4    the host clock when the record was taken, in epoch seconds
-/// bytes 4..10   the calendar, bit-packed into the low 42 bits
-/// bytes 10..16  zero
-/// ```
-///
-/// and the calendar is the S-3511A's seven BCD components at their natural widths:
+/// Unpacks the calendar the MiSTer GBA core keeps beside a clock, `RTC_savedtimeOut`: the
+/// S-3511A's seven BCD components at their natural widths, in 42 bits.
 ///
 /// ```text
 /// {year[7:0], month[4:0], day[5:0], weekday[2:0], hour[5:0], minute[6:0], second[6:0]}
 /// ```
 ///
-/// The two halves describe the same moment — the core only exports a pair that has held still —
-/// so the timestamp is the reading, for the reason [`S3511aClock::reading`] gives, and no instant
-/// needs supplying. What the record does not hold is the control register, which the core resets
-/// to 24-hour mode on every load, so that is what is read back. The hour is on the 24-hour clock
-/// for the same reason, with no PM bit.
-///
-/// Everything is checked the way the core checks it before believing it, since a record the
-/// core refuses is one it replaces with the Pocket's own clock: the timestamp neither zero nor
-/// erased, the padding zero, every component BCD, and the day one the month has.
-#[must_use]
-pub fn parse_mincer_sidecar(bytes: &[u8]) -> Option<S3511aClock> {
-    if bytes.len() != MINCER_RTC_LEN {
+/// Checked the way mincer_ray's port checks one before believing it: every component BCD, and the
+/// day one the month has. The hour is on the 24-hour clock, with no PM bit, since the control
+/// register that would say otherwise is not kept.
+fn unpack_calendar(packed: u64) -> Option<[u8; 7]> {
+    if packed >> 42 != 0 {
         return None;
     }
-    let timestamp = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
-    let mut packed = [0u8; 8];
-    packed[..6].copy_from_slice(&bytes[4..10]);
-    let packed = u64::from_le_bytes(packed);
-    if timestamp == 0 || timestamp == u32::MAX || packed >> 42 != 0 || bytes[10..].iter().any(|&b| b != 0) {
-        return None;
-    }
-
     let field = |shift: u32, width: u32| u8::try_from(packed >> shift & ((1 << width) - 1)).ok();
     let components = [
         field(34, 8)?,
@@ -812,30 +799,21 @@ pub fn parse_mincer_sidecar(bytes: &[u8]) -> Option<S3511aClock> {
         && hour <= 23
         && minute <= 59
         && second <= 59;
-    sane.then_some(S3511aClock { components, control: MINCER_CONTROL, latched_at: i64::from(timestamp) })
+    sane.then_some(components)
 }
 
-/// Writes mincer_ray's sidecar back out, from the chip's components and the instant they show.
+/// Packs the chip's components back into the 42 bits the MiSTer GBA core keeps.
 ///
-/// The record keeps the hour on the 24-hour clock and has no control register, so a clock read in
-/// 12-hour mode has its PM flag folded into the hour, and the register itself goes. An instant
-/// outside the record's 32 bits is written as zero, which the core refuses and replaces with the
-/// Pocket's own clock rather than misreading.
-#[must_use]
-pub fn build_mincer_sidecar(components: &[u8; 7], control: u8, latched_at: i64) -> Vec<u8> {
-    let packed = u64::from(components[0]) << 34
+/// There is no control register beside them and the hour is on the 24-hour clock, so a clock read
+/// in 12-hour mode has its PM flag folded into the hour, and the register itself goes.
+fn pack_calendar(components: [u8; 7], control: u8) -> u64 {
+    u64::from(components[0]) << 34
         | u64::from(components[1] & 0x1F) << 29
         | u64::from(components[2] & 0x3F) << 23
         | u64::from(components[3] & 0x07) << 20
         | u64::from(hour24(components[4], control)) << 14
         | u64::from(components[5] & 0x7F) << 7
-        | u64::from(components[6] & 0x7F);
-
-    let mut record = Vec::with_capacity(MINCER_RTC_LEN);
-    record.extend_from_slice(&u32::try_from(latched_at).unwrap_or(0).to_le_bytes());
-    record.extend_from_slice(&packed.to_le_bytes()[..6]);
-    record.resize(MINCER_RTC_LEN, 0);
-    record
+        | u64::from(components[6] & 0x7F)
 }
 
 /// An S-3511A hour byte on the 24-hour clock, as BCD.
@@ -850,6 +828,125 @@ fn hour24(hour: u8, control: u8) -> u8 {
     let Some(value) = from_bcd(digits) else { return digits };
     let value = value % 12 + 12;
     ((value / 10) << 4) | (value % 10)
+}
+
+/// The length of the sidecar clock file mincer_ray's GBA core writes beside a save.
+pub const MINCER_RTC_LEN: usize = 16;
+
+/// Reads the sidecar clock file mincer_ray's GBA core writes, which unlike Gambatte's holds a
+/// reading rather than an origin.
+///
+/// It holds what the MiSTer GBA core it was ported from keeps — `RTC_timestampOut` and
+/// `RTC_savedtimeOut` — in an order of its own, and in a file of its own as of the core's 0.8.0,
+/// so that the save is the size a cartridge's is. Five little-endian 16-bit words, then padding:
+///
+/// ```text
+/// bytes 0..4    the host clock when the record was taken, in epoch seconds
+/// bytes 4..10   the calendar, bit-packed into the low 42 bits
+/// bytes 10..16  zero
+/// ```
+///
+/// The two halves describe the same moment — the core only exports a pair that has held still —
+/// so the timestamp is the reading, for the reason [`S3511aClock::reading`] gives, and no instant
+/// needs supplying. What the record does not hold is the control register, which the core resets
+/// to 24-hour mode on every load, so that is what is read back.
+///
+/// Everything is checked the way the core checks it before believing it, since a record the
+/// core refuses is one it replaces with the Pocket's own clock: the timestamp neither zero nor
+/// erased, the padding zero, and the calendar a date.
+#[must_use]
+pub fn parse_mincer_sidecar(bytes: &[u8]) -> Option<S3511aClock> {
+    if bytes.len() != MINCER_RTC_LEN {
+        return None;
+    }
+    let timestamp = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
+    if timestamp == 0 || timestamp == u32::MAX || bytes[10..].iter().any(|&b| b != 0) {
+        return None;
+    }
+    let mut packed = [0u8; 8];
+    packed[..6].copy_from_slice(&bytes[4..10]);
+    let components = unpack_calendar(u64::from_le_bytes(packed))?;
+    Some(S3511aClock { components, control: MISTER_GBA_CONTROL, latched_at: i64::from(timestamp) })
+}
+
+/// Writes mincer_ray's sidecar back out, from the chip's components and the instant they show.
+///
+/// The record keeps the hour on the 24-hour clock and has no control register, so a clock read in
+/// 12-hour mode has its PM flag folded into the hour, and the register itself goes. An instant
+/// outside the record's 32 bits is written as zero, which the core refuses and replaces with the
+/// Pocket's own clock rather than misreading.
+#[must_use]
+pub fn build_mincer_sidecar(components: &[u8; 7], control: u8, latched_at: i64) -> Vec<u8> {
+    let mut record = Vec::with_capacity(MINCER_RTC_LEN);
+    record.extend_from_slice(&u32::try_from(latched_at).unwrap_or(0).to_le_bytes());
+    record.extend_from_slice(&pack_calendar(*components, control).to_le_bytes()[..6]);
+    record.resize(MINCER_RTC_LEN, 0);
+    record
+}
+
+/// The first word of every record GBA_MiSTer writes past a save: `"RT"`, little-endian.
+const MISTER_GBA_MAGIC: [u8; 2] = *b"TR";
+
+/// The length of the record GBA_MiSTer repeats across the block it appends.
+const MISTER_GBA_RECORD_LEN: usize = 16;
+
+/// Reads the block GBA_MiSTer appends to a save for a cartridge clock.
+///
+/// The core writes one 512-byte SD block past the save memory and fills it from eight 16-bit
+/// words, indexed by the low three bits of the word address, so the block is 32 copies of one
+/// 16-byte record:
+///
+/// ```text
+/// bytes 0..2    the word "RT", which is how the core knows the block is a clock
+/// bytes 2..12   80 bits, little-endian: the calendar in bits 0..42, the host clock when the
+///               record was taken in bits 42..74, and zero above
+/// bytes 12..16  zero
+/// ```
+///
+/// Both halves are the ones mincer_ray's port keeps, so the calendar unpacks the same way and the
+/// timestamp is the reading for the same reason. The order is the other way round, though, and
+/// the two cores' records are not interchangeable.
+///
+/// The core checks the word and nothing else, and this checks more: every copy has to agree and
+/// the calendar has to be a date. A block that is anything else is not this core's output, could
+/// not be written back as it was, and stays in the payload.
+#[must_use]
+pub fn parse_s3511a_packed(footer: &[u8]) -> Option<S3511aClock> {
+    if footer.len() != PACKED_LEN_MISTER {
+        return None;
+    }
+    let record = &footer[..MISTER_GBA_RECORD_LEN];
+    if record[..2] != MISTER_GBA_MAGIC
+        || record[12..].iter().any(|&b| b != 0)
+        || footer.chunks(MISTER_GBA_RECORD_LEN).any(|copy| copy != record)
+    {
+        return None;
+    }
+    let mut value = [0u8; 16];
+    value[..10].copy_from_slice(&record[2..12]);
+    let value = u128::from_le_bytes(value);
+    if value >> 74 != 0 {
+        return None;
+    }
+    let components = unpack_calendar(u64::try_from(value & ((1 << 42) - 1)).ok()?)?;
+    let latched_at = i64::try_from(value >> 42).ok()?;
+    Some(S3511aClock { components, control: MISTER_GBA_CONTROL, latched_at })
+}
+
+/// Writes GBA_MiSTer's block back out: the record, repeated to fill the reserved size.
+///
+/// The hour and the control register go the way they do in [`build_mincer_sidecar`], since the
+/// calendar is the same. An instant outside the record's 32 bits is written as zero, which the
+/// core does not check and runs the clock forward from.
+#[must_use]
+pub fn build_s3511a_packed(components: &[u8; 7], control: u8, latched_at: i64, reserved: usize) -> Vec<u8> {
+    let timestamp = u32::try_from(latched_at).unwrap_or(0);
+    let value = u128::from(pack_calendar(*components, control)) | u128::from(timestamp) << 42;
+    let mut record = Vec::with_capacity(MISTER_GBA_RECORD_LEN);
+    record.extend_from_slice(&MISTER_GBA_MAGIC);
+    record.extend_from_slice(&value.to_le_bytes()[..10]);
+    record.resize(MISTER_GBA_RECORD_LEN, 0);
+    record.iter().copied().cycle().take(reserved).collect()
 }
 
 /// Writes the MBC3 footer back out: ten little-endian registers, then the timestamp.
@@ -1250,6 +1347,103 @@ mod tests {
         let mgba = bundle("mgba");
         assert_eq!(form_of(&mgba), ClockForm::S3511a);
         assert_eq!(footer_of(&mgba).as_deref(), Some(&RUBY_FOOTER[..]));
+    }
+
+    /// One record of the block GBA_MiSTer appends, for the moment `RUBY_FOOTER` holds: the word
+    /// `"RT"`, then the calendar and the instant as `GBA.sv` lays them into `time_din_h`, encoded
+    /// from the core's source rather than by this module's own builder.
+    const MISTER_GBA_RECORD: [u8; 16] =
+        [0x54, 0x52, 0xc3, 0x1c, 0x34, 0x09, 0x99, 0x7c, 0xbf, 0xf2, 0xa9, 0x01, 0, 0, 0, 0];
+
+    /// The whole block: one SD block, which the core fills with copies of the record.
+    fn mister_gba_block() -> Vec<u8> {
+        MISTER_GBA_RECORD.repeat(PACKED_LEN_MISTER / MISTER_GBA_RECORD.len())
+    }
+
+    #[test]
+    fn reads_a_mister_gba_block() {
+        let clock = parse_s3511a_packed(&mister_gba_block()).expect("a Seiko S-3511A");
+        // The calendar mincer_ray's port keeps, with the instant after it rather than before.
+        assert_eq!(clock.components, RUBY_FOOTER[..7]);
+        assert_eq!(clock.control, 0x40);
+        assert_eq!(clock.reading().reading, 1_786_556_383);
+        assert_eq!(
+            build_s3511a_packed(&clock.components, clock.control, clock.latched_at, PACKED_LEN_MISTER),
+            mister_gba_block()
+        );
+    }
+
+    #[test]
+    fn a_mister_gba_save_goes_back_as_its_core_wrote_it() {
+        use one_saves::{Header, Name, Part, Source};
+        let mut save: Vec<u8> = (0..131_072u32).map(|i| (i % 251) as u8).collect();
+        save.extend_from_slice(&mister_gba_block());
+
+        let split = split(&save, Some("gba")).expect("has a clock");
+        assert_eq!(split.sram.len(), 131_072);
+        assert!(matches!(split.clock, Clock::S3511a(_)));
+        let bundle = |core: &str| {
+            let header = Header::default()
+                .source(Source::default().core(Name::parse(core).unwrap()))
+                .extensions(split.extensions());
+            one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")])
+        };
+
+        let mister = bundle("gba-mister");
+        assert_eq!(form_of(&mister), ClockForm::S3511aPacked(PACKED_LEN_MISTER));
+        assert_eq!(footer_of(&mister), Some(mister_gba_block()));
+        // One moment, three producers' files for it, each byte for byte what that producer writes.
+        assert_eq!(footer_of(&bundle("mgba")).as_deref(), Some(&RUBY_FOOTER[..]));
+        assert_eq!(sidecar_of(&mister).as_deref(), Some(&MINCER_SIDECAR[..]));
+    }
+
+    #[test]
+    fn a_gba_save_never_carries_a_game_boy_clock() {
+        // GBA_MiSTer's block is 512 bytes, as the MiSTer Gameboy core's is, and this used to be
+        // read as that core's MBC3 — so a GBA save got a Game Boy clock in its header and a
+        // 48-byte Game Boy footer written back where the block had been. The tail here is the
+        // placeholder save-file-converter's test data uses: not a clock in either layout.
+        let mut placeholder = vec![0u8; 131_072];
+        placeholder.extend_from_slice(&[0x12, 0x34, 0x56, 0x78].repeat(128));
+        assert_eq!(split(&placeholder, Some("gba")), None);
+
+        // A real Game Boy footer on a GBA save is not a GBA clock either, at either length.
+        let mut gb_block = vec![0u8; 32_768];
+        gb_block.extend_from_slice(&mister_footer());
+        assert_eq!(split(&gb_block, Some("gba")), None);
+        assert!(matches!(split(&gb_block, Some("gb")).unwrap().clock, Clock::Mbc3(_)));
+        let mut mbc3 = vec![0u8; 32_768];
+        mbc3.extend_from_slice(&SAMEBOY_FOOTER);
+        assert_eq!(split(&mbc3, Some("gba")), None);
+    }
+
+    #[test]
+    fn a_block_that_is_not_the_cores_output_is_left_alone() {
+        // The core checks the word and nothing else. Anything this module could not write back as
+        // it found it stays in the payload.
+        let mut unmarked = mister_gba_block();
+        unmarked[..2].copy_from_slice(b"RT"); // the word the wrong way round
+        let mut disagreeing = mister_gba_block();
+        disagreeing[300] ^= 1;
+        let mut wide = mister_gba_block();
+        for copy in wide.chunks_mut(MISTER_GBA_RECORD.len()) {
+            copy[11] |= 0x04; // bit 74, past the instant
+        }
+        for bad in [unmarked, disagreeing, wide] {
+            assert_eq!(parse_s3511a_packed(&bad), None);
+        }
+    }
+
+    #[test]
+    fn an_unstated_system_tells_the_two_blocks_apart() {
+        // The GBA core's record opens with a word the Game Boy core never writes there, so with
+        // no system named each block is still read as the chip that wrote it.
+        let mut gba = vec![0u8; 131_072];
+        gba.extend_from_slice(&mister_gba_block());
+        assert!(matches!(split(&gba, None).unwrap().clock, Clock::S3511a(_)));
+        let mut gb = vec![0u8; 32_768];
+        gb.extend_from_slice(&mister_footer());
+        assert!(matches!(split(&gb, None).unwrap().clock, Clock::Mbc3(_)));
     }
 
     #[test]

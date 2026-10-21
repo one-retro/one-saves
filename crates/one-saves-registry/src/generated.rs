@@ -596,7 +596,7 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["gba"],
         aliases: &["GBA", "GBA2P"],
-        clock: None,
+        clock: Some(ClockLayout::Packed { reserved: 512 }),
     };
     /// Genesis Plus GX — genesis, mastersystem, sega-gg, sg-1000, sega-cd.
     pub const GENESIS_PLUS_GX: Core = Core {

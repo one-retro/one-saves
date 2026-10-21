@@ -22,6 +22,10 @@
       "layout": "packed",
       "reserved": 512
     },
+    "gba-mister": {
+      "layout": "packed",
+      "reserved": 512
+    },
     "mgba": {
       "layout": "appended"
     },
