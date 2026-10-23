@@ -36,7 +36,8 @@ pub struct Core {
 pub struct App {
     pub slug: String,
     pub name: String,
-    /// What it runs: a core kind, or the slugs of the cores it runs alone, as the page lists them.
+    /// What it runs: a core kind, the slugs of the cores it ships builds of, or both, as the page
+    /// lists them.
     pub cores: Vec<String>,
 }
 

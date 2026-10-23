@@ -184,6 +184,24 @@ pub mod cores {
         aliases: &["3DO"],
         clock: None,
     };
+    /// 4DO — 3do.
+    pub const _4DO: Core = Core {
+        slug: "4do",
+        name: "4DO",
+        kind: CoreKind::Standalone,
+        systems: &["3do"],
+        aliases: &[],
+        clock: None,
+    };
+    /// a5200 — atari-5200.
+    pub const A5200: Core = Core {
+        slug: "a5200",
+        name: "a5200",
+        kind: CoreKind::Libretro,
+        systems: &["atari-5200"],
+        aliases: &[],
+        clock: None,
+    };
     /// agg23.NES — nes.
     pub const AGG23_NES: Core = Core {
         slug: "agg23-nes",
@@ -217,6 +235,15 @@ pub mod cores {
         name: "agg23.WonderSwan",
         kind: CoreKind::OpenFpga,
         systems: &["wonderswan", "wonderswan-color"],
+        aliases: &[],
+        clock: None,
+    };
+    /// ARMSX2 — ps2.
+    pub const ARMSX2: Core = Core {
+        slug: "armsx2",
+        name: "ARMSX2",
+        kind: CoreKind::Libretro,
+        systems: &["ps2"],
         aliases: &[],
         clock: None,
     };
@@ -256,6 +283,15 @@ pub mod cores {
         aliases: &["AtariLynx"],
         clock: None,
     };
+    /// Azahar — 3ds.
+    pub const AZAHAR: Core = Core {
+        slug: "azahar",
+        name: "Azahar",
+        kind: CoreKind::Libretro,
+        systems: &["3ds"],
+        aliases: &[],
+        clock: None,
+    };
     /// Beetle GBA — gba.
     pub const BEETLE_GBA: Core = Core {
         slug: "beetle-gba",
@@ -281,6 +317,15 @@ pub mod cores {
         kind: CoreKind::Libretro,
         systems: &["ngp", "ngpc"],
         aliases: &["Mednafen NeoPop"],
+        clock: None,
+    };
+    /// Beetle PC-FX — pcfx.
+    pub const BEETLE_PC_FX: Core = Core {
+        slug: "beetle-pc-fx",
+        name: "Beetle PC-FX",
+        kind: CoreKind::Libretro,
+        systems: &["pcfx"],
+        aliases: &[],
         clock: None,
     };
     /// Beetle PCE — pcengine, pcenginecd.
@@ -328,6 +373,15 @@ pub mod cores {
         aliases: &["Mednafen Saturn"],
         clock: None,
     };
+    /// Beetle Supafaust — snes.
+    pub const BEETLE_SUPAFAUST: Core = Core {
+        slug: "beetle-supafaust",
+        name: "Beetle Supafaust",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
     /// Beetle SuperGrafx — supergrafx, pcengine.
     pub const BEETLE_SUPERGRAFX: Core = Core {
         slug: "beetle-supergrafx",
@@ -364,6 +418,15 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// Bliss — intellivision.
+    pub const BLISS: Core = Core {
+        slug: "bliss",
+        name: "Bliss",
+        kind: CoreKind::Standalone,
+        systems: &["intellivision"],
+        aliases: &[],
+        clock: None,
+    };
     /// blueMSX — msx, msx2, colecovision, sg-1000.
     pub const BLUEMSX: Core = Core {
         slug: "bluemsx",
@@ -373,12 +436,30 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// bnes — nes.
+    pub const BNES: Core = Core {
+        slug: "bnes",
+        name: "bnes",
+        kind: CoreKind::Libretro,
+        systems: &["nes"],
+        aliases: &[],
+        clock: None,
+    };
     /// boogermann.msx — msx.
     pub const BOOGERMANN_MSX: Core = Core {
         slug: "boogermann-msx",
         name: "boogermann.msx",
         kind: CoreKind::OpenFpga,
         systems: &["msx"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Boytacean — gb, gbc.
+    pub const BOYTACEAN: Core = Core {
+        slug: "boytacean",
+        name: "Boytacean",
+        kind: CoreKind::Libretro,
+        systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
     };
@@ -400,10 +481,28 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
-    /// bsnes-mercury Accuracy — snes.
-    pub const BSNES_MERCURY_ACCURACY: Core = Core {
-        slug: "bsnes-mercury-accuracy",
-        name: "bsnes-mercury Accuracy",
+    /// bsnes-jg — snes.
+    pub const BSNES_JG: Core = Core {
+        slug: "bsnes-jg",
+        name: "bsnes-jg",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// bsnes-mercury — snes.
+    pub const BSNES_MERCURY: Core = Core {
+        slug: "bsnes-mercury",
+        name: "bsnes-mercury",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// bsnes2014 — snes.
+    pub const BSNES2014: Core = Core {
+        slug: "bsnes2014",
+        name: "bsnes2014",
         kind: CoreKind::Libretro,
         systems: &["snes"],
         aliases: &[],
@@ -445,6 +544,51 @@ pub mod cores {
         aliases: &["C64"],
         clock: None,
     };
+    /// ChimeraSNES — snes.
+    pub const CHIMERASNES: Core = Core {
+        slug: "chimerasnes",
+        name: "ChimeraSNES",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Citra — 3ds.
+    pub const CITRA: Core = Core {
+        slug: "citra",
+        name: "Citra",
+        kind: CoreKind::Libretro,
+        systems: &["3ds"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Citra Canary — 3ds.
+    pub const CITRA_CANARY: Core = Core {
+        slug: "citra-canary",
+        name: "Citra Canary",
+        kind: CoreKind::Libretro,
+        systems: &["3ds"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Citra2018 — 3ds.
+    pub const CITRA2018: Core = Core {
+        slug: "citra2018",
+        name: "Citra2018",
+        kind: CoreKind::Libretro,
+        systems: &["3ds"],
+        aliases: &[],
+        clock: None,
+    };
+    /// ClownMDEmu — genesis, sega-cd.
+    pub const CLOWNMDEMU: Core = Core {
+        slug: "clownmdemu",
+        name: "ClownMDEmu",
+        kind: CoreKind::Libretro,
+        systems: &["genesis", "sega-cd"],
+        aliases: &[],
+        clock: None,
+    };
     /// ColecoVision_MiSTer — colecovision, sg-1000.
     pub const COLECOVISION_MISTER: Core = Core {
         slug: "colecovision-mister",
@@ -452,6 +596,15 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["colecovision", "sg-1000"],
         aliases: &["Coleco"],
+        clock: None,
+    };
+    /// CrabEmu — mastersystem, sg-1000, colecovision.
+    pub const CRABEMU: Core = Core {
+        slug: "crabemu",
+        name: "CrabEmu",
+        kind: CoreKind::Standalone,
+        systems: &["mastersystem", "sg-1000", "colecovision"],
+        aliases: &[],
         clock: None,
     };
     /// DeSmuME — nds.
@@ -469,6 +622,24 @@ pub mod cores {
         name: "DeSmuME 2015",
         kind: CoreKind::Libretro,
         systems: &["nds"],
+        aliases: &[],
+        clock: None,
+    };
+    /// dolphin-emu — gc, wii.
+    pub const DOLPHIN_EMU: Core = Core {
+        slug: "dolphin-emu",
+        name: "dolphin-emu",
+        kind: CoreKind::Libretro,
+        systems: &["gc", "wii"],
+        aliases: &[],
+        clock: None,
+    };
+    /// DoubleCherryGB — gb, gbc.
+    pub const DOUBLECHERRYGB: Core = Core {
+        slug: "doublecherrygb",
+        name: "DoubleCherryGB",
+        kind: CoreKind::Libretro,
+        systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
     };
@@ -517,6 +688,42 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// emuThreeDS — 3ds.
+    pub const EMUTHREEDS: Core = Core {
+        slug: "emuthreeds",
+        name: "emuThreeDS",
+        kind: CoreKind::Standalone,
+        systems: &["3ds"],
+        aliases: &[],
+        clock: None,
+    };
+    /// emux (gb) — gb, gbc.
+    pub const EMUX_GB: Core = Core {
+        slug: "emux-gb",
+        name: "emux (gb)",
+        kind: CoreKind::Libretro,
+        systems: &["gb", "gbc"],
+        aliases: &[],
+        clock: None,
+    };
+    /// emux (nes) — nes.
+    pub const EMUX_NES: Core = Core {
+        slug: "emux-nes",
+        name: "emux (nes)",
+        kind: CoreKind::Libretro,
+        systems: &["nes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// emux (sms) — mastersystem.
+    pub const EMUX_SMS: Core = Core {
+        slug: "emux-sms",
+        name: "emux (sms)",
+        kind: CoreKind::Libretro,
+        systems: &["mastersystem"],
+        aliases: &[],
+        clock: None,
+    };
     /// ericlewis.Genesis — genesis.
     pub const ERICLEWIS_GENESIS: Core = Core {
         slug: "ericlewis-genesis",
@@ -544,12 +751,66 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// FCEUX — nes, fds.
+    pub const FCEUX: Core = Core {
+        slug: "fceux",
+        name: "FCEUX",
+        kind: CoreKind::Standalone,
+        systems: &["nes", "fds"],
+        aliases: &[],
+        clock: None,
+    };
     /// FinalBurn Neo — neogeo, mame.
     pub const FINALBURN_NEO: Core = Core {
         slug: "finalburn-neo",
         name: "FinalBurn Neo",
         kind: CoreKind::Libretro,
         systems: &["neogeo", "mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// FinalBurn Neo (cps12 subset) — mame.
+    pub const FINALBURN_NEO_CPS12_SUBSET: Core = Core {
+        slug: "finalburn-neo-cps12-subset",
+        name: "FinalBurn Neo (cps12 subset)",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// FinalBurn Neo (neogeo subset) — neogeo.
+    pub const FINALBURN_NEO_NEOGEO_SUBSET: Core = Core {
+        slug: "finalburn-neo-neogeo-subset",
+        name: "FinalBurn Neo (neogeo subset)",
+        kind: CoreKind::Libretro,
+        systems: &["neogeo"],
+        aliases: &[],
+        clock: None,
+    };
+    /// fixGB — gb, gbc.
+    pub const FIXGB: Core = Core {
+        slug: "fixgb",
+        name: "fixGB",
+        kind: CoreKind::Libretro,
+        systems: &["gb", "gbc"],
+        aliases: &[],
+        clock: None,
+    };
+    /// fixNES — nes, fds.
+    pub const FIXNES: Core = Core {
+        slug: "fixnes",
+        name: "fixNES",
+        kind: CoreKind::Libretro,
+        systems: &["nes", "fds"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Flycast — dreamcast.
+    pub const FLYCAST: Core = Core {
+        slug: "flycast",
+        name: "Flycast",
+        kind: CoreKind::Libretro,
+        systems: &["dreamcast"],
         aliases: &[],
         clock: None,
     };
@@ -568,6 +829,15 @@ pub mod cores {
         name: "FreeIntv",
         kind: CoreKind::Libretro,
         systems: &["intellivision"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Frodo — c64.
+    pub const FRODO: Core = Core {
+        slug: "frodo",
+        name: "Frodo",
+        kind: CoreKind::Libretro,
+        systems: &["c64"],
         aliases: &[],
         clock: None,
     };
@@ -598,6 +868,51 @@ pub mod cores {
         aliases: &["GBA", "GBA2P"],
         clock: Some(ClockLayout::Packed { reserved: 512 }),
     };
+    /// Gearboy — gb, gbc.
+    pub const GEARBOY: Core = Core {
+        slug: "gearboy",
+        name: "Gearboy",
+        kind: CoreKind::Libretro,
+        systems: &["gb", "gbc"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Gearcoleco — colecovision.
+    pub const GEARCOLECO: Core = Core {
+        slug: "gearcoleco",
+        name: "Gearcoleco",
+        kind: CoreKind::Libretro,
+        systems: &["colecovision"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Geargrafx — pcengine, pcenginecd, supergrafx.
+    pub const GEARGRAFX: Core = Core {
+        slug: "geargrafx",
+        name: "Geargrafx",
+        kind: CoreKind::Libretro,
+        systems: &["pcengine", "pcenginecd", "supergrafx"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Gearlynx — atari-lynx.
+    pub const GEARLYNX: Core = Core {
+        slug: "gearlynx",
+        name: "Gearlynx",
+        kind: CoreKind::Libretro,
+        systems: &["atari-lynx"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Gearsystem — mastersystem, sega-gg, sg-1000.
+    pub const GEARSYSTEM: Core = Core {
+        slug: "gearsystem",
+        name: "Gearsystem",
+        kind: CoreKind::Libretro,
+        systems: &["mastersystem", "sega-gg", "sg-1000"],
+        aliases: &[],
+        clock: None,
+    };
     /// Genesis Plus GX — genesis, mastersystem, sega-gg, sg-1000, sega-cd.
     pub const GENESIS_PLUS_GX: Core = Core {
         slug: "genesis-plus-gx",
@@ -613,6 +928,15 @@ pub mod cores {
         name: "Genesis Plus GX Wide",
         kind: CoreKind::Libretro,
         systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Geolith — neogeo.
+    pub const GEOLITH: Core = Core {
+        slug: "geolith",
+        name: "Geolith",
+        kind: CoreKind::Libretro,
+        systems: &["neogeo"],
         aliases: &[],
         clock: None,
     };
@@ -634,6 +958,24 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// higan (Super Famicom) — snes, gb, gbc.
+    pub const HIGAN_SUPER_FAMICOM: Core = Core {
+        slug: "higan-super-famicom",
+        name: "higan (Super Famicom)",
+        kind: CoreKind::Libretro,
+        systems: &["snes", "gb", "gbc"],
+        aliases: &[],
+        clock: None,
+    };
+    /// higan (Super Famicom Balanced) — snes, gb, gbc.
+    pub const HIGAN_SUPER_FAMICOM_BALANCED: Core = Core {
+        slug: "higan-super-famicom-balanced",
+        name: "higan (Super Famicom Balanced)",
+        kind: CoreKind::Libretro,
+        systems: &["snes", "gb", "gbc"],
+        aliases: &[],
+        clock: None,
+    };
     /// Intv_MiSTer — intellivision.
     pub const INTV_MISTER: Core = Core {
         slug: "intv-mister",
@@ -643,12 +985,39 @@ pub mod cores {
         aliases: &["Intellivision"],
         clock: None,
     };
+    /// IroGB — gb, gbc.
+    pub const IROGB: Core = Core {
+        slug: "irogb",
+        name: "IroGB",
+        kind: CoreKind::Libretro,
+        systems: &["gb", "gbc"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Ishiiruka — gc, wii.
+    pub const ISHIIRUKA: Core = Core {
+        slug: "ishiiruka",
+        name: "Ishiiruka",
+        kind: CoreKind::Libretro,
+        systems: &["gc", "wii"],
+        aliases: &[],
+        clock: None,
+    };
     /// jeremy.MegaCD — sega-cd.
     pub const JEREMY_MEGACD: Core = Core {
         slug: "jeremy-megacd",
         name: "jeremy.MegaCD",
         kind: CoreKind::OpenFpga,
         systems: &["sega-cd"],
+        aliases: &[],
+        clock: None,
+    };
+    /// JollyCV — colecovision.
+    pub const JOLLYCV: Core = Core {
+        slug: "jollycv",
+        name: "JollyCV",
+        kind: CoreKind::Libretro,
+        systems: &["colecovision"],
         aliases: &[],
         clock: None,
     };
@@ -679,6 +1048,96 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// LRPS2 — ps2.
+    pub const LRPS2: Core = Core {
+        slug: "lrps2",
+        name: "LRPS2",
+        kind: CoreKind::Libretro,
+        systems: &["ps2"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME — mame.
+    pub const MAME: Core = Core {
+        slug: "mame",
+        name: "MAME",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME 2000 — mame.
+    pub const MAME_2000: Core = Core {
+        slug: "mame-2000",
+        name: "MAME 2000",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME 2003 (0.78) — mame.
+    pub const MAME_2003_0_78: Core = Core {
+        slug: "mame-2003-0-78",
+        name: "MAME 2003 (0.78)",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME 2003 Midway — mame.
+    pub const MAME_2003_MIDWAY: Core = Core {
+        slug: "mame-2003-midway",
+        name: "MAME 2003 Midway",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME 2003-Plus — mame.
+    pub const MAME_2003_PLUS: Core = Core {
+        slug: "mame-2003-plus",
+        name: "MAME 2003-Plus",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME 2009 — mame.
+    pub const MAME_2009: Core = Core {
+        slug: "mame-2009",
+        name: "MAME 2009",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME 2010 — mame.
+    pub const MAME_2010: Core = Core {
+        slug: "mame-2010",
+        name: "MAME 2010",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME 2015 — mame.
+    pub const MAME_2015: Core = Core {
+        slug: "mame-2015",
+        name: "MAME 2015",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
+    /// MAME 2016 — mame.
+    pub const MAME_2016: Core = Core {
+        slug: "mame-2016",
+        name: "MAME 2016",
+        kind: CoreKind::Libretro,
+        systems: &["mame"],
+        aliases: &[],
+        clock: None,
+    };
     /// markus-zzz.MyC64 — c64.
     pub const MARKUS_ZZZ_MYC64: Core = Core {
         slug: "markus-zzz-myc64",
@@ -704,6 +1163,46 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["pcenginecd"],
         aliases: &["Mazamars312.PC Engine CD_Analogizer"],
+        clock: None,
+    };
+    /// Mednafen — atari-lynx, fds, gb, gba, gbc, genesis, mastersystem, nes, ngp, ngpc, pcengine, pcenginecd, pcfx, psx, saturn, sega-gg, snes, supergrafx, virtualboy, wonderswan, wonderswan-color.
+    pub const MEDNAFEN: Core = Core {
+        slug: "mednafen",
+        name: "Mednafen",
+        kind: CoreKind::Standalone,
+        systems: &[
+            "atari-lynx",
+            "fds",
+            "gb",
+            "gba",
+            "gbc",
+            "genesis",
+            "mastersystem",
+            "nes",
+            "ngp",
+            "ngpc",
+            "pcengine",
+            "pcenginecd",
+            "pcfx",
+            "psx",
+            "saturn",
+            "sega-gg",
+            "snes",
+            "supergrafx",
+            "virtualboy",
+            "wonderswan",
+            "wonderswan-color",
+        ],
+        aliases: &[],
+        clock: None,
+    };
+    /// Mednafen bSNES — snes.
+    pub const MEDNAFEN_BSNES: Core = Core {
+        slug: "mednafen-bsnes",
+        name: "Mednafen bSNES",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
         clock: None,
     };
     /// MegaCD_MiSTer — sega-cd.
@@ -796,6 +1295,15 @@ pub mod cores {
         aliases: &["MSX1"],
         clock: None,
     };
+    /// Mupen64Plus — n64.
+    pub const MUPEN64PLUS: Core = Core {
+        slug: "mupen64plus",
+        name: "Mupen64Plus",
+        kind: CoreKind::Standalone,
+        systems: &["n64"],
+        aliases: &[],
+        clock: None,
+    };
     /// Mupen64Plus-Next — n64.
     pub const MUPEN64PLUS_NEXT: Core = Core {
         slug: "mupen64plus-next",
@@ -841,12 +1349,12 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
-    /// nSide — snes.
-    pub const NSIDE: Core = Core {
-        slug: "nside",
-        name: "nSide",
+    /// NooDS — nds.
+    pub const NOODS: Core = Core {
+        slug: "noods",
+        name: "NooDS",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["nds"],
         aliases: &[],
         clock: None,
     };
@@ -883,7 +1391,16 @@ pub mod cores {
         name: "Opera",
         kind: CoreKind::Libretro,
         systems: &["3do"],
-        aliases: &["4DO"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Panda3DS — 3ds.
+    pub const PANDA3DS: Core = Core {
+        slug: "panda3ds",
+        name: "Panda3DS",
+        kind: CoreKind::Libretro,
+        systems: &["3ds"],
+        aliases: &[],
         clock: None,
     };
     /// ParaLLEl N64 — n64.
@@ -892,6 +1409,15 @@ pub mod cores {
         name: "ParaLLEl N64",
         kind: CoreKind::Libretro,
         systems: &["n64"],
+        aliases: &[],
+        clock: None,
+    };
+    /// PCEE2 — ps2.
+    pub const PCEE2: Core = Core {
+        slug: "pcee2",
+        name: "PCEE2",
+        kind: CoreKind::Libretro,
+        systems: &["ps2"],
         aliases: &[],
         clock: None,
     };
@@ -904,12 +1430,39 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// PCSX1 — psx.
+    pub const PCSX1: Core = Core {
+        slug: "pcsx1",
+        name: "PCSX1",
+        kind: CoreKind::Libretro,
+        systems: &["psx"],
+        aliases: &[],
+        clock: None,
+    };
+    /// PCSX2 — ps2.
+    pub const PCSX2: Core = Core {
+        slug: "pcsx2",
+        name: "PCSX2",
+        kind: CoreKind::Standalone,
+        systems: &["ps2"],
+        aliases: &[],
+        clock: None,
+    };
     /// PicoDrive — genesis, sega-32x, sega-cd, mastersystem.
     pub const PICODRIVE: Core = Core {
         slug: "picodrive",
         name: "PicoDrive",
         kind: CoreKind::Libretro,
         systems: &["genesis", "sega-32x", "sega-cd", "mastersystem"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Play! — ps2.
+    pub const PLAY: Core = Core {
+        slug: "play",
+        name: "Play!",
+        kind: CoreKind::Libretro,
+        systems: &["ps2"],
         aliases: &[],
         clock: None,
     };
@@ -949,6 +1502,33 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// RACE — ngp, ngpc.
+    pub const RACE: Core = Core {
+        slug: "race",
+        name: "RACE",
+        kind: CoreKind::Libretro,
+        systems: &["ngp", "ngpc"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Rustation — psx.
+    pub const RUSTATION: Core = Core {
+        slug: "rustation",
+        name: "Rustation",
+        kind: CoreKind::Libretro,
+        systems: &["psx"],
+        aliases: &[],
+        clock: None,
+    };
+    /// RustyNES — nes, fds.
+    pub const RUSTYNES: Core = Core {
+        slug: "rustynes",
+        name: "RustyNES",
+        kind: CoreKind::Libretro,
+        systems: &["nes", "fds"],
+        aliases: &[],
+        clock: None,
+    };
     /// S32X_MiSTer — sega-32x.
     pub const S32X_MISTER: Core = Core {
         slug: "s32x-mister",
@@ -985,6 +1565,15 @@ pub mod cores {
         aliases: &["SGB"],
         clock: Some(ClockLayout::Packed { reserved: 512 }),
     };
+    /// SkyEmu — gb, gba, nds.
+    pub const SKYEMU: Core = Core {
+        slug: "skyemu",
+        name: "SkyEmu",
+        kind: CoreKind::Libretro,
+        systems: &["gb", "gba", "nds"],
+        aliases: &[],
+        clock: None,
+    };
     /// SMS_MiSTer — mastersystem, sega-gg, sg-1000.
     pub const SMS_MISTER: Core = Core {
         slug: "sms-mister",
@@ -992,6 +1581,15 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["mastersystem", "sega-gg", "sg-1000"],
         aliases: &["SMS"],
+        clock: None,
+    };
+    /// SMS Plus GX — mastersystem, sega-gg.
+    pub const SMS_PLUS_GX: Core = Core {
+        slug: "sms-plus-gx",
+        name: "SMS Plus GX",
+        kind: CoreKind::Libretro,
+        systems: &["mastersystem", "sega-gg"],
+        aliases: &[],
         clock: None,
     };
     /// SNES_MiSTer — snes.
@@ -1025,6 +1623,15 @@ pub mod cores {
     pub const SNES9X_2005: Core = Core {
         slug: "snes9x-2005",
         name: "Snes9x 2005",
+        kind: CoreKind::Libretro,
+        systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Snes9x 2005 Plus — snes.
+    pub const SNES9X_2005_PLUS: Core = Core {
+        slug: "snes9x-2005-plus",
+        name: "Snes9x 2005 Plus",
         kind: CoreKind::Libretro,
         systems: &["snes"],
         aliases: &[],
@@ -1183,6 +1790,15 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// Stella 2023 — atari-2600.
+    pub const STELLA_2023: Core = Core {
+        slug: "stella-2023",
+        name: "Stella 2023",
+        kind: CoreKind::Libretro,
+        systems: &["atari-2600"],
+        aliases: &[],
+        clock: None,
+    };
     /// SwanStation — psx.
     pub const SWANSTATION: Core = Core {
         slug: "swanstation",
@@ -1192,12 +1808,48 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// TempGBA — gba.
+    pub const TEMPGBA: Core = Core {
+        slug: "tempgba",
+        name: "TempGBA",
+        kind: CoreKind::Libretro,
+        systems: &["gba"],
+        aliases: &[],
+        clock: None,
+    };
+    /// TGB Dual — gb, gbc.
+    pub const TGB_DUAL: Core = Core {
+        slug: "tgb-dual",
+        name: "TGB Dual",
+        kind: CoreKind::Libretro,
+        systems: &["gb", "gbc"],
+        aliases: &[],
+        clock: None,
+    };
+    /// tia — atari-2600.
+    pub const TIA: Core = Core {
+        slug: "tia",
+        name: "tia",
+        kind: CoreKind::Libretro,
+        systems: &["atari-2600"],
+        aliases: &[],
+        clock: None,
+    };
     /// timboettiger.Pro Action Replay — snes.
     pub const TIMBOETTIGER_PRO_ACTION_REPLAY: Core = Core {
         slug: "timboettiger-pro-action-replay",
         name: "timboettiger.Pro Action Replay",
         kind: CoreKind::OpenFpga,
         systems: &["snes"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Trident — 3ds.
+    pub const TRIDENT: Core = Core {
+        slug: "trident",
+        name: "Trident",
+        kind: CoreKind::Libretro,
+        systems: &["3ds"],
         aliases: &[],
         clock: None,
     };
@@ -1246,12 +1898,66 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// VICE x128 — c64.
+    pub const VICE_X128: Core = Core {
+        slug: "vice-x128",
+        name: "VICE x128",
+        kind: CoreKind::Libretro,
+        systems: &["c64"],
+        aliases: &[],
+        clock: None,
+    };
+    /// VICE x64 — c64.
+    pub const VICE_X64: Core = Core {
+        slug: "vice-x64",
+        name: "VICE x64",
+        kind: CoreKind::Libretro,
+        systems: &["c64"],
+        aliases: &[],
+        clock: None,
+    };
+    /// VICE x64dtv — c64.
+    pub const VICE_X64DTV: Core = Core {
+        slug: "vice-x64dtv",
+        name: "VICE x64dtv",
+        kind: CoreKind::Libretro,
+        systems: &["c64"],
+        aliases: &[],
+        clock: None,
+    };
+    /// VICE x64sc — c64.
+    pub const VICE_X64SC: Core = Core {
+        slug: "vice-x64sc",
+        name: "VICE x64sc",
+        kind: CoreKind::Libretro,
+        systems: &["c64"],
+        aliases: &[],
+        clock: None,
+    };
+    /// VICE xscpu64 — c64.
+    pub const VICE_XSCPU64: Core = Core {
+        slug: "vice-xscpu64",
+        name: "VICE xscpu64",
+        kind: CoreKind::Libretro,
+        systems: &["c64"],
+        aliases: &[],
+        clock: None,
+    };
     /// Virtual Jaguar — atari-jaguar.
     pub const VIRTUAL_JAGUAR: Core = Core {
         slug: "virtual-jaguar",
         name: "Virtual Jaguar",
         kind: CoreKind::Libretro,
         systems: &["atari-jaguar"],
+        aliases: &[],
+        clock: None,
+    };
+    /// Vita3K — psvita.
+    pub const VITA3K: Core = Core {
+        slug: "vita3k",
+        name: "Vita3K",
+        kind: CoreKind::Libretro,
+        systems: &["psvita"],
         aliases: &[],
         clock: None,
     };
@@ -1273,69 +1979,140 @@ pub mod cores {
         aliases: &[],
         clock: None,
     };
+    /// Yabause — saturn.
+    pub const YABAUSE: Core = Core {
+        slug: "yabause",
+        name: "Yabause",
+        kind: CoreKind::Libretro,
+        systems: &["saturn"],
+        aliases: &[],
+        clock: None,
+    };
+    /// yaps2 — ps2.
+    pub const YAPS2: Core = Core {
+        slug: "yaps2",
+        name: "yaps2",
+        kind: CoreKind::Libretro,
+        systems: &["ps2"],
+        aliases: &[],
+        clock: None,
+    };
 }
 
 /// Every known emulator core, sorted by slug.
-pub(crate) static CORES: [Core; 122] = [
+pub(crate) static CORES: [Core; 200] = [
     cores::_3DO_MISTER,
+    cores::_4DO,
+    cores::A5200,
     cores::AGG23_NES,
     cores::AGG23_PC_ENGINE,
     cores::AGG23_SNES,
     cores::AGG23_WONDERSWAN,
+    cores::ARMSX2,
     cores::ATARI7800_MISTER,
     cores::ATARI800,
     cores::ATARI800_MISTER,
     cores::ATARILYNX_MISTER,
+    cores::AZAHAR,
     cores::BEETLE_GBA,
     cores::BEETLE_LYNX,
     cores::BEETLE_NEOPOP,
+    cores::BEETLE_PC_FX,
     cores::BEETLE_PCE,
     cores::BEETLE_PCE_FAST,
     cores::BEETLE_PSX,
     cores::BEETLE_PSX_HW,
     cores::BEETLE_SATURN,
+    cores::BEETLE_SUPAFAUST,
     cores::BEETLE_SUPERGRAFX,
     cores::BEETLE_VB,
     cores::BEETLE_WONDERSWAN,
     cores::BLASTEM,
+    cores::BLISS,
     cores::BLUEMSX,
+    cores::BNES,
     cores::BOOGERMANN_MSX,
+    cores::BOYTACEAN,
     cores::BSNES,
     cores::BSNES_HD_BETA,
-    cores::BSNES_MERCURY_ACCURACY,
+    cores::BSNES_JG,
+    cores::BSNES_MERCURY,
+    cores::BSNES2014,
     cores::BUDUDE2_GB,
     cores::BUDUDE2_GBC,
     cores::BUDUDE2_LYNX,
     cores::C64_MISTER,
+    cores::CHIMERASNES,
+    cores::CITRA,
+    cores::CITRA_CANARY,
+    cores::CITRA2018,
+    cores::CLOWNMDEMU,
     cores::COLECOVISION_MISTER,
+    cores::CRABEMU,
     cores::DESMUME,
     cores::DESMUME_2015,
+    cores::DOLPHIN_EMU,
+    cores::DOUBLECHERRYGB,
     cores::DRIZZT_GG,
     cores::DRIZZT_MEGADRIVE,
     cores::DRIZZT_SG_1000,
     cores::DRIZZT_SMS,
     cores::DUCKSTATION,
+    cores::EMUTHREEDS,
+    cores::EMUX_GB,
+    cores::EMUX_NES,
+    cores::EMUX_SMS,
     cores::ERICLEWIS_GENESIS,
     cores::FB_ALPHA,
     cores::FCEUMM,
+    cores::FCEUX,
     cores::FINALBURN_NEO,
+    cores::FINALBURN_NEO_CPS12_SUBSET,
+    cores::FINALBURN_NEO_NEOGEO_SUBSET,
+    cores::FIXGB,
+    cores::FIXNES,
+    cores::FLYCAST,
     cores::FMSX,
     cores::FREEINTV,
+    cores::FRODO,
     cores::GAMBATTE,
     cores::GAMEBOY_MISTER,
     cores::GBA_MISTER,
+    cores::GEARBOY,
+    cores::GEARCOLECO,
+    cores::GEARGRAFX,
+    cores::GEARLYNX,
+    cores::GEARSYSTEM,
     cores::GENESIS_PLUS_GX,
     cores::GENESIS_PLUS_GX_WIDE,
+    cores::GEOLITH,
     cores::GPSP,
     cores::HANDY,
+    cores::HIGAN_SUPER_FAMICOM,
+    cores::HIGAN_SUPER_FAMICOM_BALANCED,
     cores::INTV_MISTER,
+    cores::IROGB,
+    cores::ISHIIRUKA,
     cores::JEREMY_MEGACD,
+    cores::JOLLYCV,
     cores::JOTEGO_JTNGP,
     cores::JOTEGO_JTNGPC,
     cores::KRONOS,
+    cores::LRPS2,
+    cores::MAME,
+    cores::MAME_2000,
+    cores::MAME_2003_0_78,
+    cores::MAME_2003_MIDWAY,
+    cores::MAME_2003_PLUS,
+    cores::MAME_2009,
+    cores::MAME_2010,
+    cores::MAME_2015,
+    cores::MAME_2016,
     cores::MARKUS_ZZZ_MYC64,
     cores::MAZAMARS312_NEOGEO,
     cores::MAZAMARS312_PC_ENGINE_CD,
+    cores::MEDNAFEN,
+    cores::MEDNAFEN_BSNES,
     cores::MEGACD_MISTER,
     cores::MEGADRIVE_MISTER,
     cores::MELONDS,
@@ -1346,32 +2123,44 @@ pub(crate) static CORES: [Core; 122] = [
     cores::MINCER_RAY_GBA,
     cores::MSX_MISTER,
     cores::MSX1_MISTER,
+    cores::MUPEN64PLUS,
     cores::MUPEN64PLUS_NEXT,
     cores::N64_MISTER,
     cores::NEOGEO_MISTER,
     cores::NES_MISTER,
     cores::NESTOPIA,
-    cores::NSIDE,
+    cores::NOODS,
     cores::O2EM,
     cores::OBSIDIAN_VECTREX,
     cores::ODYSSEY2_MISTER,
     cores::OPERA,
+    cores::PANDA3DS,
     cores::PARALLEL_N64,
+    cores::PCEE2,
     cores::PCSX_REARMED,
+    cores::PCSX1,
+    cores::PCSX2,
     cores::PICODRIVE,
+    cores::PLAY,
     cores::PPSSPP,
     cores::PROSYSTEM,
     cores::PSX_MISTER,
     cores::QUICKNES,
+    cores::RACE,
+    cores::RUSTATION,
+    cores::RUSTYNES,
     cores::S32X_MISTER,
     cores::SAMEBOY,
     cores::SATURN_MISTER,
     cores::SGB_MISTER,
+    cores::SKYEMU,
     cores::SMS_MISTER,
+    cores::SMS_PLUS_GX,
     cores::SNES_MISTER,
     cores::SNES9X,
     cores::SNES9X_2002,
     cores::SNES9X_2005,
+    cores::SNES9X_2005_PLUS,
     cores::SNES9X_2010,
     cores::SPIRITUALIZED_2600,
     cores::SPIRITUALIZED_7800,
@@ -1389,16 +2178,29 @@ pub(crate) static CORES: [Core; 122] = [
     cores::SPIRITUALIZED_SUPERGB,
     cores::STELLA,
     cores::STELLA_2014,
+    cores::STELLA_2023,
     cores::SWANSTATION,
+    cores::TEMPGBA,
+    cores::TGB_DUAL,
+    cores::TIA,
     cores::TIMBOETTIGER_PRO_ACTION_REPLAY,
+    cores::TRIDENT,
     cores::TURBOGRAFX16_MISTER,
     cores::VBA_M,
     cores::VBA_NEXT,
     cores::VECTREX_MISTER,
     cores::VECX,
+    cores::VICE_X128,
+    cores::VICE_X64,
+    cores::VICE_X64DTV,
+    cores::VICE_X64SC,
+    cores::VICE_XSCPU64,
     cores::VIRTUAL_JAGUAR,
+    cores::VITA3K,
     cores::WONDERSWAN_MISTER,
     cores::YABASANSHIRO,
+    cores::YABAUSE,
+    cores::YAPS2,
 ];
 
 /// A named const per listed app, for a producer that knows which one it is.
@@ -1406,17 +2208,156 @@ pub mod apps {
     use crate::{App, AppCores, CoreKind};
 
     /// Analogue Pocket.
-    pub const ANALOGUE_POCKET: App =
-        App { slug: "analogue-pocket", name: "Analogue Pocket", cores: AppCores::Kind(CoreKind::OpenFpga) };
+    pub const ANALOGUE_POCKET: App = App {
+        slug: "analogue-pocket",
+        name: "Analogue Pocket",
+        cores: AppCores { kind: Some(CoreKind::OpenFpga), builds: &[] },
+    };
+    /// Azahar.
+    pub const AZAHAR: App =
+        App { slug: "azahar", name: "Azahar", cores: AppCores { kind: None, builds: &["azahar"] } };
+    /// Delta.
+    pub const DELTA: App = App {
+        slug: "delta",
+        name: "Delta",
+        cores: AppCores {
+            kind: None,
+            builds: &[
+                "desmume",
+                "gambatte",
+                "genesis-plus-gx",
+                "melonds",
+                "mupen64plus",
+                "nestopia",
+                "snes9x",
+                "vba-m",
+            ],
+        },
+    };
+    /// Dolphin.
+    pub const DOLPHIN: App =
+        App { slug: "dolphin", name: "Dolphin", cores: AppCores { kind: None, builds: &["dolphin-emu"] } };
+    /// DuckStation.
+    pub const DUCKSTATION: App = App {
+        slug: "duckstation",
+        name: "DuckStation",
+        cores: AppCores { kind: None, builds: &["duckstation"] },
+    };
+    /// Flycast.
+    pub const FLYCAST: App =
+        App { slug: "flycast", name: "Flycast", cores: AppCores { kind: None, builds: &["flycast"] } };
+    /// Mednafen.
+    pub const MEDNAFEN: App =
+        App { slug: "mednafen", name: "Mednafen", cores: AppCores { kind: None, builds: &["mednafen"] } };
+    /// melonDS.
+    pub const MELONDS: App =
+        App { slug: "melonds", name: "melonDS", cores: AppCores { kind: None, builds: &["melonds"] } };
+    /// mGBA.
+    pub const MGBA: App =
+        App { slug: "mgba", name: "mGBA", cores: AppCores { kind: None, builds: &["mgba"] } };
     /// MiSTer.
-    pub const MISTER: App = App { slug: "mister", name: "MiSTer", cores: AppCores::Kind(CoreKind::MiSTer) };
+    pub const MISTER: App =
+        App { slug: "mister", name: "MiSTer", cores: AppCores { kind: Some(CoreKind::MiSTer), builds: &[] } };
+    /// OpenEmu.
+    pub const OPENEMU: App = App {
+        slug: "openemu",
+        name: "OpenEmu",
+        cores: AppCores {
+            kind: None,
+            builds: &[
+                "atari800",
+                "bliss",
+                "bsnes",
+                "crabemu",
+                "desmume",
+                "dolphin-emu",
+                "fceux",
+                "gambatte",
+                "genesis-plus-gx",
+                "mednafen",
+                "mgba",
+                "mupen64plus",
+                "nestopia",
+                "o2em",
+                "picodrive",
+                "ppsspp",
+                "prosystem",
+                "snes9x",
+                "stella",
+                "vecx",
+            ],
+        },
+    };
+    /// PCSX2.
+    pub const PCSX2: App =
+        App { slug: "pcsx2", name: "PCSX2", cores: AppCores { kind: None, builds: &["pcsx2"] } };
+    /// PPSSPP.
+    pub const PPSSPP: App =
+        App { slug: "ppsspp", name: "PPSSPP", cores: AppCores { kind: None, builds: &["ppsspp"] } };
+    /// Provenance.
+    pub const PROVENANCE: App = App {
+        slug: "provenance",
+        name: "Provenance",
+        cores: AppCores {
+            kind: Some(CoreKind::Libretro),
+            builds: &[
+                "4do",
+                "atari800",
+                "bliss",
+                "crabemu",
+                "dolphin-emu",
+                "emuthreeds",
+                "fceux",
+                "gambatte",
+                "genesis-plus-gx",
+                "mednafen",
+                "mupen64plus",
+                "o2em",
+                "picodrive",
+                "ppsspp",
+                "prosystem",
+                "snes9x",
+                "stella",
+                "tgb-dual",
+                "vba-m",
+                "virtual-jaguar",
+            ],
+        },
+    };
     /// RetroArch.
-    pub const RETROARCH: App =
-        App { slug: "retroarch", name: "RetroArch", cores: AppCores::Kind(CoreKind::Libretro) };
+    pub const RETROARCH: App = App {
+        slug: "retroarch",
+        name: "RetroArch",
+        cores: AppCores { kind: Some(CoreKind::Libretro), builds: &[] },
+    };
+    /// Snes9x.
+    pub const SNES9X: App =
+        App { slug: "snes9x", name: "Snes9x", cores: AppCores { kind: None, builds: &["snes9x"] } };
+    /// Vita3K.
+    pub const VITA3K: App =
+        App { slug: "vita3k", name: "Vita3K", cores: AppCores { kind: None, builds: &["vita3k"] } };
 }
 
 /// Every known app, sorted by slug.
-pub(crate) static APPS: [App; 3] = [apps::ANALOGUE_POCKET, apps::MISTER, apps::RETROARCH];
+pub(crate) static APPS: [App; 17] = [
+    apps::ANALOGUE_POCKET,
+    apps::AZAHAR,
+    apps::DELTA,
+    apps::DOLPHIN,
+    apps::DUCKSTATION,
+    apps::FLYCAST,
+    apps::MEDNAFEN,
+    apps::MELONDS,
+    apps::MGBA,
+    apps::MISTER,
+    apps::OPENEMU,
+    apps::PCSX2,
+    apps::PPSSPP,
+    apps::PROVENANCE,
+    apps::RETROARCH,
+    apps::SNES9X,
+    apps::VITA3K,
+];
 
 /// A named const per listed platform, for a producer that knows which one it runs on.
 pub mod platforms {

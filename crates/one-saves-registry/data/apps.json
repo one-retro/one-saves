@@ -7,6 +7,69 @@
     ]
   },
   {
+    "slug": "azahar",
+    "name": "Azahar",
+    "cores": [
+      "azahar"
+    ]
+  },
+  {
+    "slug": "delta",
+    "name": "Delta",
+    "cores": [
+      "desmume",
+      "gambatte",
+      "genesis-plus-gx",
+      "melonds",
+      "mupen64plus",
+      "nestopia",
+      "snes9x",
+      "vba-m"
+    ]
+  },
+  {
+    "slug": "dolphin",
+    "name": "Dolphin",
+    "cores": [
+      "dolphin-emu"
+    ]
+  },
+  {
+    "slug": "duckstation",
+    "name": "DuckStation",
+    "cores": [
+      "duckstation"
+    ]
+  },
+  {
+    "slug": "flycast",
+    "name": "Flycast",
+    "cores": [
+      "flycast"
+    ]
+  },
+  {
+    "slug": "mednafen",
+    "name": "Mednafen",
+    "cores": [
+      "mednafen"
+    ]
+  },
+  {
+    "slug": "melonds",
+    "name": "melonDS",
+    "cores": [
+      "melonds"
+    ]
+  },
+  {
+    "slug": "mgba",
+    "name": "mGBA",
+    "cores": [
+      "mgba"
+    ]
+  },
+  {
     "slug": "mister",
     "name": "MiSTer",
     "cores": [
@@ -14,10 +77,91 @@
     ]
   },
   {
+    "slug": "openemu",
+    "name": "OpenEmu",
+    "cores": [
+      "atari800",
+      "bliss",
+      "bsnes",
+      "crabemu",
+      "desmume",
+      "dolphin-emu",
+      "fceux",
+      "gambatte",
+      "genesis-plus-gx",
+      "mednafen",
+      "mgba",
+      "mupen64plus",
+      "nestopia",
+      "o2em",
+      "picodrive",
+      "ppsspp",
+      "prosystem",
+      "snes9x",
+      "stella",
+      "vecx"
+    ]
+  },
+  {
+    "slug": "pcsx2",
+    "name": "PCSX2",
+    "cores": [
+      "pcsx2"
+    ]
+  },
+  {
+    "slug": "ppsspp",
+    "name": "PPSSPP",
+    "cores": [
+      "ppsspp"
+    ]
+  },
+  {
+    "slug": "provenance",
+    "name": "Provenance",
+    "cores": [
+      "libretro",
+      "4do",
+      "atari800",
+      "bliss",
+      "crabemu",
+      "dolphin-emu",
+      "emuthreeds",
+      "fceux",
+      "gambatte",
+      "genesis-plus-gx",
+      "mednafen",
+      "mupen64plus",
+      "o2em",
+      "picodrive",
+      "ppsspp",
+      "prosystem",
+      "snes9x",
+      "stella",
+      "tgb-dual",
+      "vba-m",
+      "virtual-jaguar"
+    ]
+  },
+  {
     "slug": "retroarch",
     "name": "RetroArch",
     "cores": [
       "libretro"
+    ]
+  },
+  {
+    "slug": "snes9x",
+    "name": "Snes9x",
+    "cores": [
+      "snes9x"
+    ]
+  },
+  {
+    "slug": "vita3k",
+    "name": "Vita3K",
+    "cores": [
+      "vita3k"
     ]
   }
 ]

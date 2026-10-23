@@ -54,7 +54,7 @@
 //! use one_saves_registry::{AppCores, CoreKind, apps, cores, platform_by_any_name};
 //!
 //! // RetroArch loads every libretro core, so the mGBA core is one it can have run.
-//! assert_eq!(apps::RETROARCH.cores, AppCores::Kind(CoreKind::Libretro));
+//! assert_eq!(apps::RETROARCH.cores, AppCores { kind: Some(CoreKind::Libretro), builds: &[] });
 //! assert!(apps::RETROARCH.runs(&cores::MGBA));
 //! assert!(!apps::RETROARCH.runs(&cores::GAMEBOY_MISTER));
 //!
@@ -75,7 +75,7 @@ pub use generated::apps;
 /// A named const per listed core: [`cores::MGBA`], [`cores::GAMBATTE`], and so on.
 ///
 /// A producer that knows which core it is does not need a lookup, and naming a const links only
-/// that core rather than the whole 122-entry table. `cores()` still returns the table for the
+/// that core rather than the whole 200-entry table. `cores()` still returns the table for the
 /// consumers that genuinely search.
 pub use generated::cores;
 /// A named const per listed platform: [`platforms::MUOS`], [`platforms::WINDOWS`], and so on.
@@ -112,6 +112,9 @@ pub enum CoreKind {
     MiSTer,
     /// An Analogue Pocket openFPGA core, named for the `Author.Platform` folder it installs to.
     OpenFpga,
+    /// An engine that ships as an emulator of its own and has no build under the other kinds, such
+    /// as Mednafen. Named as the emulator goes by.
+    Standalone,
 }
 
 /// How a core stores real-time-clock state alongside a save.
@@ -167,12 +170,17 @@ pub struct Core {
 }
 
 /// What an app runs, as the Apps registry's **Cores** column says it.
+///
+/// An app loads every core of a kind, ships builds of its own, or both: Provenance loads libretro
+/// cores beside the engines it builds itself. The column always names at least one of the two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppCores {
-    /// Every core of one kind: RetroArch loads every libretro core, a MiSTer every MiSTer core.
-    Kind(CoreKind),
-    /// Only these, by core slug: an app built around engines of its own.
-    Only(&'static [&'static str]),
+pub struct AppCores {
+    /// The kind whose every core the app loads: RetroArch loads every libretro core, a MiSTer
+    /// every MiSTer core.
+    pub kind: Option<CoreKind>,
+    /// The cores it runs builds of its own of, by slug, as a standalone emulator runs its one
+    /// engine. Empty for an app that only loads a kind.
+    pub builds: &'static [&'static str],
 }
 
 /// An app: the software or device that runs an emulator core.
@@ -198,10 +206,7 @@ impl App {
     /// Whether this app runs a core, as far as the registry says.
     #[must_use]
     pub fn runs(&self, core: &Core) -> bool {
-        match self.cores {
-            AppCores::Kind(kind) => core.kind == kind,
-            AppCores::Only(slugs) => slugs.contains(&core.slug),
-        }
+        self.cores.kind == Some(core.kind) || self.cores.builds.contains(&core.slug)
     }
 }
 
@@ -540,8 +545,8 @@ mod tests {
     #[test]
     fn the_registries_are_the_size_the_documents_are() {
         assert_eq!(SYSTEMS.len(), 49);
-        assert_eq!(CORES.len(), 122);
-        assert_eq!(APPS.len(), 3);
+        assert_eq!(CORES.len(), 200);
+        assert_eq!(APPS.len(), 17);
         assert_eq!(PLATFORMS.len(), 13);
         assert_eq!(CARD_FORMATS.len(), 7);
         assert_eq!(DEVICE_KINDS.len(), 5);
@@ -582,17 +587,25 @@ mod tests {
 
     #[test]
     fn an_app_runs_the_cores_its_column_names() {
-        // Each of the three listed apps loads one whole kind, and nothing of the other two.
+        // Each of these three loads one whole kind, and nothing of the others.
         for (app, kind) in [
             (apps::RETROARCH, CoreKind::Libretro),
             (apps::MISTER, CoreKind::MiSTer),
             (apps::ANALOGUE_POCKET, CoreKind::OpenFpga),
         ] {
-            assert_eq!(app.cores, AppCores::Kind(kind), "{}", app.slug);
+            assert_eq!(app.cores, AppCores { kind: Some(kind), builds: &[] }, "{}", app.slug);
             assert!(cores().iter().filter(|c| app.runs(c)).all(|c| c.kind == kind), "{}", app.slug);
         }
         assert!(apps::MISTER.runs(&cores::GAMEBOY_MISTER));
         assert!(!apps::MISTER.runs(&cores::GAMBATTE));
+
+        // Provenance loads libretro cores and builds standalone engines of its own beside them.
+        assert_eq!(apps::PROVENANCE.cores.kind, Some(CoreKind::Libretro));
+        assert!(apps::PROVENANCE.runs(&cores::SAMEBOY));
+        assert!(apps::PROVENANCE.runs(&cores::MUPEN64PLUS));
+        assert!(!apps::PROVENANCE.runs(&cores::PCSX2));
+        // And a standalone emulator runs its one engine, under whatever name that engine has.
+        assert_eq!(apps::DOLPHIN.cores, AppCores { kind: None, builds: &["dolphin-emu"] });
     }
 
     #[test]
@@ -612,7 +625,7 @@ mod tests {
         assert_eq!(platform_by_any_name("muOS").map(|p| p.slug), Some("muos"));
         assert_eq!(platform_by_any_name("KNULLI").map(|p| p.slug), Some("knulli"));
         // The engine and the frontend are different registries, so neither answers for the other.
-        assert_eq!(app_by_any_name("mgba"), None);
+        assert_eq!(app_by_any_name("gambatte"), None);
         assert_eq!(core_by_any_name("retroarch"), None);
     }
 

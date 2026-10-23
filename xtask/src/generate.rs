@@ -68,29 +68,32 @@ fn core_kind(kind: &str) -> Result<&'static str, String> {
         "libretro" => Ok("Libretro"),
         "mister" => Ok("MiSTer"),
         "openfpga" => Ok("OpenFpga"),
+        "standalone" => Ok("Standalone"),
         other => Err(format!("{other:?} is not a core kind")),
     }
 }
 
 /// The `AppCores` expression for one app's **Cores** column.
 ///
-/// The column holds a core kind, for an app that loads every core of it, or the slugs of the cores
-/// an app runs alone. Anything else — two kinds, a kind beside a slug, a slug nobody listed — is a
-/// registry change this generator has not been taught, and is refused rather than guessed at.
+/// The column holds a core kind, for an app that loads every core of it, the slugs of the cores
+/// it ships builds of, or both. Anything else — two kinds, a slug nobody listed, an empty cell — is
+/// a registry change this generator has not been taught, and is refused rather than guessed at.
 fn app_cores(app: &App, data: &Registries) -> Result<String, String> {
-    let listed = |slug: &String| data.cores.iter().any(|c| &c.slug == slug);
-    if let [only] = app.cores.as_slice()
-        && let Ok(kind) = core_kind(only)
-    {
-        return Ok(format!("AppCores::Kind(CoreKind::{kind})"));
+    let refuse = || {
+        format!("apps.md: {:?} runs {:?}, which is not one core kind and listed cores", app.slug, app.cores)
+    };
+    let (kinds, builds): (Vec<&String>, Vec<&String>) =
+        app.cores.iter().partition(|entry| core_kind(entry).is_ok());
+    let kind = match kinds.as_slice() {
+        [] if !builds.is_empty() => "None".to_owned(),
+        [kind] => format!("Some(CoreKind::{})", core_kind(kind)?),
+        _ => return Err(refuse()),
+    };
+    if !builds.iter().all(|slug| data.cores.iter().any(|c| &c.slug == *slug)) {
+        return Err(refuse());
     }
-    if !app.cores.is_empty() && app.cores.iter().all(listed) {
-        return Ok(format!("AppCores::Only({})", lits(&app.cores)));
-    }
-    Err(format!(
-        "apps.md: {:?} runs {:?}, which is neither one core kind nor a list of listed cores",
-        app.slug, app.cores
-    ))
+    let builds: Vec<String> = builds.into_iter().cloned().collect();
+    Ok(format!("AppCores {{ kind: {kind}, builds: {} }}", lits(&builds)))
 }
 
 /// Writes the generated tables, then formats them so the file is byte-stable.
@@ -109,7 +112,7 @@ pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(),
         }
     }
 
-    // A core kind that is not one of the three is a registry change this generator has not been
+    // A core kind that is not one of the four is a registry change this generator has not been
     // taught, so it is checked before anything is written rather than producing a file that will
     // not compile.
     let kinds: Vec<&str> = data.cores.iter().map(|c| core_kind(&c.kind)).collect::<Result<_, _>>()?;

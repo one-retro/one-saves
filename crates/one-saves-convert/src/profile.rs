@@ -88,23 +88,22 @@ static PROFILES: &[Profile] = &[
         core: None,
         systems: &[],
     },
-    // The Cores registry lists the Beetle forks rather than Mednafen itself — "Mednafen Saturn" is
-    // an alias of `beetle-saturn`, a libretro core, and not a name upstream ever writes — so
-    // standalone Mednafen is on neither list. It covers everything from the Lynx to the Saturn,
-    // which leaves `only_system` nothing to settle: a Mednafen save says which system ran only via
-    // `--system` or a `--rom`.
-    unlisted("mednafen", "Mednafen", "emulator", &[]),
+    // Standalone Mednafen is one core of its own, apart from the Beetle forks that began as it:
+    // "Mednafen Saturn" names `beetle-saturn`, a libretro core. It covers everything from the
+    // Lynx to the Saturn, which leaves `only_system` nothing to settle: a Mednafen save says which
+    // system ran only via `--system` or a `--rom`.
+    core("mednafen", "Mednafen", &[]),
     core("mgba", "mGBA", &["gba", "gbc", "gb"]),
     core("snes9x", "Snes9x", &["snes"]),
     core("bsnes", "bsnes", &["snes"]),
     core("gambatte", "Gambatte", &["gb", "gbc"]),
     core("sameboy", "SameBoy", &["gb", "gbc"]),
     core("duckstation", "DuckStation", &["psx"]),
-    // Neither has an entry in the Cores registry, for all that each holds a domain.
-    unlisted("pcsx2", "PCSX2", "emulator", &["ps2"]),
-    unlisted("dolphin", "Dolphin", "emulator", &["gc", "wii"]),
-    Profile { key: "mupen64plus", ..core("mupen64plus-next", "Mupen64Plus-Next", &["n64"]) },
-    unlisted("flycast", "Flycast", "emulator", &["dreamcast"]),
+    core("pcsx2", "PCSX2", &["ps2"]),
+    // The app is Dolphin, and the engine goes by the name its libretro build reports.
+    Profile { key: "dolphin", ..core("dolphin-emu", "Dolphin", &["gc", "wii"]) },
+    core("mupen64plus", "Mupen64Plus", &["n64"]),
+    core("flycast", "Flycast", &["dreamcast"]),
     // Producers that run no core, so neither registry has anything to say about them.
     unlisted("everdrive", "EverDrive flash cartridge", "flashcart", &[]),
     unlisted("gboperator", "Epilogue GB Operator", "cartridge-reader", &["gb", "gbc", "gba"]),
@@ -122,30 +121,34 @@ pub fn profiles() -> &'static [Profile] {
 /// A name that is not a profile but *is* a listed app or emulator core resolves through the
 /// registry instead, so `--from mister` and `--from fceumm` work without this module having to
 /// list all of them.
+///
+/// A name both registries list, as `melonds` is, is the core. A standalone emulator shares its
+/// name with the engine it is built around, and that engine also runs in RetroArch, so which app
+/// ran it is not known.
 #[must_use]
 pub fn profile(name: &str) -> Option<Profile> {
     if let Some(found) = PROFILES.iter().find(|p| p.key.eq_ignore_ascii_case(name)) {
         return Some(found.clone());
     }
     // A listed name writes its slug, which is exactly what the registry hands back.
-    if let Some(app) = one_saves_registry::app_by_any_name(name) {
+    if let Some(core) = one_saves_registry::core_by_any_name(name) {
         return Some(Profile {
-            key: app.slug,
-            label: app.name,
+            key: core.slug,
+            label: core.name,
             device_kind: "emulator",
-            app: Some(app.slug),
-            core: None,
-            systems: &[],
+            app: None,
+            core: Some(core.slug),
+            systems: core.systems,
         });
     }
-    let core = one_saves_registry::core_by_any_name(name)?;
+    let app = one_saves_registry::app_by_any_name(name)?;
     Some(Profile {
-        key: core.slug,
-        label: core.name,
+        key: app.slug,
+        label: app.name,
         device_kind: "emulator",
-        app: None,
-        core: Some(core.slug),
-        systems: core.systems,
+        app: Some(app.slug),
+        core: None,
+        systems: &[],
     })
 }
 
@@ -170,18 +173,29 @@ mod tests {
 
     #[test]
     fn an_unlisted_producer_is_left_out_rather_than_minted_for() {
-        // PCSX2 holds pcsx2.net, but `net.pcsx2` would be this crate claiming a name in PCSX2's
-        // namespace. The profile still knows what kind of producer it is and what it runs.
-        let pcsx2 = profile("pcsx2").expect("known");
-        let source = pcsx2.source();
+        // The EverDrive's maker holds krikzz.com, but `com.krikzz` would be this crate claiming a
+        // name in someone else's namespace. The profile still knows what kind of producer it is.
+        let everdrive = profile("everdrive").expect("known");
+        let source = everdrive.source();
         assert_eq!((&source.app, &source.core), (&None, &None));
-        assert_eq!(source.device_kind.as_ref().map(Slug::as_str), Some("emulator"));
+        assert_eq!(source.device_kind.as_ref().map(Slug::as_str), Some("flashcart"));
+    }
+
+    #[test]
+    fn a_standalone_emulator_is_the_core_it_is_built_around() {
+        // PCSX2 is an app and a core both, and the core is what a save from it can be sure of.
+        let pcsx2 = profile("pcsx2").expect("known");
+        assert_eq!((pcsx2.app, pcsx2.core), (None, Some("pcsx2")));
         assert_eq!(pcsx2.only_system(), Some("ps2"));
+        // Dolphin's engine goes by the name its libretro build reports.
+        assert_eq!(profile("dolphin").and_then(|p| p.core), Some("dolphin-emu"));
+        // And one the profiles do not list resolves the same way through the registry.
+        assert_eq!(profile("melonds").map(|p| (p.app, p.core)), Some((None, Some("melonds"))));
     }
 
     #[test]
     fn any_listed_app_or_core_works_without_being_named_here() {
-        // The registry carries 122 cores; this module lists a dozen and defers for the rest.
+        // The registry carries 200 cores; this module lists a dozen and defers for the rest.
         let fceumm = profile("fceumm").expect("resolves through the registry");
         assert_eq!(fceumm.core, Some("fceumm"));
         assert_eq!(fceumm.only_system(), Some("nes"));
@@ -195,7 +209,7 @@ mod tests {
     fn standalone_mednafen_is_not_one_of_the_beetle_forks_it_was_forked_into() {
         // The registry carries "Mednafen Saturn" and six siblings as aliases of the libretro
         // forks, so the bare name has to reach the emulator rather than one of its children.
-        assert_eq!(profile("mednafen").map(|p| p.core), Some(None));
+        assert_eq!(profile("mednafen").and_then(|p| p.core), Some("mednafen"));
         assert_eq!(profile("Mednafen Saturn").and_then(|p| p.core), Some("beetle-saturn"));
         // Many systems, so the profile settles none of them on its own.
         assert_eq!(profile("mednafen").and_then(|p| p.only_system()), None);

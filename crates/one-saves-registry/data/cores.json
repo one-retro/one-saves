@@ -12,6 +12,26 @@
     "family": "Other systems"
   },
   {
+    "slug": "4do",
+    "name": "4DO",
+    "kind": "standalone",
+    "systems": [
+      "3do"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
+    "slug": "a5200",
+    "name": "a5200",
+    "kind": "libretro",
+    "systems": [
+      "atari-5200"
+    ],
+    "aliases": [],
+    "family": "Atari"
+  },
+  {
     "slug": "agg23-nes",
     "name": "agg23.NES",
     "kind": "openfpga",
@@ -58,6 +78,16 @@
     ],
     "aliases": [],
     "family": "WonderSwan and Neo Geo Pocket"
+  },
+  {
+    "slug": "armsx2",
+    "name": "ARMSX2",
+    "kind": "libretro",
+    "systems": [
+      "ps2"
+    ],
+    "aliases": [],
+    "family": "PlayStation 2"
   },
   {
     "slug": "atari7800-mister",
@@ -107,6 +137,16 @@
     "family": "Atari"
   },
   {
+    "slug": "azahar",
+    "name": "Azahar",
+    "kind": "libretro",
+    "systems": [
+      "3ds"
+    ],
+    "aliases": [],
+    "family": "Nintendo 3DS"
+  },
+  {
     "slug": "beetle-gba",
     "name": "Beetle GBA",
     "kind": "libretro",
@@ -140,6 +180,16 @@
       "Mednafen NeoPop"
     ],
     "family": "WonderSwan and Neo Geo Pocket"
+  },
+  {
+    "slug": "beetle-pc-fx",
+    "name": "Beetle PC-FX",
+    "kind": "libretro",
+    "systems": [
+      "pcfx"
+    ],
+    "aliases": [],
+    "family": "PC Engine"
   },
   {
     "slug": "beetle-pce",
@@ -198,6 +248,16 @@
     "family": "Sega Saturn"
   },
   {
+    "slug": "beetle-supafaust",
+    "name": "Beetle Supafaust",
+    "kind": "libretro",
+    "systems": [
+      "snes"
+    ],
+    "aliases": [],
+    "family": "SNES"
+  },
+  {
     "slug": "beetle-supergrafx",
     "name": "Beetle SuperGrafx",
     "kind": "libretro",
@@ -246,6 +306,16 @@
     "family": "Sega 8- and 16-bit"
   },
   {
+    "slug": "bliss",
+    "name": "Bliss",
+    "kind": "standalone",
+    "systems": [
+      "intellivision"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
     "slug": "bluemsx",
     "name": "blueMSX",
     "kind": "libretro",
@@ -259,6 +329,16 @@
     "family": "MSX and ColecoVision"
   },
   {
+    "slug": "bnes",
+    "name": "bnes",
+    "kind": "libretro",
+    "systems": [
+      "nes"
+    ],
+    "aliases": [],
+    "family": "NES"
+  },
+  {
     "slug": "boogermann-msx",
     "name": "boogermann.msx",
     "kind": "openfpga",
@@ -267,6 +347,17 @@
     ],
     "aliases": [],
     "family": "MSX and ColecoVision"
+  },
+  {
+    "slug": "boytacean",
+    "name": "Boytacean",
+    "kind": "libretro",
+    "systems": [
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
   },
   {
     "slug": "bsnes",
@@ -289,8 +380,28 @@
     "family": "SNES"
   },
   {
-    "slug": "bsnes-mercury-accuracy",
-    "name": "bsnes-mercury Accuracy",
+    "slug": "bsnes-jg",
+    "name": "bsnes-jg",
+    "kind": "libretro",
+    "systems": [
+      "snes"
+    ],
+    "aliases": [],
+    "family": "SNES"
+  },
+  {
+    "slug": "bsnes-mercury",
+    "name": "bsnes-mercury",
+    "kind": "libretro",
+    "systems": [
+      "snes"
+    ],
+    "aliases": [],
+    "family": "SNES"
+  },
+  {
+    "slug": "bsnes2014",
+    "name": "bsnes2014",
     "kind": "libretro",
     "systems": [
       "snes"
@@ -347,6 +458,57 @@
     "family": "Other systems"
   },
   {
+    "slug": "chimerasnes",
+    "name": "ChimeraSNES",
+    "kind": "libretro",
+    "systems": [
+      "snes"
+    ],
+    "aliases": [],
+    "family": "SNES"
+  },
+  {
+    "slug": "citra",
+    "name": "Citra",
+    "kind": "libretro",
+    "systems": [
+      "3ds"
+    ],
+    "aliases": [],
+    "family": "Nintendo 3DS"
+  },
+  {
+    "slug": "citra-canary",
+    "name": "Citra Canary",
+    "kind": "libretro",
+    "systems": [
+      "3ds"
+    ],
+    "aliases": [],
+    "family": "Nintendo 3DS"
+  },
+  {
+    "slug": "citra2018",
+    "name": "Citra2018",
+    "kind": "libretro",
+    "systems": [
+      "3ds"
+    ],
+    "aliases": [],
+    "family": "Nintendo 3DS"
+  },
+  {
+    "slug": "clownmdemu",
+    "name": "ClownMDEmu",
+    "kind": "libretro",
+    "systems": [
+      "genesis",
+      "sega-cd"
+    ],
+    "aliases": [],
+    "family": "Sega 8- and 16-bit"
+  },
+  {
     "slug": "colecovision-mister",
     "name": "ColecoVision_MiSTer",
     "kind": "mister",
@@ -358,6 +520,18 @@
       "Coleco"
     ],
     "family": "MSX and ColecoVision"
+  },
+  {
+    "slug": "crabemu",
+    "name": "CrabEmu",
+    "kind": "standalone",
+    "systems": [
+      "mastersystem",
+      "sg-1000",
+      "colecovision"
+    ],
+    "aliases": [],
+    "family": "Sega 8- and 16-bit"
   },
   {
     "slug": "desmume",
@@ -378,6 +552,28 @@
     ],
     "aliases": [],
     "family": "Nintendo DS"
+  },
+  {
+    "slug": "dolphin-emu",
+    "name": "dolphin-emu",
+    "kind": "libretro",
+    "systems": [
+      "gc",
+      "wii"
+    ],
+    "aliases": [],
+    "family": "GameCube and Wii"
+  },
+  {
+    "slug": "doublecherrygb",
+    "name": "DoubleCherryGB",
+    "kind": "libretro",
+    "systems": [
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
   },
   {
     "slug": "drizzt-gg",
@@ -430,6 +626,47 @@
     "family": "PlayStation"
   },
   {
+    "slug": "emuthreeds",
+    "name": "emuThreeDS",
+    "kind": "standalone",
+    "systems": [
+      "3ds"
+    ],
+    "aliases": [],
+    "family": "Nintendo 3DS"
+  },
+  {
+    "slug": "emux-gb",
+    "name": "emux (gb)",
+    "kind": "libretro",
+    "systems": [
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
+  },
+  {
+    "slug": "emux-nes",
+    "name": "emux (nes)",
+    "kind": "libretro",
+    "systems": [
+      "nes"
+    ],
+    "aliases": [],
+    "family": "NES"
+  },
+  {
+    "slug": "emux-sms",
+    "name": "emux (sms)",
+    "kind": "libretro",
+    "systems": [
+      "mastersystem"
+    ],
+    "aliases": [],
+    "family": "Sega 8- and 16-bit"
+  },
+  {
     "slug": "ericlewis-genesis",
     "name": "ericlewis.Genesis",
     "kind": "openfpga",
@@ -463,6 +700,17 @@
     "family": "NES"
   },
   {
+    "slug": "fceux",
+    "name": "FCEUX",
+    "kind": "standalone",
+    "systems": [
+      "nes",
+      "fds"
+    ],
+    "aliases": [],
+    "family": "NES"
+  },
+  {
     "slug": "finalburn-neo",
     "name": "FinalBurn Neo",
     "kind": "libretro",
@@ -472,6 +720,58 @@
     ],
     "aliases": [],
     "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "finalburn-neo-cps12-subset",
+    "name": "FinalBurn Neo (cps12 subset)",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "finalburn-neo-neogeo-subset",
+    "name": "FinalBurn Neo (neogeo subset)",
+    "kind": "libretro",
+    "systems": [
+      "neogeo"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "fixgb",
+    "name": "fixGB",
+    "kind": "libretro",
+    "systems": [
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
+  },
+  {
+    "slug": "fixnes",
+    "name": "fixNES",
+    "kind": "libretro",
+    "systems": [
+      "nes",
+      "fds"
+    ],
+    "aliases": [],
+    "family": "NES"
+  },
+  {
+    "slug": "flycast",
+    "name": "Flycast",
+    "kind": "libretro",
+    "systems": [
+      "dreamcast"
+    ],
+    "aliases": [],
+    "family": "Dreamcast"
   },
   {
     "slug": "fmsx",
@@ -490,6 +790,16 @@
     "kind": "libretro",
     "systems": [
       "intellivision"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
+    "slug": "frodo",
+    "name": "Frodo",
+    "kind": "libretro",
+    "systems": [
+      "c64"
     ],
     "aliases": [],
     "family": "Other systems"
@@ -534,6 +844,61 @@
     "family": "Game Boy family"
   },
   {
+    "slug": "gearboy",
+    "name": "Gearboy",
+    "kind": "libretro",
+    "systems": [
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
+  },
+  {
+    "slug": "gearcoleco",
+    "name": "Gearcoleco",
+    "kind": "libretro",
+    "systems": [
+      "colecovision"
+    ],
+    "aliases": [],
+    "family": "MSX and ColecoVision"
+  },
+  {
+    "slug": "geargrafx",
+    "name": "Geargrafx",
+    "kind": "libretro",
+    "systems": [
+      "pcengine",
+      "pcenginecd",
+      "supergrafx"
+    ],
+    "aliases": [],
+    "family": "PC Engine"
+  },
+  {
+    "slug": "gearlynx",
+    "name": "Gearlynx",
+    "kind": "libretro",
+    "systems": [
+      "atari-lynx"
+    ],
+    "aliases": [],
+    "family": "Atari"
+  },
+  {
+    "slug": "gearsystem",
+    "name": "Gearsystem",
+    "kind": "libretro",
+    "systems": [
+      "mastersystem",
+      "sega-gg",
+      "sg-1000"
+    ],
+    "aliases": [],
+    "family": "Sega 8- and 16-bit"
+  },
+  {
     "slug": "genesis-plus-gx",
     "name": "Genesis Plus GX",
     "kind": "libretro",
@@ -562,6 +927,16 @@
     "family": "Sega 8- and 16-bit"
   },
   {
+    "slug": "geolith",
+    "name": "Geolith",
+    "kind": "libretro",
+    "systems": [
+      "neogeo"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
     "slug": "gpsp",
     "name": "gpSP",
     "kind": "libretro",
@@ -582,6 +957,30 @@
     "family": "Atari"
   },
   {
+    "slug": "higan-super-famicom",
+    "name": "higan (Super Famicom)",
+    "kind": "libretro",
+    "systems": [
+      "snes",
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "SNES"
+  },
+  {
+    "slug": "higan-super-famicom-balanced",
+    "name": "higan (Super Famicom Balanced)",
+    "kind": "libretro",
+    "systems": [
+      "snes",
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "SNES"
+  },
+  {
     "slug": "intv-mister",
     "name": "Intv_MiSTer",
     "kind": "mister",
@@ -594,6 +993,28 @@
     "family": "Other systems"
   },
   {
+    "slug": "irogb",
+    "name": "IroGB",
+    "kind": "libretro",
+    "systems": [
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
+  },
+  {
+    "slug": "ishiiruka",
+    "name": "Ishiiruka",
+    "kind": "libretro",
+    "systems": [
+      "gc",
+      "wii"
+    ],
+    "aliases": [],
+    "family": "GameCube and Wii"
+  },
+  {
     "slug": "jeremy-megacd",
     "name": "jeremy.MegaCD",
     "kind": "openfpga",
@@ -602,6 +1023,16 @@
     ],
     "aliases": [],
     "family": "Sega 8- and 16-bit"
+  },
+  {
+    "slug": "jollycv",
+    "name": "JollyCV",
+    "kind": "libretro",
+    "systems": [
+      "colecovision"
+    ],
+    "aliases": [],
+    "family": "MSX and ColecoVision"
   },
   {
     "slug": "jotego-jtngp",
@@ -632,6 +1063,106 @@
     ],
     "aliases": [],
     "family": "Sega Saturn"
+  },
+  {
+    "slug": "lrps2",
+    "name": "LRPS2",
+    "kind": "libretro",
+    "systems": [
+      "ps2"
+    ],
+    "aliases": [],
+    "family": "PlayStation 2"
+  },
+  {
+    "slug": "mame",
+    "name": "MAME",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "mame-2000",
+    "name": "MAME 2000",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "mame-2003-0-78",
+    "name": "MAME 2003 (0.78)",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "mame-2003-midway",
+    "name": "MAME 2003 Midway",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "mame-2003-plus",
+    "name": "MAME 2003-Plus",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "mame-2009",
+    "name": "MAME 2009",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "mame-2010",
+    "name": "MAME 2010",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "mame-2015",
+    "name": "MAME 2015",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
+    "slug": "mame-2016",
+    "name": "MAME 2016",
+    "kind": "libretro",
+    "systems": [
+      "mame"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
   },
   {
     "slug": "markus-zzz-myc64",
@@ -666,6 +1197,46 @@
       "Mazamars312.PC Engine CD_Analogizer"
     ],
     "family": "PC Engine"
+  },
+  {
+    "slug": "mednafen",
+    "name": "Mednafen",
+    "kind": "standalone",
+    "systems": [
+      "atari-lynx",
+      "fds",
+      "gb",
+      "gba",
+      "gbc",
+      "genesis",
+      "mastersystem",
+      "nes",
+      "ngp",
+      "ngpc",
+      "pcengine",
+      "pcenginecd",
+      "pcfx",
+      "psx",
+      "saturn",
+      "sega-gg",
+      "snes",
+      "supergrafx",
+      "virtualboy",
+      "wonderswan",
+      "wonderswan-color"
+    ],
+    "aliases": [],
+    "family": "Multi-system"
+  },
+  {
+    "slug": "mednafen-bsnes",
+    "name": "Mednafen bSNES",
+    "kind": "libretro",
+    "systems": [
+      "snes"
+    ],
+    "aliases": [],
+    "family": "SNES"
   },
   {
     "slug": "megacd-mister",
@@ -782,6 +1353,16 @@
     "family": "MSX and ColecoVision"
   },
   {
+    "slug": "mupen64plus",
+    "name": "Mupen64Plus",
+    "kind": "standalone",
+    "systems": [
+      "n64"
+    ],
+    "aliases": [],
+    "family": "Nintendo 64"
+  },
+  {
     "slug": "mupen64plus-next",
     "name": "Mupen64Plus-Next",
     "kind": "libretro",
@@ -839,14 +1420,14 @@
     "family": "NES"
   },
   {
-    "slug": "nside",
-    "name": "nSide",
+    "slug": "noods",
+    "name": "NooDS",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "nds"
     ],
     "aliases": [],
-    "family": "SNES"
+    "family": "Nintendo DS"
   },
   {
     "slug": "o2em",
@@ -887,10 +1468,18 @@
     "systems": [
       "3do"
     ],
-    "aliases": [
-      "4DO"
-    ],
+    "aliases": [],
     "family": "Other systems"
+  },
+  {
+    "slug": "panda3ds",
+    "name": "Panda3DS",
+    "kind": "libretro",
+    "systems": [
+      "3ds"
+    ],
+    "aliases": [],
+    "family": "Nintendo 3DS"
   },
   {
     "slug": "parallel-n64",
@@ -903,6 +1492,16 @@
     "family": "Nintendo 64"
   },
   {
+    "slug": "pcee2",
+    "name": "PCEE2",
+    "kind": "libretro",
+    "systems": [
+      "ps2"
+    ],
+    "aliases": [],
+    "family": "PlayStation 2"
+  },
+  {
     "slug": "pcsx-rearmed",
     "name": "PCSX-ReARMed",
     "kind": "libretro",
@@ -911,6 +1510,26 @@
     ],
     "aliases": [],
     "family": "PlayStation"
+  },
+  {
+    "slug": "pcsx1",
+    "name": "PCSX1",
+    "kind": "libretro",
+    "systems": [
+      "psx"
+    ],
+    "aliases": [],
+    "family": "PlayStation"
+  },
+  {
+    "slug": "pcsx2",
+    "name": "PCSX2",
+    "kind": "standalone",
+    "systems": [
+      "ps2"
+    ],
+    "aliases": [],
+    "family": "PlayStation 2"
   },
   {
     "slug": "picodrive",
@@ -924,6 +1543,16 @@
     ],
     "aliases": [],
     "family": "Sega 8- and 16-bit"
+  },
+  {
+    "slug": "play",
+    "name": "Play!",
+    "kind": "libretro",
+    "systems": [
+      "ps2"
+    ],
+    "aliases": [],
+    "family": "PlayStation 2"
   },
   {
     "slug": "ppsspp",
@@ -963,6 +1592,38 @@
     "kind": "libretro",
     "systems": [
       "nes"
+    ],
+    "aliases": [],
+    "family": "NES"
+  },
+  {
+    "slug": "race",
+    "name": "RACE",
+    "kind": "libretro",
+    "systems": [
+      "ngp",
+      "ngpc"
+    ],
+    "aliases": [],
+    "family": "WonderSwan and Neo Geo Pocket"
+  },
+  {
+    "slug": "rustation",
+    "name": "Rustation",
+    "kind": "libretro",
+    "systems": [
+      "psx"
+    ],
+    "aliases": [],
+    "family": "PlayStation"
+  },
+  {
+    "slug": "rustynes",
+    "name": "RustyNES",
+    "kind": "libretro",
+    "systems": [
+      "nes",
+      "fds"
     ],
     "aliases": [],
     "family": "NES"
@@ -1015,6 +1676,18 @@
     "family": "Game Boy family"
   },
   {
+    "slug": "skyemu",
+    "name": "SkyEmu",
+    "kind": "libretro",
+    "systems": [
+      "gb",
+      "gba",
+      "nds"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
+  },
+  {
     "slug": "sms-mister",
     "name": "SMS_MiSTer",
     "kind": "mister",
@@ -1026,6 +1699,17 @@
     "aliases": [
       "SMS"
     ],
+    "family": "Sega 8- and 16-bit"
+  },
+  {
+    "slug": "sms-plus-gx",
+    "name": "SMS Plus GX",
+    "kind": "libretro",
+    "systems": [
+      "mastersystem",
+      "sega-gg"
+    ],
+    "aliases": [],
     "family": "Sega 8- and 16-bit"
   },
   {
@@ -1063,6 +1747,16 @@
   {
     "slug": "snes9x-2005",
     "name": "Snes9x 2005",
+    "kind": "libretro",
+    "systems": [
+      "snes"
+    ],
+    "aliases": [],
+    "family": "SNES"
+  },
+  {
+    "slug": "snes9x-2005-plus",
+    "name": "Snes9x 2005 Plus",
     "kind": "libretro",
     "systems": [
       "snes"
@@ -1242,6 +1936,16 @@
     "family": "Atari"
   },
   {
+    "slug": "stella-2023",
+    "name": "Stella 2023",
+    "kind": "libretro",
+    "systems": [
+      "atari-2600"
+    ],
+    "aliases": [],
+    "family": "Atari"
+  },
+  {
     "slug": "swanstation",
     "name": "SwanStation",
     "kind": "libretro",
@@ -1252,6 +1956,37 @@
     "family": "PlayStation"
   },
   {
+    "slug": "tempgba",
+    "name": "TempGBA",
+    "kind": "libretro",
+    "systems": [
+      "gba"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
+  },
+  {
+    "slug": "tgb-dual",
+    "name": "TGB Dual",
+    "kind": "libretro",
+    "systems": [
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
+  },
+  {
+    "slug": "tia",
+    "name": "tia",
+    "kind": "libretro",
+    "systems": [
+      "atari-2600"
+    ],
+    "aliases": [],
+    "family": "Atari"
+  },
+  {
     "slug": "timboettiger-pro-action-replay",
     "name": "timboettiger.Pro Action Replay",
     "kind": "openfpga",
@@ -1260,6 +1995,16 @@
     ],
     "aliases": [],
     "family": "SNES"
+  },
+  {
+    "slug": "trident",
+    "name": "Trident",
+    "kind": "libretro",
+    "systems": [
+      "3ds"
+    ],
+    "aliases": [],
+    "family": "Nintendo 3DS"
   },
   {
     "slug": "turbografx16-mister",
@@ -1321,6 +2066,56 @@
     "family": "Other systems"
   },
   {
+    "slug": "vice-x128",
+    "name": "VICE x128",
+    "kind": "libretro",
+    "systems": [
+      "c64"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
+    "slug": "vice-x64",
+    "name": "VICE x64",
+    "kind": "libretro",
+    "systems": [
+      "c64"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
+    "slug": "vice-x64dtv",
+    "name": "VICE x64dtv",
+    "kind": "libretro",
+    "systems": [
+      "c64"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
+    "slug": "vice-x64sc",
+    "name": "VICE x64sc",
+    "kind": "libretro",
+    "systems": [
+      "c64"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
+    "slug": "vice-xscpu64",
+    "name": "VICE xscpu64",
+    "kind": "libretro",
+    "systems": [
+      "c64"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
     "slug": "virtual-jaguar",
     "name": "Virtual Jaguar",
     "kind": "libretro",
@@ -1329,6 +2124,16 @@
     ],
     "aliases": [],
     "family": "Atari"
+  },
+  {
+    "slug": "vita3k",
+    "name": "Vita3K",
+    "kind": "libretro",
+    "systems": [
+      "psvita"
+    ],
+    "aliases": [],
+    "family": "PlayStation Vita"
   },
   {
     "slug": "wonderswan-mister",
@@ -1352,5 +2157,25 @@
     ],
     "aliases": [],
     "family": "Sega Saturn"
+  },
+  {
+    "slug": "yabause",
+    "name": "Yabause",
+    "kind": "libretro",
+    "systems": [
+      "saturn"
+    ],
+    "aliases": [],
+    "family": "Sega Saturn"
+  },
+  {
+    "slug": "yaps2",
+    "name": "yaps2",
+    "kind": "libretro",
+    "systems": [
+      "ps2"
+    ],
+    "aliases": [],
+    "family": "PlayStation 2"
   }
 ]
