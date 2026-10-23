@@ -242,7 +242,14 @@ pub fn identify_seekable<R: Read + Seek>(mut reader: R) -> io::Result<Option<Dis
     let Some(geometry) = prefix.geometry() else {
         return Ok(None);
     };
-    let at = base + u64::from(entry.lba) * geometry.stride() as u64 + geometry.offset() as u64;
+    // `base` is wherever the caller's reader stood, a cue sheet's offset among
+    // them, so the sum is checked: a position past `u64` is a file that is not there.
+    let Some(at) = (u64::from(entry.lba) * geometry.stride() as u64)
+        .checked_add(geometry.offset() as u64)
+        .and_then(|within| base.checked_add(within))
+    else {
+        return Ok(None);
+    };
     reader.seek(SeekFrom::Start(at))?;
     let mut buf = vec![0u8; sector::USER_DATA];
     let read = read_upto(&mut reader, &mut buf)?;

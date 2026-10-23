@@ -14,7 +14,7 @@
 //! Bounded reading survives all of it: identification still stops after a
 //! handful of hunks rather than inflating a disc.
 
-use std::io::{self, Read, Seek};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::ops::ControlFlow;
 
 use chd::Chd;
@@ -34,6 +34,46 @@ const TRACK_PADDING: usize = 4;
 /// Bytes of user data in a cooked sector, which is what a non-`_RAW` track
 /// stores at the head of its frame.
 const COOKED_SECTOR: usize = 2048;
+
+/// The largest hunk `chdman` writes, and so the largest read here.
+const MAX_HUNK: u64 = 1024 * 1024;
+
+/// Refuse a CHD whose header declares a hunk larger than [`MAX_HUNK`], before
+/// the `chd` crate sees it.
+///
+/// Opening a CHD sizes a buffer per codec by the hunk, and the crate checks
+/// that size on every header version but the fifth, which is the one chdman
+/// writes. Left to it, a forged header of a hundred bytes is an allocation of
+/// up to 4 GiB. A header this cannot read is left for the crate to refuse.
+fn refuse_oversized_hunks<F: Read + Seek>(file: &mut F) -> io::Result<()> {
+    let mut header = [0u8; 124];
+    file.seek(SeekFrom::Start(0))?;
+    let read = crate::read_upto(file, &mut header)?;
+    file.seek(SeekFrom::Start(0))?;
+    let header = &header[..read];
+    let u32_at =
+        |at: usize| header.get(at..at + 4).map(|b| u64::from(u32::from_be_bytes([b[0], b[1], b[2], b[3]])));
+    if !header.starts_with(b"MComprHD") {
+        return Ok(());
+    }
+    // Versions 1 and 2 count a hunk in sectors, of 512 bytes or of the width
+    // version 2 states; the later ones count it in bytes.
+    let hunk = match u32_at(12) {
+        Some(1) => u32_at(24).map(|sectors| sectors * 512),
+        Some(2) => u32_at(24).zip(u32_at(76)).map(|(sectors, width)| sectors * width),
+        Some(3) => u32_at(76),
+        Some(4) => u32_at(44),
+        Some(5) => u32_at(56),
+        _ => None,
+    };
+    match hunk {
+        Some(hunk) if hunk > MAX_HUNK => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("a CHD hunk of {hunk} bytes, where chdman writes at most {MAX_HUNK}"),
+        )),
+        _ => Ok(()),
+    }
+}
 
 /// Where the data track starts, and how much of each frame is its data.
 ///
@@ -109,7 +149,8 @@ struct Image<F: Read + Seek> {
 
 impl<F: Read + Seek> Image<F> {
     /// Open a CHD and position on the first data track.
-    fn open(file: F) -> io::Result<Self> {
+    fn open(mut file: F) -> io::Result<Self> {
+        refuse_oversized_hunks(&mut file)?;
         let mut chd = Chd::open(file, None).map_err(other)?;
         let hunk_size = chd.header().hunk_size() as usize;
         let hunk_count = chd.header().hunk_count();
@@ -269,7 +310,7 @@ pub fn user_data_prefix<F: Read + Seek>(file: F, sectors: usize) -> io::Result<O
 
 #[cfg(test)]
 mod tests {
-    use super::{CD_SECTOR, COOKED_SECTOR, data_track};
+    use super::{CD_SECTOR, COOKED_SECTOR, MAX_HUNK, data_track, identify};
 
     fn entries(raw: &[&str]) -> Vec<String> {
         raw.iter().map(|s| (*s).to_string()).collect()
@@ -338,5 +379,31 @@ mod tests {
     fn a_disc_with_no_data_track_reads_from_the_start() {
         let tracks = entries(&["TRACK:1 TYPE:AUDIO SUBTYPE:NONE FRAMES:100 PREGAP:0"]);
         assert_eq!(data_track(&tracks).0, 0);
+    }
+
+    /// A version 5 header, the one the `chd` crate does not check, declaring
+    /// a hunk of `hunk` bytes.
+    fn v5_header(hunk: u32) -> Vec<u8> {
+        let mut header = vec![0u8; 124];
+        header[..8].copy_from_slice(b"MComprHD");
+        header[8..12].copy_from_slice(&124u32.to_be_bytes());
+        header[12..16].copy_from_slice(&5u32.to_be_bytes());
+        header[32..40].copy_from_slice(&u64::from(hunk).to_be_bytes());
+        header[40..48].copy_from_slice(&124u64.to_be_bytes());
+        header[56..60].copy_from_slice(&hunk.to_be_bytes());
+        header[60..64].copy_from_slice(&2448u32.to_be_bytes());
+        header
+    }
+
+    #[test]
+    fn a_hunk_larger_than_chdman_writes_is_refused_before_opening() {
+        for hunk in [u32::try_from(MAX_HUNK).unwrap() + 1, u32::MAX] {
+            let error = identify(std::io::Cursor::new(v5_header(hunk))).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains("chdman writes at most"), "{error}");
+        }
+        // At the limit the header is the crate's to judge, and this one is not a whole CHD.
+        let error = identify(std::io::Cursor::new(v5_header(19_584))).unwrap_err();
+        assert!(!error.to_string().contains("chdman writes at most"), "{error}");
     }
 }

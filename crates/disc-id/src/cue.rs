@@ -34,12 +34,15 @@ pub struct DataTrack {
 const DEFAULT_SECTOR: u64 = 2352;
 
 /// `MM:SS:FF` to a count of sectors. A CD runs at 75 frames a second.
+///
+/// `None` for a time past `u64`, which no disc reaches: it is as unreadable as
+/// one that does not parse.
 fn msf_to_frames(text: &str) -> Option<u64> {
     let mut parts = text.split(':');
     let m: u64 = parts.next()?.trim().parse().ok()?;
     let s: u64 = parts.next()?.trim().parse().ok()?;
     let f: u64 = parts.next()?.trim().parse().ok()?;
-    Some((m * 60 + s) * 75 + f)
+    m.checked_mul(60)?.checked_add(s)?.checked_mul(75)?.checked_add(f)
 }
 
 /// The declared sector size of a track line: `MODE1/2352` is 2352.
@@ -119,11 +122,15 @@ pub fn first_data_track(text: &str) -> Option<DataTrack> {
                     continue;
                 }
                 let (sector, data) = pending.take()?;
-                let Some(frames) = fields.next().and_then(msf_to_frames) else {
+                // A sheet's sector width is its own say, so the product can
+                // overflow too, and is skipped like a time that does not parse.
+                let Some(offset) =
+                    fields.next().and_then(msf_to_frames).and_then(|frames| frames.checked_mul(sector))
+                else {
                     continue;
                 };
                 let Some(name) = file.clone() else { continue };
-                starts.push(Start { file: name, offset: frames * sector, data });
+                starts.push(Start { file: name, offset, data });
             }
             _ => {}
         }
@@ -224,5 +231,13 @@ mod tests {
     #[test]
     fn a_sheet_naming_no_file_is_none() {
         assert_eq!(first_data_track("REM GENRE Action\n"), None);
+    }
+
+    #[test]
+    fn a_position_past_u64_is_skipped_rather_than_wrapped() {
+        let time = "FILE \"a.bin\" BINARY\n  TRACK 01 MODE1/2352\n  INDEX 01 307445734561825861:00:00\n";
+        assert_eq!(first_data_track(time), None);
+        let width = "FILE \"a.bin\" BINARY\n  TRACK 01 MODE1/18446744073709551615\n  INDEX 01 00:00:02\n";
+        assert_eq!(first_data_track(width), None);
     }
 }
