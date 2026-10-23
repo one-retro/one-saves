@@ -33,7 +33,7 @@
     "format": "neogeo-mc",
     "dirent_len": 4,
     "block_size": 64,
-    "notes": "Cards run from 2 KiB to 16 KiB and every one of them uses the same block."
+    "notes": "Cards run from 2 KiB to 16 KiB and every one of them uses the same block. A Neo Geo CD takes no card: it keeps an 8 KiB one in the console."
   },
   {
     "format": "saturn-bup",

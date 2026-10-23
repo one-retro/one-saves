@@ -14,11 +14,16 @@ real hardware.
 | GameCube memory cards | `.raw` `.gcp` | [`gc-memcard`](https://docs.rs/gc-memcard) | `gc` |
 | Dreamcast VMU | `.bin` | [`dreamcast-vmu`](https://docs.rs/dreamcast-vmu) | `vmu` |
 | PS2 memory cards | `.ps2`, with or without ECC spare | [`ps2-memcard`](https://docs.rs/ps2-memcard) | `ps2` |
-| Neo Geo memory cards | `.neo`, bare or in a MiSTer save | [`neogeo-memcard`](https://docs.rs/neogeo-memcard) | `neogeo` |
+| Neo Geo memory cards and a Neo Geo CD's memory | `.neo`, bare or in a MiSTer save | [`neogeo-memcard`](https://docs.rs/neogeo-memcard) | `neogeo` |
 
 A backup RAM is wrapped whole: its volume footer is read as a signature, which settles `system`
 and nothing else, and its filesystem is not taken apart. That is why it sits with the flat saves
 and has no crate of its own.
+
+A Neo Geo CD takes no card and keeps its saves in an 8 KiB one built into the console. A card is
+read as that, under `neogeo-cd` and the `internal` role, when `CardOptions::system` says so, or
+when it is the 8 KiB card in a MiSTer save, which the core holds only in CD mode. A bare card does
+not say what wrote it, so without either it is read as a cartridge console's, under `neogeo`.
 
 Every format reads and writes. No filesystem is implemented here: each lives in a crate of its own,
 because a memory card is a reusable format and nothing about reading one needs this container. What

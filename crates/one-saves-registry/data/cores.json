@@ -1385,11 +1385,22 @@
     "family": "Nintendo 64"
   },
   {
+    "slug": "neocd",
+    "name": "NeoCD",
+    "kind": "libretro",
+    "systems": [
+      "neogeo-cd"
+    ],
+    "aliases": [],
+    "family": "Neo Geo and arcade"
+  },
+  {
     "slug": "neogeo-mister",
     "name": "NeoGeo_MiSTer",
     "kind": "mister",
     "systems": [
-      "neogeo"
+      "neogeo",
+      "neogeo-cd"
     ],
     "aliases": [
       "NEOGEO"

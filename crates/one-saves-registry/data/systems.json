@@ -163,6 +163,14 @@
     "aliases": []
   },
   {
+    "slug": "neogeo-cd",
+    "name": "Neo Geo CD",
+    "aliases": [
+      "neocd",
+      "neogeocd"
+    ]
+  },
+  {
     "slug": "nes",
     "name": "NES",
     "aliases": []

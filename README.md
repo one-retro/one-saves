@@ -65,7 +65,7 @@ and stops there.
 | [`ps1-memcard`](crates/ps1-memcard) | PlayStation memory cards, and the containers they ship in |
 | [`ps2-memcard`](crates/ps2-memcard) | PlayStation 2 memory cards, ECC and all |
 | [`n64-cpak`](crates/n64-cpak) | Nintendo 64 Controller Paks |
-| [`neogeo-memcard`](crates/neogeo-memcard) | Neo Geo memory cards, MVS and AES alike |
+| [`neogeo-memcard`](crates/neogeo-memcard) | Neo Geo memory cards, MVS and AES alike, and the one a Neo Geo CD keeps built in |
 | [`gc-memcard`](crates/gc-memcard) | GameCube memory cards |
 | [`dreamcast-vmu`](crates/dreamcast-vmu) | Dreamcast Visual Memory Units |
 | [`saturn-backup`](crates/saturn-backup) | Sega Saturn backup RAM, internal and Backup RAM Cart |
@@ -123,7 +123,7 @@ Each crate's README has the detail.
 | GameCube memory cards | `.raw` `.gcp` | yes |
 | Dreamcast VMU | `.bin` | yes |
 | PS2 memory cards | `.ps2`, with or without ECC spare | yes |
-| Neo Geo memory cards | `.neo`, bare or in a MiSTer save | yes |
+| Neo Geo memory cards and a Neo Geo CD's memory | `.neo`, bare or in a MiSTer save | yes |
 | Saturn backup RAM | `.bkr` `.bcr`, internal and Backup RAM Cart | yes |
 
 Detection reads the bytes before the extension, because the extension is the less reliable of the

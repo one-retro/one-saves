@@ -86,7 +86,8 @@ impl Format {
             Format::Vmu => Some("dreamcast"),
             Format::Ps2Card => Some("ps2"),
             // One system, not two: the MVS cabinet and the AES console take the same card and read
-            // each other's saves, which is the whole point of it.
+            // each other's saves, which is the whole point of it. A Neo Geo CD keeps one of its
+            // own inside, and `card::neogeo` is what tells a card for it apart.
             Format::NeoGeoCard => Some("neogeo"),
             Format::SaturnBup => Some("saturn"),
             Format::Bundle | Format::Raw => None,

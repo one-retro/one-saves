@@ -11,6 +11,12 @@
 //! card is [`neogeo-card`](one_saves_registry::role), and a cabinet's own battery-backed RAM is
 //! `internal`. A MiSTer save carries both, and both come across.
 //!
+//! # And a CD that keeps its card inside
+//!
+//! A Neo Geo CD takes no card. It keeps its saves in 8 KiB of memory of its own, laid out as a
+//! card, so the same reader reads it, and what changes is the system, `neogeo-cd`, and the socket,
+//! `internal`. Nothing on the card says which it is; see [`read`] for how that is decided.
+//!
 //! # What identifies a save
 //!
 //! Not a filename: a card has none. A save is a game's NGH number and which of that game's saves
@@ -24,9 +30,10 @@
 
 use neogeo_memcard::{CardBuilder, Container, MemoryCard, Save};
 use one_saves::{Bundle, Game, Part, PartKind};
+use one_saves_registry::systems::NEOGEO_CD;
 
 use crate::CardOptions;
-use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with, slug};
+use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_as, slug};
 use crate::detect::Format;
 use crate::error::{Error, Result};
 use crate::label::value as label;
@@ -46,8 +53,13 @@ pub const SYSTEM: &str = match Format::NeoGeoCard.system() {
     None => panic!("a Neo Geo card holds saves for a system"),
 };
 
-/// The role a cabinet's own backup RAM takes, as distinct from the card's.
-const BACKUP_RAM_ROLE: &str = "internal";
+/// The role of memory built into the machine: a cabinet's backup RAM, as distinct from the card
+/// in its slot, and the card a Neo Geo CD keeps inside itself.
+const INTERNAL_ROLE: &str = "internal";
+
+/// The size of the card a Neo Geo CD keeps inside itself, and so of the one the MiSTer core
+/// emulates in CD mode.
+const CD_CARD: usize = 8192;
 
 /// Whether these bytes look like a Neo Geo card, bare or in a MiSTer save.
 #[must_use]
@@ -56,9 +68,24 @@ pub fn detect(bytes: &[u8]) -> bool {
 }
 
 /// Reads a card into a bundle: one nested bundle per save.
+///
+/// The bundle is a Neo Geo CD's when [`CardOptions::system`] says `neogeo-cd`, or, when it names
+/// neither system, when the card is an 8 KiB one in a MiSTer save: the core emulates the 2 KiB
+/// card a cartridge console takes in cart mode and the CD's in CD mode. A bare card does not say
+/// what wrote it, and cards for the cartridge consoles come in sizes up to 16 KiB, so it is a
+/// cartridge console's unless the caller says otherwise, as `--from neocd` does.
 pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     let card = MemoryCard::parse(bytes).map_err(into_error)?;
-    let role = options.role_for(Format::NeoGeoCard);
+    let system = match options.system.as_ref().map(one_saves::Slug::as_str) {
+        Some(stated) if stated == SYSTEM || stated == NEOGEO_CD.slug => stated,
+        _ if card.container() == Container::MiSter && card.geometry().size == CD_CARD => NEOGEO_CD.slug,
+        _ => SYSTEM,
+    };
+    let role = match &options.role {
+        Some(role) => role.clone(),
+        None if system == NEOGEO_CD.slug => slug(INTERNAL_ROLE),
+        None => options.role_for(Format::NeoGeoCard),
+    };
 
     let mut parts = Vec::new();
     for save in card.saves() {
@@ -77,7 +104,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         }
 
         let mut part =
-            save_part_with(Format::NeoGeoCard, parts.len(), save.data.clone(), Some(game), options, inner)?
+            save_part_as(Some(system), role.clone(), parts.len(), save.data.clone(), Some(game), inner)?
                 .slot(u64::try_from(save.slot).expect("slot fits"))
                 .dirent(save.dirent.clone());
         part.path = (!title.is_empty()).then_some(title);
@@ -96,7 +123,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     {
         let part = Part::new(u64::try_from(parts.len()).expect("part count fits"), ram.to_vec())
             .kind(PartKind::Aux)
-            .role(slug(BACKUP_RAM_ROLE))
+            .role(slug(INTERNAL_ROLE))
             .system(slug(SYSTEM));
         parts.push(part);
     }
@@ -107,7 +134,8 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             card.geometry().data_capacity(),
             Some(card.system_area().to_vec()),
             options,
-        ),
+        )
+        .system(Some(slug(system))),
         parts,
     ))
 }

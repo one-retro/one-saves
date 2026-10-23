@@ -32,6 +32,17 @@ fn fixture(name: &str) -> Vec<u8> {
     fixture_in("NEOGEO", name)
 }
 
+/// A bare 8 KiB card, as the NeoCD libretro core writes a Neo Geo CD's memory.
+fn neocd_fixture() -> Vec<u8> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data/saves/retroarch/neocd/Metal Slug (Japan) (En,Ja).srm");
+    std::fs::read(path).expect("reads")
+}
+
+fn system_of(bundle: &Bundle) -> &str {
+    bundle.header.system.as_ref().expect("a card names its system").as_str()
+}
+
 #[test]
 fn reads_a_real_card_and_names_the_game_by_its_ngh() {
     let bundle = read(&fixture("Metal Slug X"), &CardOptions::default()).expect("reads");
@@ -72,6 +83,9 @@ fn a_neo_geo_cd_card_is_the_same_format_at_a_bigger_size() {
     let bundle = read(&fixture_in("NEOGEO-CD", "Metal Slug"), &CardOptions::default()).expect("reads");
     let card = bundle.header.card.as_ref().expect("is a card");
     assert_eq!(card.format.as_str(), "neogeo-mc");
+    // The core emulates the CD's 8 KiB card only in CD mode, so in a MiSTer save its size says
+    // which system ran, and the card is the console's own memory rather than one in a slot.
+    assert_eq!(system_of(&bundle), "neogeo-cd");
     // Thirteen blocks of structure rather than five, so a bigger system area and more room.
     assert_eq!(card.system_area.as_ref().map(Vec::len), Some(13 * 64));
 
@@ -81,7 +95,40 @@ fn a_neo_geo_cd_card_is_the_same_format_at_a_bigger_size() {
     // The only save here that spans more than one block: fourteen of them, chained.
     let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).expect("inner bundle");
     assert_eq!(inner.parts[0].payload.len(), 14 * 64);
+    assert_eq!(system_of(&inner), "neogeo-cd", "a save sliced out still says it is a CD's");
+    assert_eq!(bundle.parts[0].role.as_ref().unwrap().as_str(), "internal");
+    assert_eq!(bundle.parts[0].system.as_ref().unwrap().as_str(), "neogeo-cd");
     bundle.validate().expect("valid bundle");
+}
+
+#[test]
+fn a_bare_card_is_a_neo_geo_cd_s_only_when_the_caller_says() {
+    // NeoCD writes the CD's memory bare, and nothing in it tells it from a cartridge console's
+    // 8 KiB card, so the size alone settles nothing here.
+    let bare = neocd_fixture();
+    let unsaid = read(&bare, &CardOptions::default()).expect("reads");
+    assert_eq!(system_of(&unsaid), "neogeo");
+    assert_eq!(unsaid.parts[0].role.as_ref().unwrap().as_str(), "neogeo-card");
+
+    let said =
+        |system: &str| CardOptions { system: Some(Slug::parse(system).unwrap()), ..CardOptions::default() };
+    let cd = read(&bare, &said("neogeo-cd")).expect("reads");
+    assert_eq!(system_of(&cd), "neogeo-cd");
+    assert_eq!(cd.parts[0].role.as_ref().unwrap().as_str(), "internal");
+    let save = |bundle: &Bundle| {
+        Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap().parts[0].payload.clone()
+    };
+    assert_eq!(save(&cd), save(&unsaid), "the same save either way");
+
+    // A system the format does not hold saves for came from a core or a ROM, not from the card,
+    // and is not taken: MAME's core lists only `mame`.
+    assert_eq!(system_of(&read(&bare, &said("mame")).expect("reads")), "neogeo");
+    // What the caller names wins over what a MiSTer save's size suggests.
+    let named = read(&fixture_in("NEOGEO-CD", "Metal Slug"), &said("neogeo")).expect("reads");
+    assert_eq!(system_of(&named), "neogeo");
+    assert_eq!(named.parts[0].role.as_ref().unwrap().as_str(), "neogeo-card");
+    // And a cartridge console's card in a MiSTer save stays one.
+    assert_eq!(system_of(&read(&fixture("Metal Slug X"), &CardOptions::default()).expect("reads")), "neogeo");
 }
 
 #[test]
@@ -101,8 +148,9 @@ fn both_real_cards_round_trip_to_the_bare_card_they_hold() {
         assert_eq!(write(&bundle).expect("writes"), bare, "{name} did not round-trip");
 
         // And that bare card reads back to the same bundle, so nothing about the card was
-        // carried by the container.
-        let again = read(&bare, &CardOptions::default()).expect("reads the bare card");
+        // carried by the container but the system its size implied, which a bare card is told.
+        let options = CardOptions { system: bundle.header.system.clone(), ..CardOptions::default() };
+        let again = read(&bare, &options).expect("reads the bare card");
         assert_eq!(again.parts.len(), bundle.parts.len());
         assert_eq!(again.parts[0].payload, bundle.parts[0].payload);
     }

@@ -65,6 +65,9 @@ pub mod systems {
     pub const NDS: System = System { slug: "nds", name: "Nintendo DS", aliases: &[] };
     /// Neo Geo.
     pub const NEOGEO: System = System { slug: "neogeo", name: "Neo Geo", aliases: &[] };
+    /// Neo Geo CD — also seen as neocd, neogeocd.
+    pub const NEOGEO_CD: System =
+        System { slug: "neogeo-cd", name: "Neo Geo CD", aliases: &["neocd", "neogeocd"] };
     /// NES.
     pub const NES: System = System { slug: "nes", name: "NES", aliases: &[] };
     /// Neo Geo Pocket — also seen as neogeopocket.
@@ -118,7 +121,7 @@ pub mod systems {
 }
 
 /// Every system slug, sorted by slug so lookups can binary-search.
-pub(crate) static SYSTEMS: [System; 49] = [
+pub(crate) static SYSTEMS: [System; 50] = [
     systems::_3DO,
     systems::_3DS,
     systems::ATARI_2600,
@@ -144,6 +147,7 @@ pub(crate) static SYSTEMS: [System; 49] = [
     systems::N64,
     systems::NDS,
     systems::NEOGEO,
+    systems::NEOGEO_CD,
     systems::NES,
     systems::NGP,
     systems::NGPC,
@@ -1322,12 +1326,21 @@ pub mod cores {
         aliases: &["N64"],
         clock: None,
     };
-    /// NeoGeo_MiSTer — neogeo.
+    /// NeoCD — neogeo-cd.
+    pub const NEOCD: Core = Core {
+        slug: "neocd",
+        name: "NeoCD",
+        kind: CoreKind::Libretro,
+        systems: &["neogeo-cd"],
+        aliases: &[],
+        clock: None,
+    };
+    /// NeoGeo_MiSTer — neogeo, neogeo-cd.
     pub const NEOGEO_MISTER: Core = Core {
         slug: "neogeo-mister",
         name: "NeoGeo_MiSTer",
         kind: CoreKind::MiSTer,
-        systems: &["neogeo"],
+        systems: &["neogeo", "neogeo-cd"],
         aliases: &["NEOGEO"],
         clock: None,
     };
@@ -2000,7 +2013,7 @@ pub mod cores {
 }
 
 /// Every known emulator core, sorted by slug.
-pub(crate) static CORES: [Core; 200] = [
+pub(crate) static CORES: [Core; 201] = [
     cores::_3DO_MISTER,
     cores::_4DO,
     cores::A5200,
@@ -2126,6 +2139,7 @@ pub(crate) static CORES: [Core; 200] = [
     cores::MUPEN64PLUS,
     cores::MUPEN64PLUS_NEXT,
     cores::N64_MISTER,
+    cores::NEOCD,
     cores::NEOGEO_MISTER,
     cores::NES_MISTER,
     cores::NESTOPIA,
@@ -2426,7 +2440,17 @@ pub(crate) static ROLES: [Role; 8] = [
         name: "internal",
         description: "Save storage built into the console itself, as distinct from anything removable.",
         common: true,
-        systems: &["sega-cd", "saturn", "pcengine", "pcenginecd", "neogeo", "psp", "ps3", "psvita"],
+        systems: &[
+            "sega-cd",
+            "saturn",
+            "pcengine",
+            "pcenginecd",
+            "neogeo",
+            "neogeo-cd",
+            "psp",
+            "ps3",
+            "psvita",
+        ],
     },
     Role {
         name: "neogeo-card",
@@ -2500,7 +2524,7 @@ pub(crate) static CARD_FORMATS: [CardFormat; 7] = [
         name: "neogeo-mc",
         dirent_len: 4,
         block_size: 64,
-        notes: "Cards run from 2 KiB to 16 KiB and every one of them uses the same block.",
+        notes: "Cards run from 2 KiB to 16 KiB and every one of them uses the same block. A Neo Geo CD takes no card: it keeps an 8 KiB one in the console.",
     },
     CardFormat {
         name: "saturn-bup",

@@ -12,7 +12,7 @@
 //! | GameCube memory cards (`.raw`, `.gcp`) | [`gc_memcard`] | `gc` |
 //! | Dreamcast VMU (`.bin`) | [`dreamcast_vmu`] | `vmu` |
 //! | PS2 memory cards (`.ps2`, with or without ECC) | [`ps2_memcard`] | `ps2` |
-//! | Neo Geo memory cards (`.neo`, bare or in a MiSTer save) | [`neogeo_memcard`] | `neogeo` |
+//! | Neo Geo memory cards and a Neo Geo CD's memory (`.neo`, bare or in a MiSTer save) | [`neogeo_memcard`] | `neogeo` |
 //!
 //! Every card format reads and writes. No filesystem is implemented here: each lives in a crate of
 //! its own, because a memory card is a reusable format and nothing about reading one needs this

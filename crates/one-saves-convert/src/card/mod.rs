@@ -289,14 +289,7 @@ pub(crate) fn save_part(
 ///
 /// A picture and a name travel with the save when it is sliced out, so they go in the header of
 /// the bundle that *is* the save. A directory's times do not, and ride on the part instead.
-#[cfg(any(
-    feature = "gc",
-    feature = "n64",
-    feature = "neogeo",
-    feature = "ps1",
-    feature = "saturn",
-    feature = "vmu"
-))]
+#[cfg(any(feature = "gc", feature = "n64", feature = "ps1", feature = "saturn", feature = "vmu"))]
 pub(crate) fn save_part_with(
     format: Format,
     id: usize,
@@ -305,7 +298,28 @@ pub(crate) fn save_part_with(
     options: &CardOptions,
     extensions: one_saves::Extensions,
 ) -> Result<Part> {
-    let system = format.system().map(slug);
+    save_part_as(format.system(), options.role_for(format), id, payload, game, extensions)
+}
+
+/// The same, for a format that does not settle the save's system or socket by itself: a Neo Geo
+/// card can be a Neo Geo CD's.
+#[cfg(any(
+    feature = "gc",
+    feature = "n64",
+    feature = "neogeo",
+    feature = "ps1",
+    feature = "saturn",
+    feature = "vmu"
+))]
+pub(crate) fn save_part_as(
+    system: Option<&str>,
+    role: Slug,
+    id: usize,
+    payload: Vec<u8>,
+    game: Option<one_saves::Game>,
+    extensions: one_saves::Extensions,
+) -> Result<Part> {
+    let system = system.map(slug);
     let header = one_saves::Header::new(one_saves::Shape::Save)
         .system(system.clone())
         .game(game.clone())
@@ -314,7 +328,7 @@ pub(crate) fn save_part_with(
 
     Ok(Part::new(u64::try_from(id).expect("part count fits"), inner.to_vec()?)
         .kind(PartKind::Bundle)
-        .role(options.role_for(format))
+        .role(role)
         .game(game)
         .system(system))
 }
@@ -406,6 +420,14 @@ pub struct CardOptions {
     /// unset, each format falls back to the socket it is normally read from — see
     /// [`Format::default_role`].
     pub role: Option<Slug>,
+    /// The system the card's saves are for, where its format alone does not say.
+    ///
+    /// Only a Neo Geo card's format serves two systems, the cartridge consoles' and the Neo Geo
+    /// CD's, so that reader is the one that takes this, and only when it names one of the two.
+    /// Every other format names its own system. A system a format does not hold saves for is
+    /// not taken either: it comes from a core or a ROM as often as from the caller, and a core
+    /// can list systems other than the one a card is for.
+    pub system: Option<Slug>,
     /// Who produced the bytes.
     pub source: Option<one_saves::Source>,
 }

@@ -55,10 +55,6 @@ use one_saves_registry::systems;
 /// this list. Deciding that from the system a dump was filed under is what lets a caller skip
 /// reading a file it already knows is a cartridge, and a second list would answer that differently
 /// here and there the moment a system is added.
-///
-/// The Neo Geo CD is [`systems::NEOGEO`]: the registry has one Neo Geo, whose saves are the same
-/// card format on the CD console and the cartridge one. So `neogeo` is here, though most of its
-/// games are cartridges.
 pub const SYSTEMS: [System; 9] = [
     systems::SEGA_CD,
     systems::SATURN,
@@ -67,7 +63,7 @@ pub const SYSTEMS: [System; 9] = [
     systems::WII,
     systems::PSX,
     systems::PS2,
-    systems::NEOGEO,
+    systems::NEOGEO_CD,
     systems::PCENGINECD,
 ];
 
@@ -183,7 +179,7 @@ fn identify_disc(prefix: &mut Prefix<'_>) -> Option<DiscId> {
     // manifest the BIOS reads, so its presence is the disc's signature. Only
     // presence — the manifest's own bytes commonly sit far past any prefix.
     if iso9660::find_root_file(prefix, "IPL.TXT").is_some() {
-        return Some(DiscId { system: systems::NEOGEO, serial: None });
+        return Some(DiscId { system: systems::NEOGEO_CD, serial: None });
     }
     playstation(prefix)
 }
@@ -618,7 +614,7 @@ mod tests {
         image.extend_from_slice(&cooked(&[b"PROG.PRG,0,0\r\n"])); // 20, the manifest
 
         let id = identify_bytes(&image).unwrap();
-        assert_eq!(id.system, systems::NEOGEO);
+        assert_eq!(id.system, systems::NEOGEO_CD);
         assert_eq!(id.serial, None);
     }
 
@@ -651,7 +647,7 @@ mod tests {
         image.extend_from_slice(&cooked(&[&entry]));
 
         let id = identify_bytes(&image).expect("presence is enough");
-        assert_eq!(id.system, systems::NEOGEO);
+        assert_eq!(id.system, systems::NEOGEO_CD);
     }
 
     /// The contract an async caller drives: too little says how much would do,

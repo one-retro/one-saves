@@ -559,8 +559,8 @@ mod tests {
 
     #[test]
     fn the_registries_are_the_size_the_documents_are() {
-        assert_eq!(SYSTEMS.len(), 49);
-        assert_eq!(CORES.len(), 200);
+        assert_eq!(SYSTEMS.len(), 50);
+        assert_eq!(CORES.len(), 201);
         assert_eq!(APPS.len(), 17);
         assert_eq!(PLATFORMS.len(), 13);
         assert_eq!(CARD_FORMATS.len(), 7);

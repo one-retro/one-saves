@@ -313,12 +313,12 @@ fn convert(args: Convert) -> Fallible {
         };
         raw::wrap(&bytes, &options)?
     } else {
-        let mut options = card::CardOptions { source, ..card::CardOptions::default() };
-        if let Some(role) = &args.role {
-            options.role = Some(
-                one_saves::Slug::parse(role).map_err(|e| format!("--role {role:?} is not a slug: {e}"))?,
-            );
-        }
+        let options = card::CardOptions {
+            role: args.role.as_deref().map(|role| slug_flag("--role", role)).transpose()?,
+            // A format names its own system, except a Neo Geo card's, which can be a Neo Geo CD's.
+            system: system.as_deref().map(|system| slug_flag("--system", system)).transpose()?,
+            source,
+        };
         card::read(format, &bytes, &options)?
     };
     if let Some(description) = args.description {
@@ -379,6 +379,11 @@ fn convert(args: Convert) -> Fallible {
 ///
 /// Every layer is checked against the registry before it is written, since `source` sits in the
 /// header and a misspelt name changes the content hash as surely as a different one.
+/// A flag's value as a slug, or an error naming the flag.
+fn slug_flag(flag: &str, text: &str) -> Result<one_saves::Slug, String> {
+    one_saves::Slug::parse(text).map_err(|e| format!("{flag} {text:?} is not a slug: {e}"))
+}
+
 fn source_of(
     args: &Convert,
     profile: Option<&Profile>,
