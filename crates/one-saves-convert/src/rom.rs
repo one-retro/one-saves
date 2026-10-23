@@ -20,6 +20,10 @@ pub struct RomInfo {
     pub title: Option<String>,
     /// The product code out of the header, where the console has one.
     pub serial: Option<String>,
+    /// The key of the clock chip the cartridge carries, where the header says, such as
+    /// `x.1sav.rtc.huc3`: what [`RawOptions::clock_chip`](crate::raw::RawOptions::clock_chip)
+    /// takes.
+    pub clock: Option<&'static str>,
 }
 
 /// Identifies a ROM from its header.
@@ -34,6 +38,7 @@ pub fn identify(bytes: &[u8]) -> Option<RomInfo> {
         system: Some(id.system.slug),
         title: id.title,
         serial: id.serial,
+        clock: id.cartridge.clock.map(rom_id::Clock::key),
     })
 }
 

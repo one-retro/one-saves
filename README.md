@@ -13,7 +13,7 @@ card.mcr -> card.1saves (PS1 memory card, 2 save(s), 58034 bytes)
 
 $ 1saves inspect card.1saves
 card.1saves
-  58034 bytes, spec version 0.4
+  58034 bytes, spec version 0.5
   shape        card
   system       psx (PlayStation)
   card         ps1-mc, capacity 131072 bytes
@@ -206,11 +206,17 @@ registers, and none of the GBA producers keeps the Seiko chip's alarm. A rebuild
 the way the chip's page says to: the live registers for the latched copy, the power-on value for
 the alarm.
 
-The specification keys every other cartridge clock too: the HuC-3, TPP1 and TAMA5 on the Game
-Boy, the Epson and Sharp chips on the Super Famicom, and the N64's Joybus clock. `one-saves` has a
-type for each, so `inspect` shows them and a producer can write them, but `convert` reads none of
-their emulators' files yet. A footer for one of them stays in the save, as any tail this crate
-cannot identify does.
+The MiSTer Gameboy cores and their Pocket ports keep a HuC-3 in the footer they keep an MBC3 in,
+packed differently, and nothing in the bytes says which chip wrote it. The cartridge does: pass the
+game's ROM with `--rom` and its header names the chip, so `convert` reads a HuC-3's counters and
+seconds into `x.1sav.rtc.huc3` and `extract` packs them back. Without the ROM, such a footer is read
+as an MBC3 where its bits allow, and left in the save where they do not.
+
+The specification keys every other cartridge clock too: TPP1 and TAMA5 on the Game Boy, the Epson
+and Sharp chips on the Super Famicom, and the N64's Joybus clock. `one-saves` has a type for each,
+so `inspect` shows them and a producer can write them, but `convert` reads none of their emulators'
+files yet, nor any other emulator's HuC-3. A footer for one of them stays in the save, as any tail
+this crate cannot identify does.
 
 ## Conformance
 

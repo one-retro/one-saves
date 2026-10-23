@@ -282,7 +282,7 @@ pub struct CardFormat {
     /// The medium is sometimes recoverable and sometimes not. A Saturn read whole is a device
     /// whose parts carry a [`role`] — `internal` against `ram-cart` — but a cartridge dumped
     /// by itself is a card bundle with no role anywhere in it, and nothing then says which it was.
-    /// The specifications leave this as written for 0.4; settling it means keying the block size
+    /// The specifications leave this as written for 0.5; settling it means keying the block size
     /// on the card map's `capacity`, which every card carries, rather than on the format alone.
     pub block_size: usize,
     /// What is particular about this format.

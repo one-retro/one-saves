@@ -49,6 +49,12 @@ pub struct RawOptions {
     /// mincer_ray's records its own and ignores the instant. See
     /// [`parse_sidecar`](crate::rtc::parse_sidecar).
     pub rtc_sidecar: Option<(Vec<u8>, i64)>,
+    /// The key of the clock chip the cartridge carries, as its ROM's header says, such as
+    /// `x.1sav.rtc.huc3`.
+    ///
+    /// What tells apart two chips a producer keeps in the same footer: the MiSTer Game Boy cores
+    /// pack a HuC-3 where they pack an MBC3. See [`split_for`](crate::rtc::split_for).
+    pub clock_chip: Option<String>,
 }
 
 impl Default for RawOptions {
@@ -62,6 +68,7 @@ impl Default for RawOptions {
             created_at: None,
             split_rtc: true,
             rtc_sidecar: None,
+            clock_chip: None,
         }
     }
 }
@@ -142,7 +149,8 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
     // An emulator may have appended clock state, which is a live timestamp riding inside what
     // otherwise looks like save data. Splitting it out is what keeps the save's own bytes stable.
     let system_slug = system.as_ref().map(one_saves::Slug::as_str);
-    let split = options.split_rtc.then(|| crate::rtc::split(bytes, system_slug)).flatten();
+    let chip = options.clock_chip.as_deref();
+    let split = options.split_rtc.then(|| crate::rtc::split_for(bytes, system_slug, chip)).flatten();
 
     let mut extensions = one_saves::Extensions::new();
     let mut parts = Vec::new();
@@ -442,6 +450,29 @@ mod tests {
         assert!(bundle.header.extensions.get::<one_saves::extension::Rtc>().is_some());
         assert!(bundle.header.extensions.get::<one_saves::extension::RtcMbc3>().is_some());
         bundle.validate().expect("valid bundle");
+    }
+
+    #[test]
+    fn a_huc3_clock_is_split_off_when_the_rom_names_the_chip() {
+        // `huc3.v`'s packing: 3000 days, minute 825, 37 seconds, behind a four-byte host clock.
+        let (seconds, minutes, days) = (37u64, 825u64, 3000u64);
+        let packed = seconds | minutes << 6 | days << 18;
+        let mut save = vec![0x33u8; 32_768];
+        save.extend_from_slice(&1_786_533_688u32.to_le_bytes());
+        save.extend_from_slice(&packed.to_le_bytes()[..6]);
+        save.resize(32_768 + crate::rtc::PACKED_LEN_MISTER, 0xFF);
+
+        let options = RawOptions {
+            system: Some("gb".into()),
+            clock_chip: Some("x.1sav.rtc.huc3".into()),
+            ..RawOptions::default()
+        };
+        let bundle = wrap(&save, &options).expect("wraps");
+        assert_eq!(bundle.parts[0].payload.len(), 32_768);
+        let clock = bundle.header.extensions.get::<one_saves::extension::RtcHuc3>().expect("the HuC-3");
+        assert_eq!(clock.seconds, Some(37));
+        bundle.validate().expect("valid bundle");
+        assert_eq!(unwrap(&bundle).expect("unwraps"), save, "and back as the core wrote it");
     }
 
     #[test]

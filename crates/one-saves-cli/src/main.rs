@@ -81,7 +81,8 @@ struct Convert {
     /// A human-readable note about this bundle.
     #[arg(long)]
     description: Option<String>,
-    /// The game's ROM, read for its header fields and hashed for `rom_hashes`.
+    /// The game's ROM, read for its header fields and hashed for `rom_hashes`. Its header also
+    /// says which clock chip the cartridge has, which is what reads a MiSTer HuC-3's clock.
     #[cfg(feature = "rom")]
     #[arg(long, value_name = "FILE")]
     rom: Option<PathBuf>,
@@ -271,10 +272,10 @@ fn convert(args: Convert) -> Fallible {
     }
 
     #[cfg(feature = "rom")]
-    let Identified { mut game, system: rom_system } = identify(&args)?;
+    let Identified { mut game, system: rom_system, clock: rom_clock } = identify(&args)?;
     // Without `rom` there is no `--rom` to read, so there is nothing a ROM could have said.
     #[cfg(not(feature = "rom"))]
-    let Identified { mut game, system: rom_system } = Identified::default();
+    let Identified { mut game, system: rom_system, clock: rom_clock } = Identified::default();
 
     let sidecar = sidecar_clock(&args)?;
     let sidecar_path = sidecar.as_ref().map(|(path, _, at)| (path.clone(), at.is_some()));
@@ -307,6 +308,7 @@ fn convert(args: Convert) -> Fallible {
             description: args.description.clone(),
             split_rtc: !args.keep_rtc_inline,
             rtc_sidecar: sidecar,
+            clock_chip: rom_clock.map(ToOwned::to_owned),
             ..raw::RawOptions::default()
         };
         raw::wrap(&bytes, &options)?
@@ -471,6 +473,8 @@ struct Identified {
     game: Option<one_saves::Game>,
     /// The system the ROM's header names, as a registry slug.
     system: Option<&'static str>,
+    /// The key of the clock chip the ROM's header says the cartridge has.
+    clock: Option<&'static str>,
 }
 
 /// Works out what game a save belongs to, from a ROM's header and a catalog.
@@ -487,7 +491,7 @@ fn identify(args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
     // The header is the whole of it without `dat`; a catalog is the only thing that revises it.
     #[cfg_attr(not(feature = "dat"), allow(unused_mut))]
     let mut game = one_saves_convert::rom::game_from_rom(&bytes, filename);
-    let system = one_saves_convert::rom::identify(&bytes).and_then(|info| info.system);
+    let info = one_saves_convert::rom::identify(&bytes).unwrap_or_default();
 
     #[cfg(feature = "dat")]
     if let Some(dat) = args.dat.as_deref() {
@@ -498,7 +502,7 @@ fn identify(args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
             eprintln!("note: this ROM is not in {}", dat.display());
         }
     }
-    Ok(Identified { game: Some(game), system })
+    Ok(Identified { game: Some(game), system: info.system, clock: info.clock })
 }
 
 fn extract(args: Extract) -> Fallible {

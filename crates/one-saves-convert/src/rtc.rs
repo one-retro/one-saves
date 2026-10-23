@@ -8,7 +8,7 @@
 //! | -------- | ----- | ------------- |
 //! | mGBA, GBA | appended, 16 bytes | latched BCD, a control register, a latch instant |
 //! | SameBoy, Game Boy | appended, 48 bytes | ten MBC3 registers and a write time |
-//! | MiSTer Gameboy, SGB | appended, 512 bytes | a 4-byte host clock, **bit-packed** registers |
+//! | MiSTer Gameboy, SGB | appended, 512 bytes | a 4-byte host clock, **bit-packed** registers, an MBC3's or a HuC-3's |
 //! | budude2's Pocket port | appended, 16 bytes | the same ten bytes, a smaller reserved region |
 //! | Gambatte, Game Boy | a `.rtc` file, 4 bytes | an **origin**, big-endian |
 //! | mincer_ray, GBA | a `.rtc` file, 16 bytes | an instant and the calendar **bit-packed** |
@@ -72,15 +72,17 @@
 //! Splitting would stabilise the save's bytes, but nothing would say the bytes are a clock, and
 //! filing unidentified bytes under a chip's key claims more than is known.
 //!
-//! That includes every other cartridge clock. The specification gives each one a key — the HuC-3,
+//! That includes most other cartridge clocks. The specification gives each one a key — the HuC-3,
 //! TPP1 and TAMA5 on the Game Boy, the two Super Famicom chips, the N64's Joybus clock — and
-//! [`one_saves::extension`] has a type for each, but no producer's file for them is read here yet.
+//! [`one_saves::extension`] has a type for each. Of those, only the HuC-3 the MiSTer cores pack is
+//! read here, and only when the caller says the cartridge has one; see [`split_for`]. No other
+//! producer's file for them is read here yet.
 //!
 //! [`x.1sav.rtc`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc/
 //! [`io.mgba.rtc`]: https://docs.1retro.com/specifications/extensions/io.mgba.rtc/
 //! [`x.1sav.rtc.s3511a`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc.s3511a/
 
-use one_saves::extension::{Rtc, RtcMbc3, RtcS3511a, S3511aAlarm};
+use one_saves::extension::{Rtc, RtcHuc3, RtcMbc3, RtcS3511a, S3511aAlarm};
 use one_saves::{Extension, Extensions};
 use one_saves_registry::ClockLayout;
 
@@ -135,17 +137,21 @@ pub enum Clock {
     Mbc3(Mbc3Clock),
     /// A GBA cartridge's Seiko S-3511A.
     S3511a(S3511aClock),
+    /// A Game Boy HuC-3 cartridge's clock, as the MiSTer cores keep it.
+    Huc3(Huc3Clock),
 }
 
 impl Clock {
     /// What this clock showed, on the Unix scale, when that can be computed.
     ///
-    /// An MBC3's always can. A Seiko chip's cannot when its components are not a date.
+    /// An MBC3's and a HuC-3's always can. A Seiko chip's cannot when its components are not a
+    /// date.
     #[must_use]
     pub fn reading(self) -> Option<Rtc> {
         match self {
             Clock::Mbc3(clock) => Some(clock.reading()),
             Clock::S3511a(clock) => clock.reading(),
+            Clock::Huc3(clock) => Some(clock.reading()),
         }
     }
 }
@@ -337,6 +343,67 @@ impl From<Mbc3Clock> for RtcMbc3 {
     }
 }
 
+/// Where a HuC-3's two counters sit in its controller's window: three nybbles of minutes, then
+/// four of days, least significant first.
+const HUC3_COUNTERS: usize = 0x10;
+
+/// A HuC-3's clock as the MiSTer Game Boy cores keep it: its two counters and the seconds counted
+/// into the minute, with the host clock they were taken at.
+///
+/// The cartridge's controller has 256 addresses a game reads a nybble at a time. The cores keep
+/// the counters and nothing else of them, so the key has every other address null.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Huc3Clock {
+    /// Seconds counted into the current minute, 0 to 59: key 2 of `x.1sav.rtc.huc3`.
+    pub seconds: u8,
+    /// The minute counter, the minute of the day, twelve bits.
+    pub minutes: u16,
+    /// The day counter, sixteen bits.
+    pub days: u16,
+    /// The host clock the core advances the counters from, in epoch seconds: key 1.
+    pub taken_at: i64,
+}
+
+impl Huc3Clock {
+    /// What this clock showed: its days and minutes after 1970-01-01 UTC, as
+    /// [`RtcHuc3::reading`] reads them. The seconds are not part of it, since no game can read
+    /// them.
+    #[must_use]
+    pub fn reading(self) -> Rtc {
+        RtcHuc3::from(self).reading().expect("both counters are kept")
+    }
+}
+
+impl From<Huc3Clock> for RtcHuc3 {
+    /// The counters go at their addresses, and every other address is null, since the cores do
+    /// not keep it.
+    fn from(clock: Huc3Clock) -> Self {
+        let minutes = (0..3).map(|at| clock.minutes >> (4 * at));
+        let days = (0..4).map(|at| clock.days >> (4 * at));
+        let mut memory = [None; 256];
+        for (slot, nybble) in memory[HUC3_COUNTERS..].iter_mut().zip(minutes.chain(days)) {
+            *slot = Some(u8::try_from(nybble & 0x0F).expect("a nybble"));
+        }
+        RtcHuc3 { memory, taken_at: Some(clock.taken_at), seconds: Some(clock.seconds) }
+    }
+}
+
+/// The HuC-3 a bundle carries, filled where its key is null the way the specification fills it:
+/// 0 for an address and for the seconds, and the moment of rebuilding for the anchor.
+fn huc3_of(bundle: &one_saves::Bundle) -> Option<Huc3Clock> {
+    let chip = bundle.header.extensions.get::<RtcHuc3>()?;
+    let memory = chip.filled();
+    let value = |at: usize, len: usize| {
+        memory[at..at + len].iter().rev().fold(0u16, |value, &nybble| value << 4 | u16::from(nybble))
+    };
+    Some(Huc3Clock {
+        seconds: chip.seconds.unwrap_or(0),
+        minutes: value(HUC3_COUNTERS, 3),
+        days: value(HUC3_COUNTERS + 3, 4),
+        taken_at: chip.taken_at.unwrap_or_else(now),
+    })
+}
+
 /// Splits a flat save into save memory and an appended footer.
 ///
 /// Returns `None` when the file is exactly a save memory size, which is the common case: most
@@ -348,6 +415,20 @@ impl From<Mbc3Clock> for RtcMbc3 {
 /// families are tried.
 #[must_use]
 pub fn split(bytes: &[u8], system: Option<&str>) -> Option<Split> {
+    split_for(bytes, system, None)
+}
+
+/// [`split`], for a cartridge whose clock chip is known: `chip` is that chip's key, such as
+/// `x.1sav.rtc.huc3`, as its ROM's header says. `rom_id`'s cartridge clock gives it.
+///
+/// It matters where two chips share a footer. The MiSTer Game Boy cores keep a HuC-3 in the
+/// footer they keep an MBC3 in, packed another way, and nothing in the bytes says which. So a
+/// packed footer is read as a HuC-3 only when `chip` says the cartridge has one, and then as
+/// nothing else; a footer of any other length is left in the save, since no other producer's
+/// HuC-3 is read here. With no chip, or another one, this is [`split`].
+#[must_use]
+pub fn split_for(bytes: &[u8], system: Option<&str>, chip: Option<&str>) -> Option<Split> {
+    let huc3 = chip == Some(RtcHuc3::KEY.as_str());
     let sizes: &[usize] = match system {
         // An unstated system could be either family, and the two size tables overlap almost
         // entirely, so the Game Boy one covers both.
@@ -371,6 +452,8 @@ pub fn split(bytes: &[u8], system: Option<&str>) -> Option<Split> {
         // header and a Game Boy footer written back in place of the one its core wrote.
         let gba = system == Some("gba");
         let parsed = match footer.len() {
+            PACKED_LEN_POCKET | PACKED_LEN_MISTER if huc3 => parse_packed_huc3(footer).map(Clock::Huc3),
+            _ if huc3 => None,
             MBC3_LEN_32 | MBC3_LEN_64 if !gba => parse_mbc3(footer).map(Clock::Mbc3),
             PACKED_LEN_POCKET if gba => parse_s3511a(footer).map(Clock::S3511a),
             PACKED_LEN_MISTER if gba => parse_s3511a_packed(footer).map(Clock::S3511a),
@@ -453,6 +536,7 @@ impl Split {
         match self.clock {
             Clock::Mbc3(clock) => extensions.insert(RtcMbc3::from(clock)),
             Clock::S3511a(clock) => extensions.insert(RtcS3511a::from(clock)),
+            Clock::Huc3(clock) => extensions.insert(RtcHuc3::from(clock)),
         }
         extensions
     }
@@ -481,6 +565,10 @@ pub enum ClockForm {
     /// Appended to the save: the Seiko chip's calendar and an instant, bit-packed behind a magic
     /// word and repeated to fill a reserved size, or cut to it. GBA_MiSTer.
     S3511aPacked(usize),
+    /// Appended to the save: an instant four bytes wide and a HuC-3's counters and seconds
+    /// bit-packed, padded to a reserved size. The MiSTer Gameboy and SGB cores and the Gameboy
+    /// core's openFPGA ports, for a HuC-3 cartridge.
+    Huc3Packed(usize),
 }
 
 /// The shape a bundle's producer writes, from what its `source` says.
@@ -522,8 +610,19 @@ pub fn form_of(bundle: &one_saves::Bundle) -> ClockForm {
 ///
 /// An appended footer takes the width the core gives its timestamp. With no layout, it is the
 /// form most producers use, at the width key 3 says the clock's own footer had.
+///
+/// A HuC-3 goes back into the packed footer, the one HuC-3 form read here: at the core's
+/// reserved size, or at MiSTer's with no layout. A core that keeps its HuC-3 some other way gets
+/// the MBC3 form its layout says, which writes nothing, since the bundle holds no MBC3.
 #[must_use]
 pub fn form_for(bundle: &one_saves::Bundle, layout: Option<ClockLayout>) -> ClockForm {
+    if bundle.header.extensions.contains_key(&RtcHuc3::KEY) {
+        match layout {
+            Some(ClockLayout::Packed { reserved, .. }) => return ClockForm::Huc3Packed(reserved),
+            None => return ClockForm::Huc3Packed(PACKED_LEN_MISTER),
+            Some(_) => {}
+        }
+    }
     if bundle.header.extensions.contains_key(&RtcS3511a::KEY) {
         return match layout {
             Some(ClockLayout::Sidecar) => ClockForm::S3511aSidecar,
@@ -563,6 +662,9 @@ pub fn footer_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec
     if let ClockForm::S3511aPacked(reserved) = form {
         let (chip, anchor) = s3511a_of(bundle)?;
         return Some(build_s3511a_packed(&chip.components, chip.control, anchor, reserved));
+    }
+    if let ClockForm::Huc3Packed(reserved) = form {
+        return huc3_of(bundle).map(|clock| build_packed_huc3(&clock, reserved));
     }
     // A packed footer is built from an appended one, and keeps none of its width.
     let width = match form {
@@ -688,16 +790,12 @@ pub const PACKED_LEN_MISTER: usize = 512;
 /// The cores keep a HuC-3 in the same footer, packed its own way, and nothing in the bytes says
 /// which chip wrote them. Bits above the 29th are refused, since the core never sets them and the
 /// footer would not come back as it was, which turns away a HuC-3 that has counted 2048 days. One
-/// that has not counted that far reads as an MBC3 where its minute field allows.
+/// that has not counted that far reads as an MBC3 where its minute field allows, which is why a
+/// caller that knows the cartridge reads it with [`parse_packed_huc3`] instead, as [`split_for`]
+/// does when told.
 #[must_use]
 pub fn parse_packed(footer: &[u8]) -> Option<Mbc3Clock> {
-    if footer.len() != PACKED_LEN_POCKET && footer.len() != PACKED_LEN_MISTER {
-        return None;
-    }
-    let taken_at = i64::from(u32::from_le_bytes(footer[0..4].try_into().ok()?));
-    let mut packed = [0u8; 8];
-    packed[..6].copy_from_slice(&footer[4..10]);
-    let packed = u64::from_le_bytes(packed);
+    let (taken_at, packed) = packed_frame(footer)?;
 
     let seconds = u32::try_from(packed & 0x3F).ok()?;
     let minutes = u32::try_from(packed >> 6 & 0x3F).ok()?;
@@ -733,6 +831,46 @@ pub fn parse_packed(footer: &[u8]) -> Option<Mbc3Clock> {
     })
 }
 
+/// Reads the footer the MiSTer Game Boy cores and their openFPGA ports append for a HuC-3: the
+/// frame [`parse_packed`] reads, with `huc3.v`'s packing in place of `mbc3.v`'s.
+///
+/// ```text
+/// RTC_savedtimeOut[33:0] = {rtc_days[15:0], rtc_minutes[11:0], rtc_seconds[5:0]}
+/// ```
+///
+/// The minute counter is the minute of the day and the day counter sixteen bits, and the bits
+/// above them are written as zero. The core restores all three counters when it loads the save,
+/// and counts the time since the host clock on from them.
+///
+/// Nothing in the bytes says this is a HuC-3 rather than an MBC3, so it is for a footer whose
+/// cartridge is known to be one, as its ROM's header says.
+#[must_use]
+pub fn parse_packed_huc3(footer: &[u8]) -> Option<Huc3Clock> {
+    let (taken_at, packed) = packed_frame(footer)?;
+    let seconds = u8::try_from(packed & 0x3F).ok()?;
+    let minutes = u16::try_from(packed >> 6 & 0xFFF).ok()?;
+    let days = u16::try_from(packed >> 18 & 0xFFFF).ok()?;
+    // The seconds only ever count up to 59 and wrap, and a game that writes the minutes clears
+    // them, so 60 is not this core's. The minutes are left alone: a game may set them past 1439,
+    // and the counter runs on from there.
+    if seconds > 59 || packed >> 34 != 0 {
+        return None;
+    }
+    Some(Huc3Clock { seconds, minutes, days, taken_at })
+}
+
+/// The host clock and the 48-bit word both packed footers open with, from one of the two sizes
+/// the cores reserve.
+fn packed_frame(footer: &[u8]) -> Option<(i64, u64)> {
+    if footer.len() != PACKED_LEN_POCKET && footer.len() != PACKED_LEN_MISTER {
+        return None;
+    }
+    let taken_at = i64::from(u32::from_le_bytes(footer[0..4].try_into().ok()?));
+    let mut packed = [0u8; 8];
+    packed[..6].copy_from_slice(&footer[4..10]);
+    Some((taken_at, u64::from_le_bytes(packed)))
+}
+
 /// How many bytes the packed footers give the host clock: the MiSTer Game Boy one and the
 /// GBA_MiSTer one alike.
 const PACKED_TIMESTAMP_WIDTH: usize = 4;
@@ -746,9 +884,21 @@ pub fn build_packed(clock: &Mbc3Clock, reserved: usize) -> Vec<u8> {
         | u64::from(clock.days() & 0x3FF) << 17
         | u64::from(clock.overflowed()) << 27
         | u64::from(clock.halted()) << 28;
+    packed_footer(clock.taken_at, packed, reserved)
+}
 
+/// Writes a HuC-3's packed footer back out, padded to the reserved size its producer uses.
+#[must_use]
+pub fn build_packed_huc3(clock: &Huc3Clock, reserved: usize) -> Vec<u8> {
+    let packed =
+        u64::from(clock.seconds & 0x3F) | u64::from(clock.minutes & 0xFFF) << 6 | u64::from(clock.days) << 18;
+    packed_footer(clock.taken_at, packed, reserved)
+}
+
+/// The host clock and a packed word, then the `0xFFFF` words the cores write past them.
+fn packed_footer(taken_at: i64, packed: u64, reserved: usize) -> Vec<u8> {
     let mut footer = Vec::with_capacity(reserved);
-    footer.extend_from_slice(&u32::try_from(clock.taken_at).unwrap_or(0).to_le_bytes());
+    footer.extend_from_slice(&u32::try_from(taken_at).unwrap_or(0).to_le_bytes());
     footer.extend_from_slice(&packed.to_le_bytes()[..6]);
     footer.resize(reserved, 0xFF);
     footer
@@ -1779,6 +1929,98 @@ mod tests {
         let mut footer = POCKET_FIRST;
         footer[7] |= 0x20;
         assert_eq!(parse_packed(&footer), None);
+    }
+
+    /// A HuC-3 footer as `huc3.v` packs it, padded to `reserved` as the cores pad it.
+    fn huc3_footer(days: u16, minutes: u16, seconds: u8, reserved: usize) -> Vec<u8> {
+        let packed = u64::from(seconds) | u64::from(minutes) << 6 | u64::from(days) << 18;
+        let mut footer = 1_786_533_688u32.to_le_bytes().to_vec();
+        footer.extend_from_slice(&packed.to_le_bytes()[..6]);
+        footer.resize(reserved, 0xFF);
+        footer
+    }
+
+    #[test]
+    fn a_huc3_footer_is_read_as_one_when_the_rom_says_so() {
+        let footer = huc3_footer(3000, 13 * 60 + 45, 37, PACKED_LEN_MISTER);
+        let clock = parse_packed_huc3(&footer).expect("a HuC-3");
+        assert_eq!((clock.days, clock.minutes, clock.seconds), (3000, 825, 37));
+        assert_eq!(clock.taken_at, 1_786_533_688);
+        assert_eq!(build_packed_huc3(&clock, PACKED_LEN_MISTER), footer, "rebuilt byte for byte");
+        // The reading is the counters alone: no game can read the seconds.
+        assert_eq!(clock.reading(), Rtc::new(3000 * 86_400 + 825 * 60));
+
+        let mut save = vec![0x22u8; 32_768];
+        save.extend_from_slice(&footer);
+        // Past 2047 days it is no MBC3's footer, so without the ROM's word it stays in the save.
+        assert_eq!(split(&save, Some("gb")), None);
+        let split = split_for(&save, Some("gb"), Some("x.1sav.rtc.huc3")).expect("a clock");
+        assert_eq!((split.sram.len(), split.clock), (32_768, Clock::Huc3(clock)));
+        let extensions = split.extensions();
+        let key = extensions.get::<RtcHuc3>().expect("the chip's key");
+        assert_eq!((key.minutes(), key.days(), key.seconds), (Some(825), Some(3000), Some(37)));
+        assert_eq!(key.memory.iter().flatten().count(), 7, "the two counters and nothing else");
+        assert_eq!(extensions.get::<Rtc>(), Some(&clock.reading()));
+    }
+
+    #[test]
+    fn a_young_huc3_is_not_taken_for_an_mbc3_when_the_rom_says_otherwise() {
+        // Ten days in, a HuC-3's bits fit `mbc3.v`'s, and read as an MBC3 its minutes are some
+        // clock's twenty minutes and its days twenty. Only the ROM can say which it is.
+        let mut save = vec![0u8; 8192];
+        save.extend_from_slice(&huc3_footer(10, 20, 5, PACKED_LEN_POCKET));
+        let misread = split(&save, Some("gb")).expect("a clock").clock;
+        assert!(matches!(misread, Clock::Mbc3(Mbc3Clock { minutes: 20, days_low: 20, .. })));
+        let clock = split_for(&save, Some("gb"), Some("x.1sav.rtc.huc3")).expect("a clock").clock;
+        assert!(matches!(clock, Clock::Huc3(Huc3Clock { days: 10, minutes: 20, seconds: 5, .. })));
+
+        // No HuC-3 read here is kept in an appended footer, so one stays in the save.
+        let mut appended = vec![0u8; 8192];
+        appended.extend_from_slice(&mbc3_footer(1, 2, 3, 4, 1_700_000_000));
+        assert_eq!(split_for(&appended, Some("gb"), Some("x.1sav.rtc.huc3")), None);
+        // And another chip's word changes nothing.
+        assert_eq!(split_for(&save, Some("gb"), Some("x.1sav.rtc.mbc3")), split(&save, Some("gb")));
+    }
+
+    #[test]
+    fn a_huc3_goes_back_into_the_footer_its_core_packs() {
+        use one_saves::{Header, Name, Part, Source};
+        let original = huc3_footer(3000, 825, 37, PACKED_LEN_MISTER);
+        let clock = parse_packed_huc3(&original).expect("a HuC-3");
+        let split = Split {
+            sram: Vec::new(),
+            footer: Vec::new(),
+            reading: Some(clock.reading()),
+            clock: Clock::Huc3(clock),
+        };
+        let bundle_from = |core: Option<&str>, extensions: one_saves::Extensions| {
+            let source = core.map(|core| Source::default().core(Name::parse(core).unwrap()));
+            let header = Header::default().source(source).extensions(extensions);
+            one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")])
+        };
+        let footer = |core| footer_of(&bundle_from(core, split.extensions()));
+        assert_eq!(footer(Some("gameboy-mister")), Some(original.clone()));
+        assert_eq!(
+            footer(Some("budude2-gbc")).as_deref(),
+            Some(&huc3_footer(3000, 825, 37, PACKED_LEN_POCKET)[..])
+        );
+        assert_eq!(footer(None), Some(original), "naming no core, MiSTer's");
+        // mGBA keeps a HuC-3 its own way, which this module does not write.
+        assert_eq!(footer(Some("mgba")), None);
+
+        // A key from a source that kept less is filled the way the specification fills it.
+        let mut sparse = RtcHuc3::from(clock);
+        sparse.seconds = None;
+        sparse.memory[HUC3_COUNTERS] = None;
+        let mut extensions = one_saves::Extensions::new();
+        extensions.insert(sparse);
+        let rebuilt = footer_of(&bundle_from(Some("gameboy-mister"), extensions)).expect("a footer");
+        let back = parse_packed_huc3(&rebuilt).expect("a HuC-3");
+        assert_eq!(
+            (back.seconds, back.minutes, back.days),
+            (0, 0x330, 3000),
+            "0 for each null: 825 is 0x339"
+        );
     }
 
     #[test]
