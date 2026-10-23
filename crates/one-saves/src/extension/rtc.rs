@@ -1,5 +1,10 @@
 //! [`x.1sav.rtc`](https://docs.1retro.com/specifications/extensions/x.1sav.rtc/) and the chip
 //! states under it.
+//!
+//! The reading is what any consumer wants, and a chip key is what a producer rebuilding its file
+//! needs. Every chip key's type here says how its registers go on the Unix scale, through a
+//! `reading` method, so that a producer and a consumer computing [`Rtc`] from one get the same
+//! answer.
 
 use std::fmt;
 
@@ -9,15 +14,35 @@ use super::time::Civil;
 use super::{Extension, epoch, only_keys, want_epoch, want_map, want_uint};
 use crate::name::ReverseDnsName;
 
-/// What a cartridge's clock showed, as a Unix instant.
+mod huc3;
+mod joybus;
+mod mbc3;
+mod rtc4513;
+mod s3511a;
+mod srtc;
+mod tc8521;
+mod tpp1;
+
+pub use huc3::RtcHuc3;
+pub use joybus::RtcJoybus;
+pub use mbc3::RtcMbc3;
+pub use rtc4513::RtcRtc4513;
+pub use s3511a::{RtcS3511a, S3511aAlarm};
+pub use srtc::RtcSrtc;
+pub use tc8521::RtcTc8521;
+pub use tpp1::RtcTpp1;
+
+/// A game's clock reading, on the Unix scale.
 ///
-/// **Never the point a counting clock advances from.** An MBC3 keeps elapsed time beside a host
-/// timestamp, and that timestamp is the anchor rather than the reading: the reading is the elapsed
-/// time itself, as that long after 1970-01-01 UTC. A producer that cannot compute the reading
-/// omits the key.
+/// **Never the anchor a chip key carries**, which is the host clock a producer advances the chip
+/// from. How a chip's registers go on the scale depends on the kind of clock. A counting clock,
+/// such as an MBC3, reads as its elapsed time after 1970-01-01 UTC. A dating clock, such as the
+/// GBA's Seiko chip, reads as its components taken as though they were UTC. Each chip key's type
+/// has a `reading` method that does this. A producer that cannot compute the reading omits the
+/// key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rtc {
-    /// What the clock showed, in whole epoch seconds.
+    /// The game's clock, in whole seconds on the Unix scale.
     pub reading: i64,
     /// The uncertainty of the reading, in milliseconds, where a producer measured it.
     pub accuracy_ms: Option<u64>,
@@ -60,7 +85,7 @@ impl TryFrom<CBOR> for Rtc {
         let map = want_map(&value)?;
         only_keys(map, &[0, 1])?;
         Ok(Rtc {
-            reading: want_epoch(&map.get::<u64, CBOR>(0).ok_or(dcbor::Error::MissingMapKey)?)?,
+            reading: want_epoch(&field(map, 0)?)?,
             accuracy_ms: map.get::<u64, CBOR>(1).map(|value| want_uint(&value)).transpose()?,
         })
     }
@@ -76,176 +101,132 @@ impl fmt::Display for Rtc {
     }
 }
 
-/// The clock an MBC3 Game Boy cartridge keeps, register by register.
-///
-/// Every byte of the footer an emulator appends is accounted for here, so the footer is rebuilt
-/// from this rather than stored: forty bytes of registers, then the timestamp at its stated width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RtcMbc3 {
-    /// The live registers: seconds, minutes, hours, day counter low, day counter high.
-    pub live: [u32; 5],
-    /// The latched copy the game reads, in the same order.
-    pub latched: [u32; 5],
-    /// The host clock when the emulator wrote the save, in epoch seconds. The anchor, not the
-    /// reading, and on the producer's own scale: MiSTer gives its cores local standard time
-    /// counted as though it were UTC.
-    pub written_at: i64,
-    /// How many bytes that timestamp occupied: 4 or 8, depending on the emulator.
-    pub timestamp_width: u8,
+/// A key the schema requires.
+fn field(map: &Map, key: u64) -> dcbor::Result<CBOR> {
+    map.get::<u64, CBOR>(key).ok_or(dcbor::Error::MissingMapKey)
 }
 
-impl RtcMbc3 {
-    /// How many days the live clock has counted: the low register and bit 0 of the high one.
-    #[must_use]
-    pub fn days(&self) -> u32 {
-        self.live[3] | ((self.live[4] & 1) << 8)
-    }
-
-    /// Whether the live clock is halted, which is bit 6 of the high day register.
-    #[must_use]
-    pub fn halted(&self) -> bool {
-        self.live[4] & 0x40 != 0
-    }
+/// The anchor a chip key may carry: whole epoch seconds under tag 1, when the key is there.
+fn optional_epoch(map: &Map, key: u64) -> dcbor::Result<Option<i64>> {
+    map.get::<u64, CBOR>(key).map(|value| want_epoch(&value)).transpose()
 }
 
-impl Extension for RtcMbc3 {
-    const KEY: ReverseDnsName = ReverseDnsName::from_static("x.1sav.rtc.mbc3");
+/// A byte string of exactly `N` bytes.
+fn want_bytes<const N: usize>(value: &CBOR) -> dcbor::Result<[u8; N]> {
+    let bytes = value.as_byte_string().ok_or(dcbor::Error::WrongType)?;
+    bytes.try_into().map_err(|_| dcbor::Error::OutOfRange)
 }
 
-fn registers(values: [u32; 5]) -> CBOR {
-    values.iter().map(|&value| CBOR::from(value)).collect::<Vec<_>>().into()
-}
-
-fn read_registers(value: &CBOR) -> dcbor::Result<[u32; 5]> {
+/// An array of exactly `N` items, each read by `read`.
+fn want_array<T: Copy + Default, const N: usize>(
+    value: &CBOR,
+    read: impl Fn(&CBOR) -> dcbor::Result<T>,
+) -> dcbor::Result<[T; N]> {
     let items = value.as_array().ok_or(dcbor::Error::WrongType)?;
-    if items.len() != 5 {
+    if items.len() != N {
         return Err(dcbor::Error::OutOfRange);
     }
-    let mut out = [0u32; 5];
+    let mut out = [T::default(); N];
     for (slot, item) in out.iter_mut().zip(items) {
-        *slot = want_uint(item)?;
+        *slot = read(item)?;
     }
     Ok(out)
 }
 
-impl From<RtcMbc3> for CBOR {
-    fn from(clock: RtcMbc3) -> Self {
-        let mut map = Map::new();
-        map.insert(0u64, registers(clock.live));
-        map.insert(1u64, registers(clock.latched));
-        map.insert(2u64, epoch(clock.written_at));
-        map.insert(3u64, u64::from(clock.timestamp_width));
-        map.into()
+/// A register four bits wide.
+fn want_nybble(value: &CBOR) -> dcbor::Result<u8> {
+    let nybble: u8 = want_uint(value)?;
+    if nybble > 0x0f {
+        return Err(dcbor::Error::OutOfRange);
     }
+    Ok(nybble)
 }
 
-impl TryFrom<CBOR> for RtcMbc3 {
-    type Error = dcbor::Error;
-
-    fn try_from(value: CBOR) -> dcbor::Result<Self> {
-        let map = want_map(&value)?;
-        only_keys(map, &[0, 1, 2, 3])?;
-        let field = |key: u64| map.get::<u64, CBOR>(key).ok_or(dcbor::Error::MissingMapKey);
-        let timestamp_width = want_uint(&field(3)?)?;
-        if !matches!(timestamp_width, 4 | 8) {
-            return Err(dcbor::Error::OutOfRange);
-        }
-        Ok(RtcMbc3 {
-            live: read_registers(&field(0)?)?,
-            latched: read_registers(&field(1)?)?,
-            written_at: want_epoch(&field(2)?)?,
-            timestamp_width,
-        })
-    }
+/// A value read by `read`, or `None` for null: what the chip holds and the producer's source did
+/// not keep.
+fn nullable<T>(value: &CBOR, read: impl Fn(&CBOR) -> dcbor::Result<T>) -> dcbor::Result<Option<T>> {
+    if value.is_null() { Ok(None) } else { read(value).map(Some) }
 }
 
-impl fmt::Display for RtcMbc3 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let [seconds, minutes, hours, ..] = self.live;
-        write!(f, "day {} {hours:02}:{minutes:02}:{seconds:02}", self.days())?;
-        if self.halted() {
-            f.write_str(" (halted)")?;
-        }
-        // On the producer's scale, which is why no zone is printed beside it.
-        write!(f, ", written {}", Civil(self.written_at))
-    }
+/// Writes each value with `write`, as an array.
+fn array<T: Copy>(values: &[T], write: impl Fn(T) -> CBOR) -> CBOR {
+    values.iter().map(|&value| write(value)).collect::<Vec<_>>().into()
 }
 
-/// The latched state of a GBA cartridge's Seiko S-3511A, and the moment a producer took it.
+/// Writes a value with `write`, or null for `None`.
+fn or_null<T>(value: Option<T>, write: impl Fn(T) -> CBOR) -> CBOR {
+    value.map_or_else(CBOR::null, write)
+}
+
+/// Writes a register four bits wide, or null where the source did not keep it.
+fn nybble_or_null(value: Option<u8>) -> CBOR {
+    or_null(value, CBOR::from)
+}
+
+/// The anchor a chip's line ends on, when it has one.
 ///
-/// **The moment is not the reading.** The chip runs from whatever the game last set it to, so
-/// what it showed is the components, which [`Rtc`] carries beside this read as though they were
-/// UTC. `taken_at` is the host clock the producer advances the chip from, on the producer's own
-/// scale, which is what rebuilding its file needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RtcS3511a {
-    /// The seven latched BCD bytes: year since 2000, month, day, weekday, hour, minute, second.
-    pub components: [u8; 7],
-    /// The control register as read. Bit 6 is 24-hour mode.
-    pub control: u8,
-    /// The producer's clock when it took the components, in epoch seconds. The anchor, not the
-    /// reading, and not necessarily UTC: MiSTer gives its cores local standard time counted as
-    /// though it were.
-    pub taken_at: Option<i64>,
-}
-
-impl Extension for RtcS3511a {
-    const KEY: ReverseDnsName = ReverseDnsName::from_static("x.1sav.rtc.s3511a");
-}
-
-impl From<RtcS3511a> for CBOR {
-    fn from(clock: RtcS3511a) -> Self {
-        let mut map = Map::new();
-        map.insert(0u64, CBOR::to_byte_string(clock.components));
-        map.insert(1u64, u64::from(clock.control));
-        if let Some(taken_at) = clock.taken_at {
-            map.insert(2u64, epoch(taken_at));
-        }
-        map.into()
+/// It is on the producer's own scale, which is why no zone is printed beside it.
+fn write_taken(f: &mut fmt::Formatter<'_>, taken_at: Option<i64>) -> fmt::Result {
+    match taken_at {
+        Some(taken_at) => write!(f, ", taken {}", Civil(taken_at)),
+        None => Ok(()),
     }
 }
 
-impl TryFrom<CBOR> for RtcS3511a {
-    type Error = dcbor::Error;
+/// A BCD byte's value, when both its digits are digits.
+fn from_bcd(byte: u8) -> Option<u8> {
+    digits(byte >> 4, byte & 0x0f)
+}
 
-    fn try_from(value: CBOR) -> dcbor::Result<Self> {
-        let map = want_map(&value)?;
-        only_keys(map, &[0, 1, 2])?;
-        let components = map.get::<u64, CBOR>(0).ok_or(dcbor::Error::MissingMapKey)?;
-        let components = components.as_byte_string().ok_or(dcbor::Error::WrongType)?;
-        Ok(RtcS3511a {
-            components: components.try_into().map_err(|_| dcbor::Error::OutOfRange)?,
-            control: want_uint(&map.get::<u64, CBOR>(1).ok_or(dcbor::Error::MissingMapKey)?)?,
-            taken_at: map.get::<u64, CBOR>(2).map(|value| want_epoch(&value)).transpose()?,
-        })
+/// A tens digit and a ones digit, kept one to a register, as the value they spell.
+fn digits(tens: u8, ones: u8) -> Option<u8> {
+    (tens <= 9 && ones <= 9).then_some(tens * 10 + ones)
+}
+
+/// An hour on a 12-hour clock, put on the 24-hour one.
+///
+/// Hours 0 to 12 are taken, so a chip counting 1 to 12 and one counting 0 to 11 both read right:
+/// twelve before noon is midnight.
+fn hour_from_12(hour: u8, pm: bool) -> Option<u8> {
+    (hour <= 12).then_some(hour % 12 + if pm { 12 } else { 0 })
+}
+
+/// A counting clock's registers as that long after 1970-01-01 UTC.
+fn elapsed(days: i64, hours: i64, minutes: i64, seconds: i64) -> i64 {
+    days * 86_400 + hours * 3_600 + minutes * 60 + seconds
+}
+
+/// A dating clock's components read as though they were UTC, when they are a date and a time of
+/// day.
+fn utc(year: i64, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> Option<i64> {
+    let in_range = (1..=12).contains(&month)
+        && (1..=days_in_month(year, month)).contains(&day)
+        && hour <= 23
+        && minute <= 59
+        && second <= 59;
+    in_range.then(|| elapsed(days_from_civil(year, month, day), hour.into(), minute.into(), second.into()))
+}
+
+/// How many days a month has, in the Gregorian calendar.
+fn days_in_month(year: i64, month: u8) -> u8 {
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
     }
 }
 
-impl fmt::Display for RtcS3511a {
-    /// The components as the chip holds them, BCD read as the digits it spells. They are a wall
-    /// clock with no zone, so nothing here turns them into an instant.
-    ///
-    /// Components that are not BCD spell no digits, so they are shown as the bytes they are rather
-    /// than as a date nobody wrote.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let [year, month, day, weekday, hour, minute, second] = self.components;
-        // Bit 7 of the hour byte is the chip's AM/PM flag, which is not a digit.
-        let hour = hour & 0x3f;
-        let mode = if self.control & 0x40 != 0 { "24-hour" } else { "12-hour" };
-        let bcd = |byte: u8| byte >> 4 <= 9 && byte & 0x0f <= 9;
-        if [year, month, day, weekday, hour, minute, second].into_iter().all(bcd) {
-            write!(f, "20{year:02x}-{month:02x}-{day:02x} {hour:02x}:{minute:02x}:{second:02x}, {mode}")?;
-        } else {
-            f.write_str("not BCD: h'")?;
-            self.components.iter().try_for_each(|byte| write!(f, "{byte:02x}"))?;
-            write!(f, "', {mode}")?;
-        }
-        // On the producer's scale, which is why no zone is printed beside it.
-        match self.taken_at {
-            Some(taken_at) => write!(f, ", taken {}", Civil(taken_at)),
-            None => Ok(()),
-        }
-    }
+/// Days from 1970-01-01 to a civil date, by Howard Hinnant's algorithm.
+fn days_from_civil(year: i64, month: u8, day: u8) -> i64 {
+    let (month, day) = (i64::from(month), i64::from(day));
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 #[cfg(test)]
@@ -261,45 +242,23 @@ mod tests {
     }
 
     #[test]
-    fn an_mbc3_clock_round_trips() {
-        let clock = RtcMbc3 {
-            live: [30, 45, 13, 44, 1],
-            latched: [30, 45, 13, 44, 1],
-            written_at: 1_700_000_000,
-            timestamp_width: 8,
-        };
-        assert_eq!(RtcMbc3::try_from(CBOR::from(clock)).unwrap(), clock);
-        assert_eq!(clock.days(), 300);
-        assert_eq!(clock.to_string(), "day 300 13:45:30, written 2023-11-14 22:13:20");
-        // The width is 4 or 8 and nothing else, since the footer is rebuilt from it.
-        assert!(RtcMbc3::try_from(CBOR::from(RtcMbc3 { timestamp_width: 6, ..clock })).is_err());
+    fn components_read_as_utc_only_when_they_are_a_date() {
+        assert_eq!(utc(2023, 11, 14, 22, 13, 20), Some(1_700_000_000));
+        assert_eq!(utc(2000, 2, 29, 0, 0, 0), Some(951_782_400));
+        // 1900 was not a leap year, whatever a two-digit chip thinks of year 00.
+        assert_eq!(utc(1900, 2, 29, 0, 0, 0), None);
+        assert_eq!(utc(2026, 13, 1, 0, 0, 0), None);
+        assert_eq!(utc(2026, 4, 31, 0, 0, 0), None);
+        assert_eq!(utc(2026, 4, 30, 24, 0, 0), None);
     }
 
     #[test]
-    fn a_seiko_clock_shows_its_digits() {
-        let clock = RtcS3511a {
-            components: [0x26, 0x08, 0x12, 0x03, 0x10, 0x39, 0x43],
-            control: 0x40,
-            taken_at: None,
-        };
-        assert_eq!(RtcS3511a::try_from(CBOR::from(clock)).unwrap(), clock);
-        assert_eq!(clock.to_string(), "2026-08-12 10:39:43, 24-hour");
-        let garbled =
-            RtcS3511a { components: [0x01, 0x20, 0x3f, 0x00, 0x3d, 0x9c, 0xbb], control: 0, taken_at: None };
-        assert_eq!(garbled.to_string(), "not BCD: h'01203f003d9cbb', 12-hour");
-    }
-
-    #[test]
-    fn a_seiko_clock_carries_the_moment_it_was_taken() {
-        // Key 2 is optional: a bundle written before it existed has only keys 0 and 1.
-        let clock = RtcS3511a {
-            components: [0x10, 0x01, 0x01, 0x00, 0x00, 0x08, 0x47],
-            control: 0x40,
-            taken_at: Some(1_792_576_838),
-        };
-        let encoded = CBOR::from(clock);
-        assert_eq!(encoded.as_map().unwrap().len(), 3);
-        assert_eq!(RtcS3511a::try_from(encoded).unwrap(), clock);
-        assert_eq!(clock.to_string(), "2010-01-01 00:08:47, 24-hour, taken 2026-10-21 10:00:38");
+    fn a_twelve_hour_clock_reads_either_way_it_counts() {
+        assert_eq!(hour_from_12(12, false), Some(0));
+        assert_eq!(hour_from_12(0, false), Some(0));
+        assert_eq!(hour_from_12(12, true), Some(12));
+        assert_eq!(hour_from_12(0, true), Some(12));
+        assert_eq!(hour_from_12(11, true), Some(23));
+        assert_eq!(hour_from_12(13, false), None);
     }
 }

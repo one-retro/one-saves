@@ -41,12 +41,13 @@ pub struct RawOptions {
     /// On by default. Leaving it inline keeps the payload byte-identical to the emulator's file,
     /// at the cost of a content hash that moves every time the clock does; see [`crate::rtc`].
     pub split_rtc: bool,
-    /// A sidecar clock file written beside the save, and the instant it was written.
+    /// A sidecar clock file written beside the save, and the instant to read it at.
     ///
     /// Gambatte and mincer_ray's GBA core keep the clock in a `.rtc` file of their own rather
     /// than appending it; which one wrote it follows from its length. Gambatte's stores an origin
-    /// rather than a reading, so the instant is what turns it into one, and mincer_ray's records
-    /// its own and ignores the instant. See [`parse_sidecar`](crate::rtc::parse_sidecar).
+    /// rather than a reading, so the instant is what turns it into one, and is ordinarily now.
+    /// mincer_ray's records its own and ignores the instant. See
+    /// [`parse_sidecar`](crate::rtc::parse_sidecar).
     pub rtc_sidecar: Option<(Vec<u8>, i64)>,
 }
 
@@ -418,12 +419,12 @@ mod tests {
     }
 
     /// A Game Boy save with a clock footer, as an emulator writes it.
-    fn crystal_save(written_at: i64) -> Vec<u8> {
+    fn crystal_save(taken_at: i64) -> Vec<u8> {
         let mut save: Vec<u8> = (0..32768u32).map(|i| (i % 251) as u8).collect();
         for value in [30u32, 45, 13, 44, 1, 30, 45, 13, 44, 1] {
             save.extend_from_slice(&value.to_le_bytes());
         }
-        save.extend_from_slice(&written_at.to_le_bytes());
+        save.extend_from_slice(&taken_at.to_le_bytes());
         save
     }
 

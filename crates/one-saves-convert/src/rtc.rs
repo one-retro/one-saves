@@ -8,8 +8,8 @@
 //! | -------- | ----- | ------------- |
 //! | mGBA, GBA | appended, 16 bytes | latched BCD, a control register, a latch instant |
 //! | SameBoy, Game Boy | appended, 48 bytes | ten MBC3 registers and a write time |
-//! | MiSTer Gameboy core | appended, 512 bytes | a write time and the registers **bit-packed** |
-//! | its openFPGA ports | appended, 16 bytes | the same ten bytes, a smaller reserved region |
+//! | MiSTer Gameboy, SGB | appended, 512 bytes | a 4-byte host clock, **bit-packed** registers |
+//! | budude2's Pocket port | appended, 16 bytes | the same ten bytes, a smaller reserved region |
 //! | Gambatte, Game Boy | a `.rtc` file, 4 bytes | an **origin**, big-endian |
 //! | mincer_ray, GBA | a `.rtc` file, 16 bytes | an instant and the calendar **bit-packed** |
 //! | GBA_MiSTer, GBA | appended, 512 bytes | the same two, the other way round, **repeated** |
@@ -33,8 +33,8 @@
 //! The shape follows what [`x.1sav.rtc`] prescribes, which is to carry two keys rather than one:
 //!
 //! - the save part's payload is the bare save memory,
-//! - the portable reading goes in [`x.1sav.rtc`] as an [`Rtc`], normalized to a Unix instant, so a
-//!   consumer can read it without knowing which chip produced it,
+//! - the portable reading goes in [`x.1sav.rtc`] as an [`Rtc`], on the Unix scale, so a consumer
+//!   can read it without knowing which chip produced it,
 //! - the chip's own state goes in its key under that one, as an [`RtcMbc3`] or an [`RtcS3511a`],
 //!   read out as fields rather than kept as a blob, because that is the state only something that
 //!   understands the layout can rebuild.
@@ -58,8 +58,9 @@
 //! is no year, month or weekday to put in the S-3511A's `components`, and no field there for the
 //! day counter, the flags or the latched set.
 //!
-//! Neither belongs to an emulator. The MBC3 footer is written identically by VBA, BGB, Gambatte
-//! and mGBA, which is what makes it readable at all, so both keys sit under `x.1sav.rtc` in the
+//! Neither belongs to an emulator. The MBC3 footer is written identically by VBA, BGB, mGBA and
+//! SameBoy, apart from the width of its timestamp, which is what makes it readable at all, so both
+//! keys sit under `x.1sav.rtc` in the
 //! [`x` tree](https://docs.1retro.com/specifications/common-types/reverse-dns-name/#the-x-tree)
 //! rather than under a vendor domain. What is left under [`io.mgba.rtc`] is only mGBA's
 //! *reconstruction model* — how it runs the clock between reads — which is genuinely one
@@ -71,11 +72,15 @@
 //! Splitting would stabilise the save's bytes, but nothing would say the bytes are a clock, and
 //! filing unidentified bytes under a chip's key claims more than is known.
 //!
+//! That includes every other cartridge clock. The specification gives each one a key — the HuC-3,
+//! TPP1 and TAMA5 on the Game Boy, the two Super Famicom chips, the N64's Joybus clock — and
+//! [`one_saves::extension`] has a type for each, but no producer's file for them is read here yet.
+//!
 //! [`x.1sav.rtc`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc/
 //! [`io.mgba.rtc`]: https://docs.1retro.com/specifications/extensions/io.mgba.rtc/
 //! [`x.1sav.rtc.s3511a`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc.s3511a/
 
-use one_saves::extension::{Rtc, RtcMbc3, RtcS3511a};
+use one_saves::extension::{Rtc, RtcMbc3, RtcS3511a, S3511aAlarm};
 use one_saves::{Extension, Extensions};
 use one_saves_registry::ClockLayout;
 
@@ -133,7 +138,7 @@ pub enum Clock {
 }
 
 impl Clock {
-    /// What this clock showed, as a Unix instant, when that can be computed.
+    /// What this clock showed, on the Unix scale, when that can be computed.
     ///
     /// An MBC3's always can. A Seiko chip's cannot when its components are not a date.
     #[must_use]
@@ -165,7 +170,7 @@ pub struct S3511aClock {
     /// Never the reading. mGBA's chip follows the host clock, so there the two are one moment on
     /// two scales, but an FPGA core's runs from whatever the game set it to, and MiSTer gives its
     /// cores local standard time counted as though it were UTC.
-    pub latched_at: i64,
+    pub taken_at: i64,
 }
 
 impl S3511aClock {
@@ -175,42 +180,20 @@ impl S3511aClock {
         self.control & 0x40 != 0
     }
 
-    /// What this chip showed, as a Unix instant: its components, read as though they were UTC.
+    /// What this chip showed, on the Unix scale: its components, read as though they were UTC,
+    /// as [`RtcS3511a::reading`] reads them.
     ///
-    /// The chip keeps no zone, so its wall clock goes on the Unix scale the way `x.1sav.dirent`
-    /// puts a console's there, rather than under a zone nobody recorded. `latched_at` is not the
-    /// answer either. It is when the components were taken rather than what they say, and the two
-    /// can be years apart: GBA_MiSTer starts the chip at 2009-12-31 23:59:45, and a game that never
-    /// sets it leaves it there. Where the chip does follow the host, as mGBA's does, the reading
-    /// sits the host's zone offset from the anchor, which is one wall clock on two scales.
+    /// `taken_at` is not the answer. It is when the components were taken rather than what they
+    /// say, and the two can be years apart. Where the chip does follow the host, as mGBA's does,
+    /// the reading sits the host's zone offset from the anchor, which is one wall clock on two
+    /// scales.
     ///
     /// `None` when the components are not a date, since a reading that cannot be computed is
     /// omitted rather than approximated.
     #[must_use]
     pub fn reading(self) -> Option<Rtc> {
-        components_as_utc(self.components, self.control).map(Rtc::new)
+        RtcS3511a::from(self).reading()
     }
-}
-
-/// The instant a Seiko chip's components spell, read as though they were UTC.
-fn components_as_utc(components: [u8; 7], control: u8) -> Option<i64> {
-    let year = from_bcd(components[0])?;
-    let month = from_bcd(components[1])?;
-    let day = from_bcd(components[2])?;
-    let hour = from_bcd(hour24(components[4], control))?;
-    let minute = from_bcd(components[5])?;
-    let second = from_bcd(components[6])?;
-    let in_range = (1..=12).contains(&month)
-        && (1..=days_in_month(year, month)).contains(&day)
-        && hour <= 23
-        && minute <= 59
-        && second <= 59;
-    in_range.then(|| {
-        days_from_civil(2000 + i64::from(year), month, day) * 86_400
-            + i64::from(hour) * 3_600
-            + i64::from(minute) * 60
-            + i64::from(second)
-    })
 }
 
 /// How many days a month has, in a year counted from 2000 as the chip counts it.
@@ -225,44 +208,47 @@ fn days_in_month(year: u8, month: u8) -> u8 {
     }
 }
 
-/// Days from 1970-01-01 to a civil date, by Howard Hinnant's algorithm.
-fn days_from_civil(year: i64, month: u8, day: u8) -> i64 {
-    let (month, day) = (i64::from(month), i64::from(day));
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
 impl From<S3511aClock> for RtcS3511a {
     /// The chip's own key carries the components, the control register and the moment the
     /// producer took them, which between them are everything its file is rebuilt from.
+    ///
+    /// The alarm is unknown. No file read here keeps the register, and nothing here knows which
+    /// game wrote the save, so nothing can say the game never set it.
     fn from(clock: S3511aClock) -> Self {
-        RtcS3511a { components: clock.components, control: clock.control, taken_at: Some(clock.latched_at) }
+        RtcS3511a {
+            components: clock.components,
+            control: clock.control,
+            taken_at: Some(clock.taken_at),
+            alarm: S3511aAlarm::Unknown,
+        }
     }
 }
 
 /// The Seiko chip a bundle carries, and the anchor to rebuild its producer's file from.
 ///
-/// The anchor is key 2. A bundle without one, which is every bundle this crate wrote before the
-/// key existed, carried the anchor as its reading instead, so that stands in for it rather than
-/// leaving the file unbuildable.
+/// The anchor is key 2. Where a bundle has none, the chip resumes from its components with no
+/// time passed, so the anchor is the moment of rebuilding, which is what `x.1sav.rtc` says a
+/// consumer should use. Neither the reading nor `created_at` stands in for it: the one is what the
+/// chip says rather than when it was taken, and the other is when the bundle was assembled.
 fn s3511a_of(bundle: &one_saves::Bundle) -> Option<(RtcS3511a, i64)> {
-    let extensions = &bundle.header.extensions;
-    let chip = extensions.get::<RtcS3511a>()?;
-    let anchor = match chip.taken_at {
-        Some(taken_at) => taken_at,
-        None => extensions.get::<Rtc>()?.reading,
-    };
-    Some((*chip, anchor))
+    let chip = bundle.header.extensions.get::<RtcS3511a>()?;
+    Some((*chip, chip.taken_at.unwrap_or_else(now)))
+}
+
+/// The host clock, in epoch seconds.
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|since| i64::try_from(since.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 /// The MBC3 clock, as the de-facto save footer stores it.
 ///
 /// Ten little-endian 32-bit registers — the live clock, then the latched copy a game reads — and
-/// then the host's clock at the moment the emulator wrote the file.
+/// then the host clock the emulator advances them from. The other sources keep less, and say so
+/// with `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mbc3Clock {
     /// Seconds, 0 to 59.
@@ -275,15 +261,20 @@ pub struct Mbc3Clock {
     pub days_low: u32,
     /// Day counter bit 8, the halt flag and the overflow flag.
     pub days_high: u32,
-    /// The latched copy the game reads, in the same order.
-    pub latched: [u32; 5],
-    /// The host clock when the emulator last wrote this save, in epoch seconds.
-    pub written_at: i64,
-    /// How many bytes that timestamp occupied: 4 or 8, depending on the emulator.
+    /// The latched copy the game reads, in the same order, or `None` where the source keeps none,
+    /// as Gambatte's sidecar and the MiSTer core's packed footer do not.
+    pub latched: Option<[u32; 5]>,
+    /// The host clock the emulator advances the counters from, in epoch seconds: the anchor,
+    /// which is key 2 of `x.1sav.rtc.mbc3`. SameBoy takes it when it writes the save, VBA-M and
+    /// mGBA when the game last latched the clock.
+    pub taken_at: i64,
+    /// How many bytes that timestamp occupied in the footer: 4 or 8, depending on the emulator.
+    /// The MiSTer core and its Pocket ports write 4, whatever length they pad the footer to.
     ///
     /// Carried because the footer is regenerated rather than stored, and the two widths give
-    /// different files for the same clock.
-    pub timestamp_width: usize,
+    /// different files for the same clock. `None` for a clock kept outside a footer, as
+    /// Gambatte's sidecar is.
+    pub timestamp_width: Option<usize>,
 }
 
 impl Mbc3Clock {
@@ -296,17 +287,15 @@ impl Mbc3Clock {
             + i64::from(self.seconds)
     }
 
-    /// What this clock showed when the save was written: the counters, put on the Unix scale as
-    /// that long after 1970-01-01 UTC.
+    /// What this clock showed: the counters, put on the Unix scale as that long after 1970-01-01
+    /// UTC, as [`RtcMbc3::reading`] reads them.
     ///
-    /// Not the anchor, which is when the host wrote the save rather than anything the cartridge
-    /// counted, and not the anchor plus the counters either. The two move at the same rate, so
-    /// their sum runs at twice real time, and the anchor is on the producer's own scale, which
-    /// MiSTer does not keep in UTC. What the game displays is this plus an offset of its own, in
-    /// save memory where only something that knows the game can find it.
+    /// Not the anchor, which is a host time rather than anything the cartridge counted, and not
+    /// the anchor plus the counters either. What the game displays is this plus an offset of its
+    /// own, in save memory where only something that knows the game can find it.
     #[must_use]
     pub fn reading(self) -> Rtc {
-        Rtc::new(self.elapsed_seconds())
+        RtcMbc3::from(self).reading()
     }
 
     /// The five live registers, in the order the footer stores them.
@@ -342,8 +331,8 @@ impl From<Mbc3Clock> for RtcMbc3 {
         RtcMbc3 {
             live: clock.live(),
             latched: clock.latched,
-            written_at: clock.written_at,
-            timestamp_width: u8::try_from(clock.timestamp_width).expect("4 or 8"),
+            taken_at: clock.taken_at,
+            timestamp_width: clock.timestamp_width.map(|width| u8::try_from(width).expect("4 or 8")),
         }
     }
 }
@@ -423,35 +412,30 @@ pub fn parse_mbc3(footer: &[u8]) -> Option<Mbc3Clock> {
         u32::from_le_bytes([footer[at], footer[at + 1], footer[at + 2], footer[at + 3]])
     };
 
-    let clock = Mbc3Clock {
-        seconds: word(0),
-        minutes: word(1),
-        hours: word(2),
-        days_low: word(3),
-        days_high: word(4),
-        latched: [word(5), word(6), word(7), word(8), word(9)],
-        written_at: if footer.len() == MBC3_LEN_64 {
-            i64::from_le_bytes(footer[40..48].try_into().ok()?)
-        } else {
-            i64::from(u32::from_le_bytes(footer[40..44].try_into().ok()?))
-        },
-        timestamp_width: footer.len() - 40,
+    let live = [word(0), word(1), word(2), word(3), word(4)];
+    let latched = [word(5), word(6), word(7), word(8), word(9)];
+    let taken_at = if footer.len() == MBC3_LEN_64 {
+        i64::from_le_bytes(footer[40..48].try_into().ok()?)
+    } else {
+        i64::from(u32::from_le_bytes(footer[40..44].try_into().ok()?))
     };
 
-    let sane = |c: &Mbc3Clock| {
-        c.seconds < 60
-            && c.minutes < 60
-            && c.hours < 24
-            && c.days_low < 256
-            && c.latched[0] < 60
-            && c.latched[1] < 60
-            && c.latched[2] < 24
-            && c.latched[3] < 256
+    let sane = |[seconds, minutes, hours, days_low, _]: [u32; 5]| {
+        seconds < 60 && minutes < 60 && hours < 24 && days_low < 256
     };
     // A negative or absurd host time is not a time; a save written before the Game Boy existed is
     // a misparse rather than a very old save.
-    let plausible_instant = clock.written_at >= 0;
-    (sane(&clock) && plausible_instant).then_some(clock)
+    let plausible_instant = taken_at >= 0;
+    (sane(live) && sane(latched) && plausible_instant).then_some(Mbc3Clock {
+        seconds: live[0],
+        minutes: live[1],
+        hours: live[2],
+        days_low: live[3],
+        days_high: live[4],
+        latched: Some(latched),
+        taken_at,
+        timestamp_width: Some(footer.len() - 40),
+    })
 }
 
 impl Split {
@@ -481,10 +465,11 @@ impl Split {
 /// out. So writing one back is a choice, the way a card format is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClockForm {
-    /// Appended to the save: ten little-endian registers and an instant. VBA, BGB, mGBA, SameBoy.
-    Mbc3Appended,
-    /// Appended to the save: an instant and the registers bit-packed, padded to a reserved size.
-    /// The MiSTer Gameboy core and its openFPGA ports.
+    /// Appended to the save: ten little-endian registers and an instant this many bytes wide.
+    /// VBA, BGB, mGBA, SameBoy.
+    Mbc3Appended(u8),
+    /// Appended to the save: an instant four bytes wide and the registers bit-packed, padded to a
+    /// reserved size. The MiSTer Gameboy and SGB cores and the Gameboy core's openFPGA ports.
     Packed(usize),
     /// A separate file holding the instant the clock counts from. Gambatte.
     Sidecar,
@@ -494,7 +479,7 @@ pub enum ClockForm {
     /// GBA core.
     S3511aSidecar,
     /// Appended to the save: the Seiko chip's calendar and an instant, bit-packed behind a magic
-    /// word and repeated to fill a reserved size. GBA_MiSTer.
+    /// word and repeated to fill a reserved size, or cut to it. GBA_MiSTer.
     S3511aPacked(usize),
 }
 
@@ -507,27 +492,56 @@ pub enum ClockForm {
 /// way that gives its clock away, and two that do spell it the same way need not agree.
 ///
 /// A bundle naming nobody, or naming a core the registry records no clock for, gets the form most
-/// producers use.
+/// producers use. An appended footer goes back at the width key 3 says it had, which an older
+/// build of a core may have written narrower than the registry's entry for it.
 #[must_use]
 pub fn form_of(bundle: &one_saves::Bundle) -> ClockForm {
     let core = bundle.header.source.as_ref().and_then(|source| source.core.as_ref());
     // `source.core` carries the slug for a listed core, which is what the registry is keyed by.
     let layout = core.map(one_saves::Name::as_str).and_then(one_saves_registry::core).and_then(|c| c.clock);
-    // Which chip wrote the state is the save's own business — a Seiko S-3511A is a Game Boy
-    // Advance part and an MBC3 a Game Boy one — so the key settles it, and what the producer
-    // settles is the layout. mincer_ray keeps the chip in a file of its own and GBA_MiSTer packs
-    // it; every other GBA core appends it the way mGBA does.
+    match form_for(bundle, layout) {
+        ClockForm::Mbc3Appended(width) => ClockForm::Mbc3Appended(
+            bundle
+                .header
+                .extensions
+                .get::<RtcMbc3>()
+                .and_then(|clock| clock.timestamp_width)
+                .unwrap_or(width),
+        ),
+        form => form,
+    }
+}
+
+/// The shape a core with `layout` writes this bundle's clock in: what writing a save for a chosen
+/// core takes, given that core's [`ClockLayout`] from the registry.
+///
+/// Which chip wrote the state is the save's own business — a Seiko S-3511A is a Game Boy Advance
+/// part and an MBC3 a Game Boy one — so the bundle's key settles it, and what the core settles is
+/// the layout. mincer_ray keeps the chip in a file of its own and GBA_MiSTer packs it; every
+/// other GBA core appends it the way mGBA does.
+///
+/// An appended footer takes the width the core gives its timestamp. With no layout, it is the
+/// form most producers use, at the width key 3 says the clock's own footer had.
+#[must_use]
+pub fn form_for(bundle: &one_saves::Bundle, layout: Option<ClockLayout>) -> ClockForm {
     if bundle.header.extensions.contains_key(&RtcS3511a::KEY) {
         return match layout {
             Some(ClockLayout::Sidecar) => ClockForm::S3511aSidecar,
-            Some(ClockLayout::Packed { reserved }) => ClockForm::S3511aPacked(reserved),
-            Some(ClockLayout::Appended) | None => ClockForm::S3511a,
+            Some(ClockLayout::Packed { reserved, .. }) => ClockForm::S3511aPacked(reserved),
+            Some(ClockLayout::Appended { .. }) | None => ClockForm::S3511a,
         };
     }
     match layout {
         Some(ClockLayout::Sidecar) => ClockForm::Sidecar,
-        Some(ClockLayout::Packed { reserved }) => ClockForm::Packed(reserved),
-        Some(ClockLayout::Appended) | None => ClockForm::Mbc3Appended,
+        Some(ClockLayout::Packed { reserved, .. }) => ClockForm::Packed(reserved),
+        Some(ClockLayout::Appended { timestamp_width }) => ClockForm::Mbc3Appended(timestamp_width),
+        None => ClockForm::Mbc3Appended(
+            bundle
+                .header
+                .extensions
+                .get::<RtcMbc3>()
+                .map_or(RtcMbc3::DEFAULT_TIMESTAMP_WIDTH, RtcMbc3::footer_width),
+        ),
     }
 }
 
@@ -550,22 +564,30 @@ pub fn footer_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec
         let (chip, anchor) = s3511a_of(bundle)?;
         return Some(build_s3511a_packed(&chip.components, chip.control, anchor, reserved));
     }
-    let raw = footer_of_mbc3(bundle)?;
+    // A packed footer is built from an appended one, and keeps none of its width.
+    let width = match form {
+        ClockForm::Mbc3Appended(width) => width,
+        _ => RtcMbc3::DEFAULT_TIMESTAMP_WIDTH,
+    };
+    let raw = footer_of_mbc3(bundle, width)?;
     match form {
         ClockForm::Packed(reserved) => parse_mbc3(&raw).as_ref().map(|clock| build_packed(clock, reserved)),
         _ => Some(raw),
     }
 }
 
-/// Rebuilds the appended MBC3 footer, whatever shape the producer actually writes.
+/// Rebuilds the appended MBC3 footer, with a timestamp `width` bytes wide, whatever shape the
+/// producer actually writes.
 #[must_use]
-fn footer_of_mbc3(bundle: &one_saves::Bundle) -> Option<Vec<u8>> {
+fn footer_of_mbc3(bundle: &one_saves::Bundle, width: u8) -> Option<Vec<u8>> {
     let extensions = &bundle.header.extensions;
     if let Some((chip, anchor)) = s3511a_of(bundle) {
         return Some(build_s3511a(&chip.components, chip.control, anchor));
     }
+    // A source that kept no latched copy gets what the specification fills it with: the live
+    // registers.
     let clock = extensions.get::<RtcMbc3>()?;
-    Some(build_mbc3(&clock.live, &clock.latched, clock.written_at, usize::from(clock.timestamp_width)))
+    Some(build_mbc3(&clock.live, &clock.latched_or_live(), clock.taken_at, usize::from(width)))
 }
 
 /// Reads the footer mGBA appends for a GBA cartridge clock.
@@ -589,7 +611,7 @@ pub fn parse_s3511a(footer: &[u8]) -> Option<S3511aClock> {
     let second = from_bcd(components[6])?;
 
     let control = footer[7];
-    let latched_at = i64::from_le_bytes(footer[8..16].try_into().ok()?);
+    let taken_at = i64::from_le_bytes(footer[8..16].try_into().ok()?);
 
     let sane = year <= 99
         && (1..=12).contains(&month)
@@ -598,18 +620,18 @@ pub fn parse_s3511a(footer: &[u8]) -> Option<S3511aClock> {
         && hour <= 23
         && minute <= 59
         && second <= 59
-        && latched_at >= 0;
-    sane.then_some(S3511aClock { components, control, latched_at })
+        && taken_at >= 0;
+    sane.then_some(S3511aClock { components, control, taken_at })
 }
 
 /// Writes the S-3511A footer back out: the latched components, the control register, then the
 /// instant as eight little-endian bytes.
 #[must_use]
-pub fn build_s3511a(components: &[u8; 7], control: u8, latched_at: i64) -> Vec<u8> {
+pub fn build_s3511a(components: &[u8; 7], control: u8, taken_at: i64) -> Vec<u8> {
     let mut footer = Vec::with_capacity(S3511A_LEN);
     footer.extend_from_slice(components);
     footer.push(control);
-    footer.extend_from_slice(&latched_at.to_le_bytes());
+    footer.extend_from_slice(&taken_at.to_le_bytes());
     footer
 }
 
@@ -625,19 +647,22 @@ pub const PACKED_LEN_POCKET: usize = 16;
 /// The reserved region the MiSTer Gameboy core appends: one SD block.
 pub const PACKED_LEN_MISTER: usize = 512;
 
-/// Reads the footer the MiSTer Gameboy core and its openFPGA ports append.
+/// Reads the footer the MiSTer Gameboy and SGB cores and the Gameboy core's openFPGA ports
+/// append.
 ///
-/// One format, two reserved sizes: MiSTer writes a whole 512-byte SD block and the Analogue
-/// Pocket port writes 16 bytes. Both use ten of them, and the ports share `mbc3.v` with the
-/// original, which is why the packing is identical.
+/// One format, two reserved sizes: MiSTer writes a whole 512-byte SD block and budude2's Pocket
+/// port writes 16 bytes. Both use ten of them, and the cores share `mbc3.v`, which is why the
+/// packing is identical. The two sizes are not interchangeable: the Pocket port wraps a block it
+/// is given at sixteen words, and MiSTer reads the footer only from a file whose size has bit 9
+/// set.
 ///
 /// The layout is taken from the cores themselves rather than inferred. Both write five 16-bit
-/// words past the save memory:
+/// little-endian words past the save memory:
 ///
 /// ```text
-/// 0x00 : RTC_timestampOut[15:0]     bytes 0..2   when the save was written
+/// 0x00 : RTC_timestampOut[15:0]     bytes 0..2   the host clock, four bytes wide
 /// 0x01 : RTC_timestampOut[31:16]    bytes 2..4
-/// 0x02 : RTC_savedtimeOut[15:0]     bytes 4..6   the registers, bit-packed
+/// 0x02 : RTC_savedtimeOut[15:0]     bytes 4..6   the live registers, bit-packed
 /// 0x03 : RTC_savedtimeOut[31:16]    bytes 6..8
 /// 0x04 : RTC_savedtimeOut[47:32]    bytes 8..10  always zero; only 29 bits are used
 /// ```
@@ -648,17 +673,28 @@ pub const PACKED_LEN_MISTER: usize = 512;
 /// {rtc_halt, rtc_overflow, rtc_days[9:0], rtc_hours[4:0], rtc_minutes[5:0], rtc_seconds[5:0]}
 /// ```
 ///
-/// Note the day counter is **ten** bits here, not the nine the hardware has, and the overflow
-/// flag is a bit of its own rather than the top of the day register. So a clock read from this
-/// core can hold a day count the appended MBC3 footer cannot, and converting between the two is
-/// lossy past 511 days. The six bytes past the tenth are never written and read back as `0xFF`,
-/// which the cores write explicitly as `16'hFFFF` rather than leaving erased.
+/// The host clock is a counter the core keeps: seeded once, when it loads, from the firmware's
+/// time, and counted up from there, so it is read live when the save is written. MiSTer seeds it
+/// with local standard time counted as though it were UTC. On an MBC3 the counter stands still
+/// while the game has the clock halted.
+///
+/// The day counter has room for **ten** bits here, not the nine the hardware has, and the
+/// overflow flag is a bit of its own rather than the top of the day register. The core never sets
+/// the tenth bit — the days wrap at 511 and set the flag — so only a footer something else wrote
+/// holds one. The bytes past the tenth are never written and read back as `0xFF`, which the cores
+/// write explicitly as `16'hFFFF` rather than leaving erased: 502 of them on MiSTer, six on the
+/// Pocket.
+///
+/// The cores keep a HuC-3 in the same footer, packed its own way, and nothing in the bytes says
+/// which chip wrote them. Bits above the 29th are refused, since the core never sets them and the
+/// footer would not come back as it was, which turns away a HuC-3 that has counted 2048 days. One
+/// that has not counted that far reads as an MBC3 where its minute field allows.
 #[must_use]
 pub fn parse_packed(footer: &[u8]) -> Option<Mbc3Clock> {
     if footer.len() != PACKED_LEN_POCKET && footer.len() != PACKED_LEN_MISTER {
         return None;
     }
-    let written_at = i64::from(u32::from_le_bytes(footer[0..4].try_into().ok()?));
+    let taken_at = i64::from(u32::from_le_bytes(footer[0..4].try_into().ok()?));
     let mut packed = [0u8; 8];
     packed[..6].copy_from_slice(&footer[4..10]);
     let packed = u64::from_le_bytes(packed);
@@ -672,7 +708,7 @@ pub fn parse_packed(footer: &[u8]) -> Option<Mbc3Clock> {
 
     // The core keeps registers rather than a counter, so these are already ranged — but a footer
     // that says 97 minutes past the hour is not this core's output whatever its length.
-    if seconds > 59 || minutes > 59 || hours > 23 || written_at < 0 {
+    if seconds > 59 || minutes > 59 || hours > 23 || packed >> 29 != 0 || taken_at < 0 {
         return None;
     }
 
@@ -683,18 +719,23 @@ pub fn parse_packed(footer: &[u8]) -> Option<Mbc3Clock> {
     if overflow {
         days_high |= 0x80;
     }
-    let live = [seconds, minutes, hours, days & 0xFF, days_high];
+    // The core keeps one copy of the registers, and its timestamp is the first four bytes, as the
+    // registry's entry for every core that writes this says.
     Some(Mbc3Clock {
         seconds,
         minutes,
         hours,
         days_low: days & 0xFF,
         days_high,
-        latched: live,
-        written_at,
-        timestamp_width: 8,
+        latched: None,
+        taken_at,
+        timestamp_width: Some(PACKED_TIMESTAMP_WIDTH),
     })
 }
+
+/// How many bytes the packed footers give the host clock: the MiSTer Game Boy one and the
+/// GBA_MiSTer one alike.
+const PACKED_TIMESTAMP_WIDTH: usize = 4;
 
 /// Writes the footer back out, padded to the reserved size its producer uses.
 #[must_use]
@@ -707,7 +748,7 @@ pub fn build_packed(clock: &Mbc3Clock, reserved: usize) -> Vec<u8> {
         | u64::from(clock.halted()) << 28;
 
     let mut footer = Vec::with_capacity(reserved);
-    footer.extend_from_slice(&u32::try_from(clock.written_at).unwrap_or(0).to_le_bytes());
+    footer.extend_from_slice(&u32::try_from(clock.taken_at).unwrap_or(0).to_le_bytes());
     footer.extend_from_slice(&packed.to_le_bytes()[..6]);
     footer.resize(reserved, 0xFF);
     footer
@@ -722,13 +763,16 @@ pub const GAMBATTE_RTC_LEN: usize = 4;
 /// `now - base`. That is the other operand of a reading, not a reading: on its own it says
 /// nothing about what time the game thinks it is.
 ///
-/// `captured_at` is what supplies the missing half — the instant the file was written, which the
-/// file itself does not record. Pass the file's modification time, or a known instant if you have
-/// a better one. The elapsed time is then turned into the register set an MBC3 would have held at
-/// that moment, so the bundle carries a real reading like every other producer's.
+/// `captured_at` is what supplies the missing half: the moment the counters are taken at, which
+/// is the moment the producer reads them. The cartridge clock follows the host's, so the counters
+/// then are `captured_at - base`, and the bundle carries a reading like every other producer's,
+/// with `captured_at` as its anchor. Pass the current time unless you mean another moment.
 ///
 /// Whatever `captured_at` is, the round trip is exact: writing the sidecar back computes
 /// `captured_at - elapsed`, which returns the original base however the instant was chosen.
+///
+/// The file keeps no latched copy and is no footer, so the clock has neither a latched copy nor a
+/// timestamp width.
 #[must_use]
 pub fn parse_gambatte_sidecar(bytes: &[u8], captured_at: i64) -> Option<Mbc3Clock> {
     if bytes.len() != GAMBATTE_RTC_LEN {
@@ -753,17 +797,15 @@ pub fn parse_gambatte_sidecar(bytes: &[u8], captured_at: i64) -> Option<Mbc3Cloc
         days_high |= 0x80;
     }
 
-    let live = [seconds, minutes, hours, days_low, days_high];
     Some(Mbc3Clock {
         seconds,
         minutes,
         hours,
         days_low,
         days_high,
-        // Nothing was mid-read, so the latched copy is the live one.
-        latched: live,
-        written_at: captured_at,
-        timestamp_width: 8,
+        latched: None,
+        taken_at: captured_at,
+        timestamp_width: None,
     })
 }
 
@@ -791,7 +833,7 @@ pub fn sidecar_of(bundle: &one_saves::Bundle) -> Option<Vec<u8>> {
     if let Some((chip, anchor)) = s3511a_of(bundle) {
         return Some(build_mincer_sidecar(&chip.components, chip.control, anchor));
     }
-    let footer = footer_of_mbc3(bundle)?;
+    let footer = footer_of_mbc3(bundle, RtcMbc3::DEFAULT_TIMESTAMP_WIDTH)?;
     // `footer_of` rebuilds the appended form; reading it back gives the registers to work from.
     let clock = parse_mbc3(&footer)?;
     Some(build_gambatte_sidecar(&clock))
@@ -804,15 +846,16 @@ pub fn build_gambatte_sidecar(clock: &Mbc3Clock) -> Vec<u8> {
         + i64::from(clock.hours) * 3_600
         + i64::from(clock.minutes) * 60
         + i64::from(clock.seconds);
-    let base = clock.written_at.saturating_sub(elapsed);
+    let base = clock.taken_at.saturating_sub(elapsed);
     u32::try_from(base).unwrap_or(0).to_be_bytes().to_vec()
 }
 
-/// The control register the MiSTer GBA core and its Pocket port hold after loading a clock:
-/// 24-hour mode.
+/// The control register the MiSTer GBA core and its Pocket port start with: 24-hour mode.
 ///
-/// Neither core's record has room for the register, so neither stores it, and both reset it to
-/// this on every load. It is what the chip holds whenever a game first reads a restored clock.
+/// Neither core's record has room for the register, so neither stores it. It is the value the
+/// register powers up with, and loading a clock leaves it alone, so it is what a game first reads
+/// from a core just started. A game that writes another keeps it on MiSTer until the core itself
+/// is reloaded, but no save says so. Neither core counts hours in 12-hour mode in any case.
 const MISTER_GBA_CONTROL: u8 = 0x40;
 
 /// Unpacks the calendar the MiSTer GBA core keeps beside a clock, `RTC_savedtimeOut`: the
@@ -921,7 +964,7 @@ pub fn parse_mincer_sidecar(bytes: &[u8]) -> Option<S3511aClock> {
     let mut packed = [0u8; 8];
     packed[..6].copy_from_slice(&bytes[4..10]);
     let components = unpack_calendar(u64::from_le_bytes(packed))?;
-    Some(S3511aClock { components, control: MISTER_GBA_CONTROL, latched_at: i64::from(timestamp) })
+    Some(S3511aClock { components, control: MISTER_GBA_CONTROL, taken_at: i64::from(timestamp) })
 }
 
 /// Writes mincer_ray's sidecar back out, from the chip's components and the instant they show.
@@ -931,9 +974,9 @@ pub fn parse_mincer_sidecar(bytes: &[u8]) -> Option<S3511aClock> {
 /// outside the record's 32 bits is written as zero, which the core refuses and replaces with the
 /// Pocket's own clock rather than misreading.
 #[must_use]
-pub fn build_mincer_sidecar(components: &[u8; 7], control: u8, latched_at: i64) -> Vec<u8> {
+pub fn build_mincer_sidecar(components: &[u8; 7], control: u8, taken_at: i64) -> Vec<u8> {
     let mut record = Vec::with_capacity(MINCER_RTC_LEN);
-    record.extend_from_slice(&u32::try_from(latched_at).unwrap_or(0).to_le_bytes());
+    record.extend_from_slice(&u32::try_from(taken_at).unwrap_or(0).to_le_bytes());
     record.extend_from_slice(&pack_calendar(*components, control).to_le_bytes()[..6]);
     record.resize(MINCER_RTC_LEN, 0);
     record
@@ -987,8 +1030,8 @@ pub fn parse_s3511a_packed(footer: &[u8]) -> Option<S3511aClock> {
         return None;
     }
     let components = unpack_calendar(u64::try_from(value & ((1 << 42) - 1)).ok()?)?;
-    let latched_at = i64::try_from(value >> 42).ok()?;
-    Some(S3511aClock { components, control: MISTER_GBA_CONTROL, latched_at })
+    let taken_at = i64::try_from(value >> 42).ok()?;
+    Some(S3511aClock { components, control: MISTER_GBA_CONTROL, taken_at })
 }
 
 /// Writes GBA_MiSTer's block back out: the record, repeated to fill the reserved size.
@@ -997,8 +1040,8 @@ pub fn parse_s3511a_packed(footer: &[u8]) -> Option<S3511aClock> {
 /// calendar is the same. An instant outside the record's 32 bits is written as zero, which the
 /// core does not check and runs the clock forward from.
 #[must_use]
-pub fn build_s3511a_packed(components: &[u8; 7], control: u8, latched_at: i64, reserved: usize) -> Vec<u8> {
-    let timestamp = u32::try_from(latched_at).unwrap_or(0);
+pub fn build_s3511a_packed(components: &[u8; 7], control: u8, taken_at: i64, reserved: usize) -> Vec<u8> {
+    let timestamp = u32::try_from(taken_at).unwrap_or(0);
     let value = u128::from(pack_calendar(*components, control)) | u128::from(timestamp) << 42;
     let mut record = Vec::with_capacity(MISTER_GBA_RECORD_LEN);
     record.extend_from_slice(&MISTER_GBA_MAGIC);
@@ -1009,17 +1052,17 @@ pub fn build_s3511a_packed(components: &[u8; 7], control: u8, latched_at: i64, r
 
 /// Writes the MBC3 footer back out: ten little-endian registers, then the timestamp.
 #[must_use]
-pub fn build_mbc3(live: &[u32; 5], latched: &[u32; 5], written_at: i64, timestamp_width: usize) -> Vec<u8> {
+pub fn build_mbc3(live: &[u32; 5], latched: &[u32; 5], taken_at: i64, timestamp_width: usize) -> Vec<u8> {
     let mut footer = Vec::with_capacity(40 + timestamp_width);
     for value in live.iter().chain(latched) {
         footer.extend_from_slice(&value.to_le_bytes());
     }
     if timestamp_width == 8 {
-        footer.extend_from_slice(&written_at.to_le_bytes());
+        footer.extend_from_slice(&taken_at.to_le_bytes());
     } else {
         // The 32-bit form some emulators still write. A negative or out-of-range instant never
         // reaches here: `parse_mbc3` refuses one.
-        footer.extend_from_slice(&u32::try_from(written_at).unwrap_or(0).to_le_bytes());
+        footer.extend_from_slice(&u32::try_from(taken_at).unwrap_or(0).to_le_bytes());
     }
     footer
 }
@@ -1030,7 +1073,7 @@ mod tests {
     use one_saves::dcbor::CBOR;
 
     /// Builds the footer an emulator writes for a Game Boy cartridge with a clock.
-    fn mbc3_footer(seconds: u32, minutes: u32, hours: u32, days: u32, written_at: i64) -> Vec<u8> {
+    fn mbc3_footer(seconds: u32, minutes: u32, hours: u32, days: u32, taken_at: i64) -> Vec<u8> {
         let mut footer = Vec::with_capacity(MBC3_LEN_64);
         for value in [seconds, minutes, hours, days & 0xFF, (days >> 8) & 1] {
             footer.extend_from_slice(&value.to_le_bytes());
@@ -1039,13 +1082,13 @@ mod tests {
         for value in [seconds, minutes, hours, days & 0xFF, (days >> 8) & 1] {
             footer.extend_from_slice(&value.to_le_bytes());
         }
-        footer.extend_from_slice(&written_at.to_le_bytes());
+        footer.extend_from_slice(&taken_at.to_le_bytes());
         footer
     }
 
-    fn crystal_save(written_at: i64) -> Vec<u8> {
+    fn crystal_save(taken_at: i64) -> Vec<u8> {
         let mut save = vec![0x11u8; 32768];
-        save.extend_from_slice(&mbc3_footer(30, 45, 13, 300, written_at));
+        save.extend_from_slice(&mbc3_footer(30, 45, 13, 300, taken_at));
         save
     }
 
@@ -1055,7 +1098,7 @@ mod tests {
     const SAMEBOY_FOOTER: [u8; 48] = [
         0x0d, 0, 0, 0, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // live
         0x0d, 0, 0, 0, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // latched
-        0x62, 0xba, 0x7c, 0x6a, 0, 0, 0, 0, // written_at, 64-bit
+        0x62, 0xba, 0x7c, 0x6a, 0, 0, 0, 0, // taken_at, 64-bit
     ];
 
     #[test]
@@ -1065,11 +1108,12 @@ mod tests {
         assert_eq!(clock.days(), 0);
         assert!(!clock.halted() && !clock.overflowed());
         // SameBoy writes the 64-bit form, so the footer is 48 bytes rather than 44.
-        assert_eq!(clock.timestamp_width, 8);
-        // The instant agrees with when the emulator wrote the file, to the second.
-        assert_eq!(clock.written_at, 1_786_559_074);
+        assert_eq!(clock.timestamp_width, Some(8));
+        // SameBoy takes the anchor when it writes the save, and it agrees with the file to the
+        // second.
+        assert_eq!(clock.taken_at, 1_786_559_074);
         // The latched copy is the live one here, which is what a game that is not mid-read leaves.
-        assert_eq!(clock.latched, clock.live());
+        assert_eq!(clock.latched, Some(clock.live()));
     }
 
     #[test]
@@ -1081,7 +1125,12 @@ mod tests {
         assert_eq!(split.sram.len(), 32_768);
 
         let Clock::Mbc3(clock) = split.clock else { panic!("wrong chip") };
-        let rebuilt = build_mbc3(&clock.live(), &clock.latched, clock.written_at, clock.timestamp_width);
+        let rebuilt = build_mbc3(
+            &clock.live(),
+            &clock.latched.unwrap(),
+            clock.taken_at,
+            clock.timestamp_width.unwrap(),
+        );
         assert_eq!(rebuilt, SAMEBOY_FOOTER, "regenerated byte for byte");
     }
 
@@ -1127,7 +1176,7 @@ mod tests {
         footer[40..44].copy_from_slice(&1_600_000_000u32.to_le_bytes());
 
         let clock = parse_mbc3(&footer).expect("44 bytes is the 32-bit timestamp form");
-        assert_eq!(clock.written_at, 1_600_000_000);
+        assert_eq!(clock.taken_at, 1_600_000_000);
     }
 
     #[test]
@@ -1179,8 +1228,8 @@ mod tests {
 
         // Read out as fields, not kept as a blob, so a consumer can see what time it is.
         assert_eq!(native.live, [30, 45, 13, 44, 1]);
-        assert_eq!(native.latched, [30, 45, 13, 44, 1]);
-        assert_eq!(native.timestamp_width, 8);
+        assert_eq!(native.latched, Some([30, 45, 13, 44, 1]));
+        assert_eq!(native.timestamp_width, Some(8));
         // Keys 0 to 3, exactly as the published schema numbers them, and no layout discriminator:
         // the key name says which chip this is.
         let map = extensions.cbor(&RtcMbc3::KEY).unwrap();
@@ -1199,7 +1248,12 @@ mod tests {
             }
 
             let clock = parse_mbc3(&original).expect("parses");
-            let rebuilt = build_mbc3(&clock.live(), &clock.latched, clock.written_at, clock.timestamp_width);
+            let rebuilt = build_mbc3(
+                &clock.live(),
+                &clock.latched.unwrap(),
+                clock.taken_at,
+                clock.timestamp_width.unwrap(),
+            );
             assert_eq!(rebuilt, original, "{width}-byte footer should rebuild exactly");
         }
     }
@@ -1214,12 +1268,12 @@ mod tests {
             hours: 3,
             days_low: 4,
             days_high: 0,
-            latched: [1, 2, 3, 4, 0],
-            written_at: 1_600_000_000,
-            timestamp_width: 4,
+            latched: Some([1, 2, 3, 4, 0]),
+            taken_at: 1_600_000_000,
+            timestamp_width: Some(4),
         };
-        assert_eq!(build_mbc3(&clock.live(), &clock.latched, clock.written_at, 4).len(), MBC3_LEN_32);
-        assert_eq!(build_mbc3(&clock.live(), &clock.latched, clock.written_at, 8).len(), MBC3_LEN_64);
+        assert_eq!(build_mbc3(&clock.live(), &clock.live(), clock.taken_at, 4).len(), MBC3_LEN_32);
+        assert_eq!(build_mbc3(&clock.live(), &clock.live(), clock.taken_at, 8).len(), MBC3_LEN_64);
     }
 
     /// The trailing sixteen bytes of a real Pokémon Ruby save written by mGBA, whose in-game
@@ -1244,7 +1298,7 @@ mod tests {
         assert_eq!(clock.control, 0x40);
         assert!(clock.hour24());
         // The latch instant agrees with the components rather than merely being plausible.
-        assert_eq!(clock.latched_at, 1_786_556_383);
+        assert_eq!(clock.taken_at, 1_786_556_383);
     }
 
     #[test]
@@ -1263,13 +1317,16 @@ mod tests {
         let extensions = split.extensions();
         assert!(extensions.get::<Rtc>().is_some());
         assert_eq!(extensions.get::<RtcS3511a>().expect("chip state").control, 0x40);
-        // The anchor rides in the chip key as key 2, since it is not the reading.
+        // The anchor rides in the chip key as key 2, since it is not the reading. Key 3 is null:
+        // mGBA's footer has no room for the alarm, so a game that set one lost it.
         let native = extensions.cbor(&RtcS3511a::KEY).unwrap();
-        assert_eq!(native.as_map().unwrap().len(), 3);
-        assert_eq!(extensions.get::<RtcS3511a>().unwrap().taken_at, Some(1_786_556_383));
+        assert_eq!(native.as_map().unwrap().len(), 4);
+        let chip = extensions.get::<RtcS3511a>().unwrap();
+        assert_eq!(chip.taken_at, Some(1_786_556_383));
+        assert_eq!(chip.alarm, S3511aAlarm::Unknown);
 
         let Clock::S3511a(clock) = split.clock else { panic!("wrong chip") };
-        assert_eq!(build_s3511a(&clock.components, clock.control, clock.latched_at), RUBY_FOOTER);
+        assert_eq!(build_s3511a(&clock.components, clock.control, clock.taken_at), RUBY_FOOTER);
     }
 
     #[test]
@@ -1298,8 +1355,13 @@ mod tests {
         assert_eq!(clock.days(), 0);
         // The reading is what the cartridge clock said, not the origin it is derived from.
         assert_eq!(clock.reading().reading, 294);
-        assert_eq!(clock.written_at, GAMBATTE_WRITTEN_AT);
-        assert_eq!(clock.latched, clock.live(), "nothing was mid-read");
+        assert_eq!(clock.taken_at, GAMBATTE_WRITTEN_AT);
+        // The file keeps one copy of the clock and is no footer, and the chip key says both.
+        assert_eq!((clock.latched, clock.timestamp_width), (None, None));
+        let chip = CBOR::from(RtcMbc3::from(clock));
+        let map = chip.as_map().unwrap();
+        assert!(map.get::<u64, CBOR>(1).unwrap().is_null(), "the latched copy is null");
+        assert!(map.get::<u64, CBOR>(3).is_none(), "and the width is absent");
     }
 
     #[test]
@@ -1340,8 +1402,8 @@ mod tests {
         assert_eq!(clock.control, 0x40);
         // The calendar is the reading and the timestamp the anchor, so no instant needs supplying.
         assert_eq!(clock.reading().expect("a date").reading, 1_786_531_183);
-        assert_eq!(clock.latched_at, 1_786_556_383);
-        assert_eq!(build_mincer_sidecar(&clock.components, clock.control, clock.latched_at), MINCER_SIDECAR);
+        assert_eq!(clock.taken_at, 1_786_556_383);
+        assert_eq!(build_mincer_sidecar(&clock.components, clock.control, clock.taken_at), MINCER_SIDECAR);
     }
 
     #[test]
@@ -1432,9 +1494,9 @@ mod tests {
         assert_eq!(clock.components, RUBY_FOOTER[..7]);
         assert_eq!(clock.control, 0x40);
         assert_eq!(clock.reading().expect("a date").reading, 1_786_531_183);
-        assert_eq!(clock.latched_at, 1_786_556_383);
+        assert_eq!(clock.taken_at, 1_786_556_383);
         assert_eq!(
-            build_s3511a_packed(&clock.components, clock.control, clock.latched_at, PACKED_LEN_MISTER),
+            build_s3511a_packed(&clock.components, clock.control, clock.taken_at, PACKED_LEN_MISTER),
             mister_gba_block()
         );
     }
@@ -1519,7 +1581,7 @@ mod tests {
         let clock = S3511aClock {
             components: [0x10, 0x01, 0x01, 0x00, 0x00, 0x08, 0x47],
             control: 0x40,
-            latched_at: 1_792_576_838,
+            taken_at: 1_792_576_838,
         };
         assert_eq!(clock.reading().expect("a date").reading, 1_262_304_527);
         // In 12-hour mode the PM flag is what puts the hour after noon.
@@ -1540,9 +1602,10 @@ mod tests {
     }
 
     #[test]
-    fn a_bundle_from_before_the_anchor_had_a_key_still_rebuilds() {
-        // One-saves 0.4.0 wrote the anchor as the reading and left key 2 out. Its bundles still
-        // hand mGBA back the footer it wrote.
+    fn a_chip_without_an_anchor_resumes_from_the_moment_it_is_rebuilt() {
+        // A producer that keeps no anchor leaves key 2 out, as one-saves 0.4.0 did. The chip then
+        // resumes from its components with no time passed, which is the moment of rebuilding.
+        // The reading is not the anchor, and neither is `created_at`, however close either is.
         use one_saves::{Header, Name, Part, Source};
         let mut extensions = one_saves::Extensions::new();
         extensions.insert(Rtc::new(1_786_556_383));
@@ -1550,12 +1613,19 @@ mod tests {
             components: RUBY_FOOTER[..7].try_into().unwrap(),
             control: 0x40,
             taken_at: None,
+            alarm: S3511aAlarm::NeverSet,
         });
         let header = Header::default()
             .source(Source::default().core(Name::parse("mgba").unwrap()))
-            .extensions(extensions);
+            .extensions(extensions)
+            .created_at(1_786_556_383);
         let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
-        assert_eq!(footer_of(&bundle).as_deref(), Some(&RUBY_FOOTER[..]));
+
+        let before = now();
+        let footer = footer_of(&bundle).expect("a footer");
+        let anchor = i64::from_le_bytes(footer[8..16].try_into().unwrap());
+        assert_eq!(footer[..8], RUBY_FOOTER[..8], "the components and the control, as they were");
+        assert!((before..=now()).contains(&anchor), "anchored at {anchor}, not when the rebuild ran");
     }
 
     #[test]
@@ -1584,7 +1654,9 @@ mod tests {
         assert_eq!((first.hours, first.minutes, first.seconds), (19, 49, 7));
         assert_eq!(first.days(), 2);
         assert!(!first.halted() && !first.overflowed());
-        assert_eq!(first.written_at, 1_786_532_469);
+        assert_eq!(first.taken_at, 1_786_532_469);
+        // The core keeps one copy of the registers, behind a timestamp four bytes wide.
+        assert_eq!((first.latched, first.timestamp_width), (None, Some(4)));
 
         let second = parse_packed(&POCKET_SECOND).expect("an MBC3 clock");
         assert_eq!((second.hours, second.minutes, second.seconds), (20, 33, 40));
@@ -1603,7 +1675,7 @@ mod tests {
                 + i64::from(c.minutes) * 60
                 + i64::from(c.seconds)
         };
-        assert_eq!(b.written_at - a.written_at, 2673);
+        assert_eq!(b.taken_at - a.taken_at, 2673);
         assert_eq!(elapsed(&b) - elapsed(&a), 2673);
         // So the reading moves at the rate a clock does. Adding the anchor to the counters, which
         // is what this crate used to write, moved it 5346 s between these two saves.
@@ -1647,7 +1719,7 @@ mod tests {
         let clock = parse_packed(&mister_footer()).expect("an MBC3 clock");
         assert_eq!((clock.hours, clock.minutes, clock.seconds), (0, 2, 17));
         assert_eq!(clock.days(), 0);
-        assert_eq!(clock.written_at, 1_786_533_688);
+        assert_eq!(clock.taken_at, 1_786_533_688);
         // One format, two reserved sizes: the ten written bytes are laid out identically.
         assert_eq!(build_packed(&clock, PACKED_LEN_MISTER), mister_footer());
         assert_eq!(&build_packed(&clock, PACKED_LEN_POCKET)[..10], &mister_footer()[..10]);
@@ -1676,8 +1748,8 @@ mod tests {
         for (core, want) in [
             ("gameboy-mister", PACKED_LEN_MISTER),
             ("sgb-mister", PACKED_LEN_MISTER),
+            ("budude2-gb", PACKED_LEN_POCKET),
             ("budude2-gbc", PACKED_LEN_POCKET),
-            ("spiritualized-gb", PACKED_LEN_POCKET),
         ] {
             let header = Header::default()
                 .source(Source::default().core(Name::parse(core).unwrap()))
@@ -1686,6 +1758,27 @@ mod tests {
             assert_eq!(form_of(&bundle), ClockForm::Packed(want), "{core}");
             assert_eq!(footer_of(&bundle).map(|f| f.len()), Some(want), "{core}");
         }
+    }
+
+    #[test]
+    fn every_packed_layout_gives_the_host_clock_the_width_read_here() {
+        // The registry records the width for each core, read from its source; this module reads
+        // and writes the packed footers at one width. The two have to agree, or key 3 would say
+        // one thing about a footer and the core's own entry another.
+        for core in one_saves_registry::cores() {
+            if let Some(ClockLayout::Packed { timestamp_width, .. }) = core.clock {
+                assert_eq!(usize::from(timestamp_width), PACKED_TIMESTAMP_WIDTH, "{}", core.slug);
+            }
+        }
+    }
+
+    #[test]
+    fn bits_the_core_never_sets_are_not_read_as_an_mbc3() {
+        // A HuC-3 that has counted 2048 days sets bit 29, which `mbc3.v` never does. Splitting
+        // it would drop the bit on the way back, so the footer stays in the save.
+        let mut footer = POCKET_FIRST;
+        footer[7] |= 0x20;
+        assert_eq!(parse_packed(&footer), None);
     }
 
     #[test]
@@ -1704,9 +1797,10 @@ mod tests {
     fn the_producer_decides_which_shape_is_written_back() {
         // Four producers, one clock, four encodings. The bundle records the clock; `source.core`
         // is what says which shape to put it back in, so a round trip returns the file the
-        // emulator would have written rather than some other emulator's idea of it.
+        // emulator would have written rather than some other emulator's idea of it. The width is
+        // the one SameBoy and mGBA give the timestamp, which the other two forms have no use for.
         use one_saves::{Header, Name, Part, Source};
-        let clock = parse_packed(&POCKET_FIRST).expect("a clock");
+        let clock = Mbc3Clock { timestamp_width: Some(8), ..parse_packed(&POCKET_FIRST).expect("a clock") };
         let split = Split {
             sram: Vec::new(),
             footer: Vec::new(),
@@ -1717,8 +1811,8 @@ mod tests {
         for (core, want) in [
             ("budude2-gbc", ClockForm::Packed(PACKED_LEN_POCKET)),
             ("gambatte", ClockForm::Sidecar),
-            ("sameboy", ClockForm::Mbc3Appended),
-            ("mgba", ClockForm::Mbc3Appended),
+            ("sameboy", ClockForm::Mbc3Appended(8)),
+            ("mgba", ClockForm::Mbc3Appended(8)),
         ] {
             let header = Header::default()
                 .source(Source::default().core(Name::parse(core).unwrap()))
@@ -1741,10 +1835,42 @@ mod tests {
     }
 
     #[test]
+    fn a_clock_written_for_another_core_takes_that_cores_width() {
+        // The Pocket's timestamp is four bytes in a layout of its own. Restored for mGBA, which
+        // appends, the footer is the one mGBA writes rather than one sized by the Pocket's.
+        use one_saves::{Header, Name, Part, Source};
+        use one_saves_registry::cores;
+        let clock = parse_packed(&POCKET_FIRST).expect("a clock");
+        let split = Split {
+            sram: Vec::new(),
+            footer: Vec::new(),
+            reading: Some(clock.reading()),
+            clock: Clock::Mbc3(clock),
+        };
+        let header = Header::default()
+            .source(Source::default().core(Name::parse("budude2-gbc").unwrap()))
+            .extensions(split.extensions());
+        let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
+        assert_eq!(footer_of(&bundle).as_deref(), Some(&POCKET_FIRST[..]));
+        let form = form_for(&bundle, cores::MGBA.clock);
+        assert_eq!(form, ClockForm::Mbc3Appended(8));
+        let appended = footer_of_form(&bundle, form).expect("a footer");
+        assert_eq!(appended.len(), MBC3_LEN_64);
+        // A core nobody has recorded gets the width the clock's own footer had.
+        assert_eq!(form_for(&bundle, None), ClockForm::Mbc3Appended(4));
+        assert_eq!(form_for(&bundle, cores::GAMEBOY_MISTER.clock), ClockForm::Packed(PACKED_LEN_MISTER));
+        assert_eq!(
+            parse_mbc3(&appended).map(|c| (c.live(), c.taken_at)),
+            Some((clock.live(), clock.taken_at))
+        );
+    }
+
+    #[test]
     fn the_core_picks_the_layout_and_the_app_around_it_does_not() {
         // RetroArch writes whatever its core writes, so the same app lays a clock down two ways.
         // And an `app` of `gambatte` is a 0.3 spelling that now names an app nobody listed: read
-        // as written, it says nothing about a core, so it gets the common form.
+        // as written, it says nothing about a core, so it gets the common form. An appended
+        // footer goes back at the width key 3 says the clock's own had.
         use one_saves::{Header, Name, Part, Source};
         let clock = parse_packed(&POCKET_FIRST).expect("a clock");
         let split = Split {
@@ -1756,8 +1882,8 @@ mod tests {
         let name = |text| Name::parse(text).ok();
         for (source, want) in [
             (Source::default().app(name("retroarch")).core(name("gambatte")), ClockForm::Sidecar),
-            (Source::default().app(name("retroarch")).core(name("sameboy")), ClockForm::Mbc3Appended),
-            (Source::default().app(name("gambatte")), ClockForm::Mbc3Appended),
+            (Source::default().app(name("retroarch")).core(name("sameboy")), ClockForm::Mbc3Appended(4)),
+            (Source::default().app(name("gambatte")), ClockForm::Mbc3Appended(4)),
         ] {
             let header = Header::default().source(source.clone()).extensions(split.extensions());
             let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
@@ -1783,14 +1909,17 @@ mod tests {
         for (core, want) in [
             // An openFPGA Game Boy port whose slug does not end in `-gb`. The suffix rule read
             // this as an appended footer and wrote 48 bytes where the core wants 16.
-            ("spiritualized-supergb", ClockForm::Packed(PACKED_LEN_POCKET)),
+            ("budude2-gbc", ClockForm::Packed(PACKED_LEN_POCKET)),
+            // One whose slug does, and whose layout nobody has read: no source is published, so
+            // the registry records nothing and the common form is the guess.
+            ("spiritualized-supergb", ClockForm::Mbc3Appended(4)),
             // MiSTer cores for systems with no MBC3 anywhere near them. The suffix rule gave each
             // of these the Game Boy core's 512-byte block.
-            ("psx-mister", ClockForm::Mbc3Appended),
-            ("n64-mister", ClockForm::Mbc3Appended),
-            ("saturn-mister", ClockForm::Mbc3Appended),
-            // A producer the registry does not list still gets the common form.
-            ("pcsx2", ClockForm::Mbc3Appended),
+            ("psx-mister", ClockForm::Mbc3Appended(4)),
+            ("n64-mister", ClockForm::Mbc3Appended(4)),
+            ("saturn-mister", ClockForm::Mbc3Appended(4)),
+            // A producer the registry records no clock for still gets the common form.
+            ("pcsx2", ClockForm::Mbc3Appended(4)),
         ] {
             let header = Header::default()
                 .source(Source::default().core(Name::parse(core).unwrap()))

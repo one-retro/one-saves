@@ -95,15 +95,14 @@ struct Convert {
     /// somewhere else, or to supply one that has been moved away from its save.
     #[arg(long, value_name = "FILE")]
     rtc_file: Option<PathBuf>,
-    /// When the sidecar clock was written, in epoch seconds.
+    /// The moment to read the sidecar clock at, in epoch seconds. Defaults to now.
     ///
-    /// Gambatte's sidecar stores the instant the clock counts *from*, not what it reads, so
-    /// turning one into the other needs to know when it was taken — and the file does not say.
-    /// Without this the file's modification time is used, which is right only for a file an
-    /// emulator wrote in place: copying, unzipping or checking it out of git all reset it.
+    /// Gambatte's sidecar stores the instant the clock counts *from*, not what it reads. Its
+    /// cartridge clock follows the host's, so the counters at any moment are the time since then,
+    /// and the bundle carries them as they stand at this moment, with this moment as the anchor.
     ///
-    /// The origin round-trips either way; it is the reading that depends on getting this right.
-    /// mincer_ray's sidecar records its own instant, and takes none.
+    /// The origin round-trips whatever this is; only the reading moves with it. mincer_ray's
+    /// sidecar records its own instant, and takes none.
     #[arg(long, value_name = "EPOCH")]
     rtc_captured_at: Option<i64>,
     /// Keep an appended real-time-clock footer inside the save rather than splitting it out.
@@ -206,7 +205,7 @@ fn unwrap_archive(
     Ok((unpacked.bytes, unpacked.extension))
 }
 
-/// The clock kept beside a save, and the instant it was read when the file needs one.
+/// The clock kept beside a save, and the instant it was read at when the file needs one.
 ///
 /// A clock in its own file has to be found, since the save does not mention it. Gambatte's records
 /// an origin rather than a reading, so an instant is what turns one into the other; mincer_ray's
@@ -236,18 +235,17 @@ fn sidecar_clock(args: &Convert) -> Result<Option<Sidecar>, Box<dyn std::error::
         }
         return Ok(Some((path, bytes, None)));
     }
-    // Falling back to the modification time is a guess, and one that gets worse the further the
-    // file has travelled: copying, unzipping and checking out all reset it. It is only the right
-    // answer for a file the emulator wrote in place.
+    // The counters are taken as they stand when they are read, which is now. The file's
+    // modification time would be a guess at an earlier moment, and one that copying, unzipping or
+    // checking out resets.
     let captured_at = if let Some(stated) = args.rtc_captured_at {
         stated
     } else {
-        let mtime = std::fs::metadata(&path)?
-            .modified()?
+        let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| format!("{} has a modification time before 1970: {e}", path.display()))?
+            .map_err(|e| format!("the system clock is before 1970: {e}"))?
             .as_secs();
-        i64::try_from(mtime)?
+        i64::try_from(now)?
     };
     Ok(Some((path, bytes, Some(captured_at))))
 }
@@ -342,7 +340,7 @@ fn convert(args: Convert) -> Fallible {
         } else if args.rtc_captured_at.is_some() {
             "the instant given".to_owned()
         } else {
-            "its modification time (pass --rtc-captured-at if that is not when it was written)".to_owned()
+            "the time it was read".to_owned()
         };
         println!("read the clock from {}, using {how}", path.display());
     } else if one_saves_convert::rtc::footer_of(&bundle).is_some() {

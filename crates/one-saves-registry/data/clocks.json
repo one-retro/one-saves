@@ -3,56 +3,79 @@
     "How each core lays out real-time-clock state. Unlike the other files here this one is NOT",
     "synced from the registry pages: the specifications do not describe clock layouts. These come",
     "from files real cores wrote, or the core's own source where no file has been sampled, cross-checked",
-    "against one-saves-convert's rtc module. A core absent from this file records no clock convention.",
-    "Layouts: appended | packed | sidecar. Which chip the state belongs to follows from the system."
+    "against one-saves-convert's rtc module. A core absent from this file records no clock convention,",
+    "which is also what a core gets whose source is unpublished and whose files nobody has sampled.",
+    "Layouts: appended | packed | sidecar. A footer (appended or packed) states timestamp_width, the",
+    "bytes its host clock takes; a sidecar has none. Which chip the state belongs to is the save's own",
+    "business: mostly the system, but the MiSTer Game Boy cores also keep a HuC-3 in the same footer,",
+    "packed differently, so for those it is the cartridge type.",
+    "Each entry's `evidence` says where its facts were read: a file, or the source at a commit."
   ],
   "cores": {
+    "agg23-wonderswan": {
+      "layout": "packed",
+      "reserved": 12,
+      "timestamp_width": 4,
+      "evidence": "agg23/openfpga-wonderswan 073213a: one GBA_MiSTer-style record cut to 12 bytes, appended to every save (src/fpga/core/wonderswan.sv:621-622, 681-683; core_top.v:693-694)"
+    },
     "budude2-gb": {
       "layout": "packed",
-      "reserved": 16
+      "reserved": 16,
+      "timestamp_width": 4,
+      "evidence": "budude2/openfpga-GBC 864253c, shared with budude2-gbc (src/gb/save_handler.sv:103-107, 137-150)"
     },
     "budude2-gbc": {
       "layout": "packed",
-      "reserved": 16
+      "reserved": 16,
+      "timestamp_width": 4,
+      "evidence": "two real Pokemon Crystal saves under data/saves/analogue-pocket/budude2-gbc; budude2/openfpga-GBC 864253c (src/gb/save_handler.sv:103-107, 137-150)"
     },
     "gambatte": {
-      "layout": "sidecar"
+      "layout": "sidecar",
+      "evidence": "a real Pokemon Crystal .rtc under data/saves/openemu/gambatte"
     },
     "gameboy-mister": {
       "layout": "packed",
-      "reserved": 512
+      "reserved": 512,
+      "timestamp_width": 4,
+      "evidence": "a real Pokemon Gold save under data/saves/mister/gameboy-mister; MiSTer-devel/Gameboy_MiSTer f6796f3 (Gameboy.sv:1086-1113, rtl/mappers/mbc3.v:187-190, huc3.v:166-167)"
     },
     "gba-mister": {
       "layout": "packed",
-      "reserved": 512
+      "reserved": 512,
+      "timestamp_width": 4,
+      "evidence": "a real save under data/saves/mister/gba-mister; MiSTer-devel/GBA_MiSTer 93790a0 (GBA.sv:882-886, 1241-1274; rtl/gba_gpioRTCSolarGyro.vhd:400-421)"
     },
     "mgba": {
-      "layout": "appended"
+      "layout": "appended",
+      "timestamp_width": 8,
+      "evidence": "a real Pokemon Ruby footer in one-saves-convert's rtc tests; its source types the Game Boy footer's timestamp uint64_t and stores it with STORE_64LE"
     },
     "mincer-ray-gba": {
-      "layout": "sidecar"
+      "layout": "sidecar",
+      "evidence": "a real Pokemon Emerald .rtc under data/saves/analogue-pocket/mincer-ray-gba; mincer-ray/openfpga-GBA 8bd32b5 (rtc_export.sv:77-86)"
     },
     "sameboy": {
-      "layout": "appended"
+      "layout": "appended",
+      "timestamp_width": 8,
+      "evidence": "a real Pokemon Crystal save under data/saves/retroarch/sameboy"
     },
     "sgb-mister": {
       "layout": "packed",
-      "reserved": 512
-    },
-    "spiritualized-gb": {
-      "layout": "packed",
-      "reserved": 16
-    },
-    "spiritualized-gbc": {
-      "layout": "packed",
-      "reserved": 16
-    },
-    "spiritualized-supergb": {
-      "layout": "packed",
-      "reserved": 16
+      "reserved": 512,
+      "timestamp_width": 4,
+      "evidence": "MiSTer-devel/SGB_MiSTer 128954b: the Gameboy core's mappers and footer, unchanged (SGB.sv:909-920, 985-995)"
     },
     "vba-m": {
-      "layout": "appended"
+      "layout": "appended",
+      "timestamp_width": 8,
+      "evidence": "its source, which unions the timestamp with a uint64_t so 32- and 64-bit builds agree; older 32-bit builds wrote 4, which key 3 of x.1sav.rtc.mbc3 keeps per file"
+    },
+    "wonderswan-mister": {
+      "layout": "packed",
+      "reserved": 512,
+      "timestamp_width": 4,
+      "evidence": "MiSTer-devel/WonderSwan_MiSTer c964245: GBA_MiSTer's block, appended to every save (WonderSwan.sv:970, 1063-1110; rtl/rtc.vhd:92-131)"
     }
   }
 }

@@ -236,7 +236,7 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["wonderswan", "wonderswan-color"],
         aliases: &[],
-        clock: None,
+        clock: Some(ClockLayout::Packed { reserved: 12, timestamp_width: 4 }),
     };
     /// ARMSX2 — ps2.
     pub const ARMSX2: Core = Core {
@@ -515,7 +515,7 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gb"],
         aliases: &["budude2.GB_Analogizer"],
-        clock: Some(ClockLayout::Packed { reserved: 16 }),
+        clock: Some(ClockLayout::Packed { reserved: 16, timestamp_width: 4 }),
     };
     /// budude2.GBC — gbc.
     pub const BUDUDE2_GBC: Core = Core {
@@ -524,7 +524,7 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gbc"],
         aliases: &["budude2.GBC_Analogizer"],
-        clock: Some(ClockLayout::Packed { reserved: 16 }),
+        clock: Some(ClockLayout::Packed { reserved: 16, timestamp_width: 4 }),
     };
     /// budude2.Lynx — atari-lynx.
     pub const BUDUDE2_LYNX: Core = Core {
@@ -857,7 +857,7 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["gb", "gbc"],
         aliases: &["GAMEBOY", "GAMEBOY2P", "GBC"],
-        clock: Some(ClockLayout::Packed { reserved: 512 }),
+        clock: Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
     };
     /// GBA_MiSTer — gba.
     pub const GBA_MISTER: Core = Core {
@@ -866,7 +866,7 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["gba"],
         aliases: &["GBA", "GBA2P"],
-        clock: Some(ClockLayout::Packed { reserved: 512 }),
+        clock: Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
     };
     /// Gearboy — gb, gbc.
     pub const GEARBOY: Core = Core {
@@ -1266,7 +1266,7 @@ pub mod cores {
         kind: CoreKind::Libretro,
         systems: &["gba", "gbc", "gb"],
         aliases: &[],
-        clock: Some(ClockLayout::Appended),
+        clock: Some(ClockLayout::Appended { timestamp_width: 8 }),
     };
     /// mincer_ray.GBA — gba.
     pub const MINCER_RAY_GBA: Core = Core {
@@ -1545,7 +1545,7 @@ pub mod cores {
         kind: CoreKind::Libretro,
         systems: &["gb", "gbc"],
         aliases: &[],
-        clock: Some(ClockLayout::Appended),
+        clock: Some(ClockLayout::Appended { timestamp_width: 8 }),
     };
     /// Saturn_MiSTer — saturn.
     pub const SATURN_MISTER: Core = Core {
@@ -1563,7 +1563,7 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["gb"],
         aliases: &["SGB"],
-        clock: Some(ClockLayout::Packed { reserved: 512 }),
+        clock: Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
     };
     /// SkyEmu — gb, gba, nds.
     pub const SKYEMU: Core = Core {
@@ -1680,7 +1680,7 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gb"],
         aliases: &[],
-        clock: Some(ClockLayout::Packed { reserved: 16 }),
+        clock: None,
     };
     /// Spiritualized.GBA — gba.
     pub const SPIRITUALIZED_GBA: Core = Core {
@@ -1698,7 +1698,7 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gbc"],
         aliases: &[],
-        clock: Some(ClockLayout::Packed { reserved: 16 }),
+        clock: None,
     };
     /// Spiritualized.Genesis — genesis.
     pub const SPIRITUALIZED_GENESIS: Core = Core {
@@ -1770,7 +1770,7 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gb"],
         aliases: &[],
-        clock: Some(ClockLayout::Packed { reserved: 16 }),
+        clock: None,
     };
     /// Stella — atari-2600.
     pub const STELLA: Core = Core {
@@ -1869,7 +1869,7 @@ pub mod cores {
         kind: CoreKind::Libretro,
         systems: &["gba", "gbc", "gb"],
         aliases: &[],
-        clock: Some(ClockLayout::Appended),
+        clock: Some(ClockLayout::Appended { timestamp_width: 8 }),
     };
     /// VBA Next — gba.
     pub const VBA_NEXT: Core = Core {
@@ -1968,7 +1968,7 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["wonderswan", "wonderswan-color"],
         aliases: &["WonderSwan"],
-        clock: None,
+        clock: Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
     };
     /// YabaSanshiro — saturn.
     pub const YABASANSHIRO: Core = Core {

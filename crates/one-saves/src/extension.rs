@@ -9,9 +9,10 @@
 //! What a caller works with is a typed value. A type that implements [`Extension`] names its key
 //! and how it converts to and from CBOR, and [`Extensions::get`] hands back that type for a key
 //! that holds it. The keys these specifications define under `x.1sav` have their types here —
-//! [`Rtc`], [`RtcMbc3`], [`RtcS3511a`], [`Label`], [`Icon`], [`Dirent`] and [`DirentGcMc`] — and so
-//! does 1retro's [`Forge`]. Any other producer's key is a type of its own implementing the same
-//! trait.
+//! [`Label`], [`Icon`], [`Dirent`], [`DirentGcMc`], [`Rtc`] and one for each cartridge clock under
+//! it, [`RtcHuc3`], [`RtcJoybus`], [`RtcMbc3`], [`RtcRtc4513`], [`RtcS3511a`], [`RtcSrtc`],
+//! [`RtcTc8521`] and [`RtcTpp1`] — and so does 1retro's [`Forge`]. Any other producer's key is a
+//! type of its own implementing the same trait.
 //!
 //! ```
 //! use one_saves::{Extensions, extension::Label};
@@ -47,7 +48,9 @@ pub use forge::Forge;
 pub use gc_mc::DirentGcMc;
 pub use icon::{Icon, IconFrame};
 pub use label::Label;
-pub use rtc::{Rtc, RtcMbc3, RtcS3511a};
+pub use rtc::{
+    Rtc, RtcHuc3, RtcJoybus, RtcMbc3, RtcRtc4513, RtcS3511a, RtcSrtc, RtcTc8521, RtcTpp1, S3511aAlarm,
+};
 pub use time::Civil;
 
 /// A typed value for one extension key.
@@ -123,10 +126,16 @@ type Decoder = fn(&CBOR) -> Option<Box<dyn Erased>>;
 /// The type this crate has for a key, so a value read off the wire can be shown without a caller
 /// naming its type.
 fn known(key: &ReverseDnsName) -> Option<Decoder> {
-    let known: [(ReverseDnsName, Decoder); 8] = [
+    let known: [(ReverseDnsName, Decoder); 14] = [
         (Rtc::KEY, decode::<Rtc>),
+        (RtcHuc3::KEY, decode::<RtcHuc3>),
+        (RtcJoybus::KEY, decode::<RtcJoybus>),
         (RtcMbc3::KEY, decode::<RtcMbc3>),
+        (RtcRtc4513::KEY, decode::<RtcRtc4513>),
         (RtcS3511a::KEY, decode::<RtcS3511a>),
+        (RtcSrtc::KEY, decode::<RtcSrtc>),
+        (RtcTc8521::KEY, decode::<RtcTc8521>),
+        (RtcTpp1::KEY, decode::<RtcTpp1>),
         (Label::KEY, decode::<Label>),
         (Icon::KEY, decode::<Icon>),
         (Dirent::KEY, decode::<Dirent>),

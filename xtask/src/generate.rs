@@ -54,12 +54,21 @@ fn const_names<'a>(slugs: impl Iterator<Item = &'a str>) -> Result<Vec<String>, 
 /// The `ClockLayout` expression for one core, or `None` where the file records nothing.
 fn clock(slug: &str, clocks: &Clocks) -> Result<String, String> {
     let Some(entry) = clocks.cores.get(slug) else { return Ok("None".to_owned()) };
-    match (entry.layout.as_str(), entry.reserved) {
-        ("appended", None) => Ok("Some(ClockLayout::Appended)".to_owned()),
-        ("sidecar", None) => Ok("Some(ClockLayout::Sidecar)".to_owned()),
-        ("packed", Some(n)) => Ok(format!("Some(ClockLayout::Packed {{ reserved: {n} }})")),
-        ("packed", None) => Err(format!("clocks.json: {slug:?} is packed but sets no reserved length")),
-        (other, _) => Err(format!("clocks.json: {slug:?} has unknown layout {other:?}")),
+    // A footer stores the host clock at a width the core chose, and a sidecar is no footer.
+    match (entry.layout.as_str(), entry.reserved, entry.timestamp_width) {
+        ("appended", None, Some(width)) => {
+            Ok(format!("Some(ClockLayout::Appended {{ timestamp_width: {width} }})"))
+        }
+        ("sidecar", None, None) => Ok("Some(ClockLayout::Sidecar)".to_owned()),
+        ("packed", Some(n), Some(width)) => {
+            Ok(format!("Some(ClockLayout::Packed {{ reserved: {n}, timestamp_width: {width} }})"))
+        }
+        ("packed", None, _) => Err(format!("clocks.json: {slug:?} is packed but sets no reserved length")),
+        ("appended" | "packed", _, None) => {
+            Err(format!("clocks.json: {slug:?} is a footer but sets no timestamp width"))
+        }
+        ("sidecar", _, Some(_)) => Err(format!("clocks.json: {slug:?} is a sidecar, which has no width")),
+        (other, _, _) => Err(format!("clocks.json: {slug:?} has unknown layout {other:?}")),
     }
 }
 

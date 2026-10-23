@@ -37,7 +37,7 @@
 //! // mGBA holds mgba.io and is listed, so `mgba` is the one spelling it writes.
 //! assert_eq!(cores::MGBA.slug, "mgba");
 //! // And the registry records how it lays a clock down, so a converter need not guess.
-//! assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended));
+//! assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended { timestamp_width: 8 }));
 //!
 //! // Systems the same way.
 //! assert_eq!(systems::GBA.name, "Game Boy Advance");
@@ -120,27 +120,42 @@ pub enum CoreKind {
 /// How a core stores real-time-clock state alongside a save.
 ///
 /// A cartridge with a clock chip holds state the save memory does not, and cores disagree about
-/// where to put it. Which *chip* the state came from follows from the system — an MBC3 is a Game
-/// Boy part, a Seiko S-3511A a Game Boy Advance one — but the *layout* is the core's own choice,
-/// and nothing in a save file says which was used. So it is recorded here, against the core that
-/// writes it, rather than guessed from the bytes.
+/// where to put it. Which *chip* the state came from is the save's own business — an MBC3 is a
+/// Game Boy part, a Seiko S-3511A a Game Boy Advance or WonderSwan one — but the *layout* is the
+/// core's own choice, and nothing in a save file says which was used. So it is recorded here,
+/// against the core that writes it, rather than guessed from the bytes.
+///
+/// A footer also stores the host clock the core advances the chip from, and cores disagree over
+/// how many bytes it takes. That width is what `x.1sav.rtc.mbc3` carries as key 3, and what
+/// rebuilding a footer for a core has to match, so it is recorded beside the layout.
 ///
 /// Unlike the rest of this crate these are not drawn from the registry pages: the specifications
 /// do not describe clock layouts. They come from files real cores wrote, or from a core's own
-/// source where no file has been sampled.
+/// source where no file has been sampled. A core whose source is not published and whose files
+/// nobody has sampled is not recorded, whatever its upstream did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClockLayout {
-    /// Appended to the save, registers little-endian at their natural width. mGBA, SameBoy, VBA-M.
-    Appended,
-    /// Appended to the save, registers bit-packed and padded out to a reserved length. The MiSTer
-    /// Gameboy core and its Pocket ports for an MBC3, GBA_MiSTer for a Seiko S-3511A, which fills
-    /// the length with copies of its record.
+    /// Appended to the save, registers little-endian at their natural width and then the host
+    /// clock. mGBA, SameBoy, VBA-M.
+    Appended {
+        /// How many bytes the host clock takes.
+        timestamp_width: u8,
+    },
+    /// Appended to the save, registers bit-packed and padded out to a reserved length.
+    ///
+    /// The MiSTer Gameboy core and SGB core and their Pocket ports for an MBC3. GBA_MiSTer and
+    /// WonderSwan_MiSTer for a Seiko S-3511A, which fill the length with copies of one record, and
+    /// the WonderSwan core's Pocket port, which writes that record cut to twelve bytes.
     Packed {
         /// The length in bytes the footer is padded to.
         reserved: usize,
+        /// How many bytes the host clock takes, wherever in the packing it sits.
+        timestamp_width: u8,
     },
     /// Written to a separate file beside the save, not appended to it. Gambatte for an MBC3,
     /// mincer_ray's GBA core for a Seiko S-3511A.
+    ///
+    /// No footer, so no width: `x.1sav.rtc.mbc3` leaves key 3 out for a clock kept this way.
     Sidecar,
 }
 
@@ -683,7 +698,10 @@ mod tests {
         // A slug typo'd into that file would otherwise sit there doing nothing in silence.
         for entry in cores().iter().filter(|c| c.clock.is_some()) {
             assert!(
-                entry.systems.iter().any(|s| matches!(*s, "gb" | "gbc" | "gba")),
+                entry
+                    .systems
+                    .iter()
+                    .any(|s| matches!(*s, "gb" | "gbc" | "gba" | "wonderswan" | "wonderswan-color")),
                 "{} records a clock layout but runs no system with a clock chip",
                 entry.slug
             );
@@ -695,15 +713,25 @@ mod tests {
         assert_eq!(cores::GAMBATTE.clock, Some(ClockLayout::Sidecar));
         // A GBA core keeps its clock in a file too, and the system says which chip is in it.
         assert_eq!(cores::MINCER_RAY_GBA.clock, Some(ClockLayout::Sidecar));
-        assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended));
-        assert_eq!(cores::SAMEBOY.clock, Some(ClockLayout::Appended));
-        // The MiSTer core writes a whole SD block; its openFPGA ports write sixteen bytes.
-        assert_eq!(cores::GAMEBOY_MISTER.clock, Some(ClockLayout::Packed { reserved: 512 }));
-        // The GBA core appends a whole block too, of a different chip's record.
-        assert_eq!(cores::GBA_MISTER.clock, Some(ClockLayout::Packed { reserved: 512 }));
-        assert_eq!(cores::SPIRITUALIZED_GB.clock, Some(ClockLayout::Packed { reserved: 16 }));
+        assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended { timestamp_width: 8 }));
+        assert_eq!(cores::SAMEBOY.clock, Some(ClockLayout::Appended { timestamp_width: 8 }));
+        // The MiSTer core writes a whole SD block; its openFPGA ports write sixteen bytes. Both
+        // give the host clock four bytes, where the appending emulators give it eight.
+        let block = Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 });
+        assert_eq!(cores::GAMEBOY_MISTER.clock, block);
+        assert_eq!(cores::SGB_MISTER.clock, block);
         // Named without the `-gb` ending the old suffix rule looked for, and packed all the same.
-        assert_eq!(cores::SPIRITUALIZED_SUPERGB.clock, Some(ClockLayout::Packed { reserved: 16 }));
+        assert_eq!(cores::BUDUDE2_GBC.clock, Some(ClockLayout::Packed { reserved: 16, timestamp_width: 4 }));
+        // The GBA and WonderSwan cores append a whole block too, of a different chip's record.
+        assert_eq!(cores::GBA_MISTER.clock, block);
+        assert_eq!(cores::WONDERSWAN_MISTER.clock, block);
+        assert_eq!(
+            cores::AGG23_WONDERSWAN.clock,
+            Some(ClockLayout::Packed { reserved: 12, timestamp_width: 4 })
+        );
+        // Spiritualized publishes no source and its releases predate the Pocket's clock, so
+        // nothing says how they would lay one down.
+        assert_eq!(cores::SPIRITUALIZED_GBC.clock, None);
         // A MiSTer core for a system with no MBC3 in it records nothing, rather than inheriting
         // the Game Boy core's layout because the two slugs end alike.
         assert_eq!(cores::PSX_MISTER.clock, None);

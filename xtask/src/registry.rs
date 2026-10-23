@@ -112,6 +112,8 @@ pub struct Clock {
     pub layout: String,
     #[serde(default)]
     pub reserved: Option<usize>,
+    #[serde(default)]
+    pub timestamp_width: Option<u8>,
 }
 
 /// `clocks.json`: clock layouts, keyed by core slug.

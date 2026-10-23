@@ -21,7 +21,7 @@ A producer that already knows which core it is skips the lookup, and skips the t
 use one_saves_registry::{ClockLayout, cores, systems};
 
 assert_eq!(cores::MGBA.slug, "mgba");
-assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended));
+assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended { timestamp_width: 8 }));
 assert!(cores::MGBA.systems.contains(&systems::GBA.slug));
 ```
 

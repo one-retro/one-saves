@@ -8,9 +8,8 @@
 //! storage modes, a volume with nothing on it, and one save sitting on two volumes at once.
 //!
 //! The expected clock values are recorded here rather than beside the files. They are assertions,
-//! not data, and the Gambatte capture instant in particular **cannot** be taken from the
-//! filesystem: git does not preserve modification times, so on a fresh clone the sidecar's mtime
-//! is checkout time and the derived reading would differ per clone.
+//! not data, and the Gambatte capture instant in particular **cannot** be left to its default,
+//! which is the moment the sidecar is read: the derived reading would differ on every run.
 //!
 //! The fixtures live at the workspace root, outside this crate, so a packaged copy of
 //! `one-saves-convert` does not carry them. These tests skip in that case rather than fail.
@@ -109,7 +108,7 @@ fn fixtures() -> Vec<Fixture> {
             sidecar: None,
         },
         // A sidecar holding an origin rather than a reading. The instant is stated because the
-        // file does not record it and its mtime does not survive a clone.
+        // file does not record it, and the moment of reading moves on every run.
         Fixture {
             path: "openemu/gambatte",
             file: CRYSTAL,
@@ -192,7 +191,7 @@ fn every_real_save_decodes_to_the_clock_it_was_taken_with() {
         assert!(footer.is_some(), "{}: no clock to rebuild", fixture.path);
 
         // The reading itself, checked against what the clock actually said.
-        let rebuilt = rtc::footer_of_form(&bundle, rtc::ClockForm::Mbc3Appended)
+        let rebuilt = rtc::footer_of_form(&bundle, rtc::ClockForm::Mbc3Appended(8))
             .expect("the MBC3 form is always derivable");
         let clock = rtc::parse_mbc3(&rebuilt).expect("parses");
         assert_eq!(
@@ -201,7 +200,7 @@ fn every_real_save_decodes_to_the_clock_it_was_taken_with() {
             "{}: cartridge clock",
             fixture.path
         );
-        assert_eq!(clock.written_at, fixture.anchor, "{}: anchor", fixture.path);
+        assert_eq!(clock.taken_at, fixture.anchor, "{}: anchor", fixture.path);
 
         // And the reading is that elapsed time on the Unix scale, with no anchor in it, which is
         // the distinction the key exists to make. A producer that cannot compute it omits the
@@ -265,10 +264,10 @@ fn the_save_memory_is_what_gets_deduplicated() {
 
     // The clocks genuinely differ, 2673 seconds apart.
     let clock_of = |b: &Bundle| {
-        let raw = rtc::footer_of_form(b, rtc::ClockForm::Mbc3Appended).expect("derivable");
+        let raw = rtc::footer_of_form(b, rtc::ClockForm::Mbc3Appended(8)).expect("derivable");
         rtc::parse_mbc3(&raw).expect("parses")
     };
-    assert_eq!(clock_of(&later).written_at - clock_of(&early).written_at, 2673);
+    assert_eq!(clock_of(&later).taken_at - clock_of(&early).taken_at, 2673);
 
     // The save memory differs too — the game really did save between the two — so this is a
     // check that the split works, not that the bytes happened to be identical.
