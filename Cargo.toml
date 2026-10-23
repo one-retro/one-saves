@@ -13,6 +13,7 @@ members = [
     "crates/ps1-memcard",
     "crates/ps2-memcard",
     "crates/saturn-backup",
+    "crates/disc-id",
     "xtask",
 ]
 
@@ -46,8 +47,14 @@ neogeo-memcard = { version = "0.4.1", path = "crates/neogeo-memcard" }
 ps1-memcard = { version = "0.4.1", path = "crates/ps1-memcard" }
 ps2-memcard = { version = "0.4.1", path = "crates/ps2-memcard" }
 saturn-backup = { version = "0.4.1", path = "crates/saturn-backup" }
+# What a game's own media says about it: a disc image's system and serial. It depends on the
+# registry for the systems it names and on nothing else outside this workspace, so a caller sorting
+# a library of dumps needs neither the format nor the converters.
+disc-id = { version = "0.4.1", path = "crates/disc-id" }
 
 dcbor = "0.25"
+# CHD disc images, for disc-id's `chd` feature only.
+chd = "0.3"
 sha1 = "0.11"
 sha2 = "0.11"
 md-5 = "0.11"

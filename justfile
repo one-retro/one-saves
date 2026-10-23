@@ -74,6 +74,8 @@ test-features:
     # only card crate with a feature, so it is the only one that needs its own line.
     cargo test -p saturn-backup
     cargo test -p saturn-backup --features gzip
+    # disc-id without `chd`, the build that carries no decompressor; `just test` only sees it with.
+    cargo test -p disc-id
     # The default build, which `lint` does not reach: it runs --all-features, and what a user gets
     # by installing this is neither that nor --no-default-features. `icon` is the one off by
     # default that other code reads around, so this is the arm where an unread constant shows up.

@@ -73,6 +73,14 @@ and stops there.
 What `one-saves-convert` holds for each is the adapter — the mapping between a card's saves and a
 bundle's nested parts — and nothing else.
 
+One more reads what a game's own media says about it, for a program sorting a library of dumps or
+pairing a save with the game it belongs to. It depends on `one-saves-registry`, for the systems it
+names, and on nothing else.
+
+| Crate | What it identifies |
+| ----- | ------------------ |
+| [`disc-id`](crates/disc-id) | A CD or DVD image: its system and the serial printed on the disc |
+
 ## Features
 
 Everything optional is a feature, and all of them are on by default except `multithread`, so a

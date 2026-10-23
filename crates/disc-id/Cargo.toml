@@ -1,0 +1,24 @@
+[package]
+name = "disc-id"
+description = "Identify a CD/DVD disc image: which system it is for, and the serial printed on the disc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["filesystem", "parser-implementations", "emulators"]
+keywords = ["disc", "iso9660", "cue", "emulation", "retro"]
+readme = "README.md"
+
+[dependencies]
+one-saves-registry.workspace = true
+# Reading CHD, behind a feature: it brings four decompressors (zlib, LZMA, zstd and FLAC for audio
+# tracks), and the crate depends on nothing outside this workspace without it.
+chd = { workspace = true, optional = true }
+
+[features]
+chd = ["dep:chd"]
+
+[lints]
+workspace = true
