@@ -1,12 +1,13 @@
 //! Reading what a ROM says about itself.
 //!
 //! Most consoles put a title and a product code in a fixed header, so a ROM alongside a save
-//! answers questions the save cannot. This module reads that header and computes the digests a
-//! catalog keys on; turning either into a canonical name is the `dat` module's job.
+//! answers questions the save cannot. [`rom_id`] reads that header; this module carries what it
+//! says into a `game` map and computes the digests a catalog keys on. Turning either into a
+//! canonical name is the `dat` module's job.
 //!
-//! Every parser here checks a magic before believing a field. A header read out of a file that is
-//! not that console's ROM is worse than no header at all, because it produces a `game` map that
-//! looks authoritative and is wrong.
+//! Only a header counts here, never a file's name. A header read out of a file that is not that
+//! console's ROM is worse than no header at all, because it produces a `game` map that looks
+//! authoritative and is wrong, and `rom_id` checks a magic before it believes a field.
 
 use one_saves::{Game, HashAlgorithm, HashValue};
 
@@ -24,143 +25,16 @@ pub struct RomInfo {
 /// Identifies a ROM from its header.
 ///
 /// Returns `None` when nothing recognises it, which is the honest answer for a headerless system
-/// or a file that is not a ROM.
+/// or a file that is not a ROM. The header is [`rom_id`]'s to read; this is the part of its answer
+/// a `game` map carries, and only from a header, never from a name.
 #[must_use]
 pub fn identify(bytes: &[u8]) -> Option<RomInfo> {
-    // Ordered by how strong the magic is, so a weak check never shadows a strong one.
-    gba(bytes)
-        .or_else(|| gameboy(bytes))
-        .or_else(|| n64(bytes))
-        .or_else(|| megadrive(bytes))
-        .or_else(|| nes(bytes))
-        .or_else(|| snes(bytes))
-}
-
-/// Trims a fixed-width header field: drop the NUL and space padding, keep the rest verbatim.
-fn field(bytes: &[u8]) -> String {
-    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    String::from_utf8_lossy(&bytes[..end]).trim().to_owned()
-}
-
-fn non_empty(text: String) -> Option<String> {
-    (!text.is_empty()).then_some(text)
-}
-
-/// The 48-byte Nintendo logo every Game Boy cartridge carries, checked by the boot ROM.
-const GB_LOGO: [u8; 8] = [0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B];
-
-/// Game Boy and Game Boy Color.
-fn gameboy(bytes: &[u8]) -> Option<RomInfo> {
-    if bytes.len() < 0x150 || bytes[0x104..0x104 + 8] != GB_LOGO {
-        return None;
-    }
-
-    // The title field shrank as Nintendo took bytes off its end for other uses, so the CGB flag
-    // sits where the last title byte used to. Reading 16 bytes on a CGB cartridge would append a
-    // stray 0x80 or 0xC0 to the name.
-    let cgb_flag = bytes[0x143];
-    let cgb = matches!(cgb_flag, 0x80 | 0xC0);
-    let title_len = if cgb { 15 } else { 16 };
-    let title = field(&bytes[0x134..0x134 + title_len]);
-
+    let id = rom_id::identify_bytes(None, bytes).filter(|id| id.evidence == rom_id::Evidence::Header)?;
     Some(RomInfo {
-        system: Some(if cgb { "gbc" } else { "gb" }),
-        title: non_empty(title),
-        // A Game Boy header has no product code; the title bytes are all there is, and the spec
-        // says a title that is not a serial belongs in `name` rather than here.
-        serial: None,
+        system: Some(id.system.slug),
+        title: id.title,
+        serial: id.serial,
     })
-}
-
-/// Game Boy Advance.
-fn gba(bytes: &[u8]) -> Option<RomInfo> {
-    // 0x96 at 0xB2 is the fixed byte the BIOS checks, and it is what tells a GBA ROM from a GB one.
-    if bytes.len() < 0xC0 || bytes[0xB2] != 0x96 {
-        return None;
-    }
-    Some(RomInfo {
-        system: Some("gba"),
-        title: non_empty(field(&bytes[0xA0..0xAC])),
-        serial: non_empty(field(&bytes[0xAC..0xB0])),
-    })
-}
-
-/// Nintendo 64, in any of the three byte orders its dumps come in.
-fn n64(bytes: &[u8]) -> Option<RomInfo> {
-    if bytes.len() < 0x40 {
-        return None;
-    }
-    let magic = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    // A cartridge is 16-bit words in the console's order; dumpers have shipped all three.
-    let normalised: Vec<u8> = match magic {
-        0x8037_1240 => bytes[..0x40].to_vec(),
-        // Byte-swapped within each 16-bit word.
-        0x3780_4012 => bytes[..0x40].as_chunks::<2>().0.iter().flat_map(|w| [w[1], w[0]]).collect(),
-        // Wholly little-endian, within each 32-bit word.
-        0x4012_3780 => {
-            bytes[..0x40].as_chunks::<4>().0.iter().flat_map(|w| [w[3], w[2], w[1], w[0]]).collect()
-        }
-        _ => return None,
-    };
-    Some(RomInfo {
-        system: Some("n64"),
-        title: non_empty(field(&normalised[0x20..0x34])),
-        serial: non_empty(field(&normalised[0x3B..0x3F])),
-    })
-}
-
-/// Mega Drive and Genesis.
-fn megadrive(bytes: &[u8]) -> Option<RomInfo> {
-    if bytes.len() < 0x190 {
-        return None;
-    }
-    let console = &bytes[0x100..0x110];
-    if !console.starts_with(b"SEGA") {
-        return None;
-    }
-    // The international name is the one in Latin script on a Japanese cartridge too.
-    let international = field(&bytes[0x150..0x180]);
-    let domestic = field(&bytes[0x120..0x150]);
-    Some(RomInfo {
-        system: Some("genesis"),
-        title: non_empty(if international.is_empty() { domestic } else { international }),
-        serial: non_empty(field(&bytes[0x183..0x18E])),
-    })
-}
-
-/// NES, in the iNES container.
-fn nes(bytes: &[u8]) -> Option<RomInfo> {
-    // An iNES header describes the cartridge's wiring and says nothing about the game, so there
-    // is no title or code to read. Identification here needs a hash and a catalog.
-    (bytes.len() >= 16 && bytes.starts_with(b"NES\x1A")).then_some(RomInfo {
-        system: Some("nes"),
-        title: None,
-        serial: None,
-    })
-}
-
-/// Super Nintendo, whose header sits at one of two places and may be behind a copier header.
-fn snes(bytes: &[u8]) -> Option<RomInfo> {
-    // A 512-byte copier header shifts everything, and is detected by the file's length rather
-    // than by anything in it.
-    let base = usize::from(bytes.len() % 1024 == 512) * 512;
-
-    // LoROM and HiROM put the header in different places, and the checksum pair is what decides:
-    // it and its complement have to add up to all ones.
-    for offset in [0x7FC0, 0xFFC0] {
-        let at = base + offset;
-        if bytes.len() < at + 32 {
-            continue;
-        }
-        let header = &bytes[at..at + 32];
-        let complement = u16::from_le_bytes([header[0x1C], header[0x1D]]);
-        let checksum = u16::from_le_bytes([header[0x1E], header[0x1F]]);
-        if complement ^ checksum != 0xFFFF {
-            continue;
-        }
-        return Some(RomInfo { system: Some("snes"), title: non_empty(field(&header[..21])), serial: None });
-    }
-    None
 }
 
 /// Every digest a retro catalog might key on.
@@ -205,6 +79,9 @@ pub fn game_from_rom(bytes: &[u8], filename: Option<&str>) -> Game {
 mod tests {
     use super::*;
 
+    /// The opening bytes of the Nintendo logo a Game Boy boot ROM checks.
+    const GB_LOGO: [u8; 8] = [0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B];
+
     fn gb_rom(title: &[u8], cgb: u8) -> Vec<u8> {
         let mut rom = vec![0u8; 0x8000];
         rom[0x104..0x104 + 8].copy_from_slice(&GB_LOGO);
@@ -234,9 +111,10 @@ mod tests {
 
     #[test]
     fn reads_a_gba_code_and_prefers_it_over_the_game_boy_parser() {
-        // A GBA ROM has no Nintendo logo where a Game Boy one does, and 0x96 at 0xB2 is what the
-        // BIOS checks, so the two never collide.
+        // A GBA ROM has no Nintendo logo where a Game Boy one does, and its own logo and 0x96 at
+        // 0xB2 are what the BIOS checks, so the two never collide.
         let mut rom = vec![0u8; 0x200];
+        rom[0x04..0x0C].copy_from_slice(&[0x24, 0xFF, 0xAE, 0x51, 0x69, 0x9A, 0xA2, 0x21]);
         rom[0xA0..0xAC].copy_from_slice(b"POKEMON RUBY");
         rom[0xAC..0xB0].copy_from_slice(b"AXVE");
         rom[0xB2] = 0x96;

@@ -1325,6 +1325,7 @@ dependencies = [
  "png",
  "ps1-memcard",
  "ps2-memcard",
+ "rom-id",
  "saturn-backup",
  "sha1",
  "sha2",
@@ -1731,6 +1732,13 @@ name = "rgb"
 version = "0.8.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
+
+[[package]]
+name = "rom-id"
+version = "0.4.1"
+dependencies = [
+ "one-saves-registry",
+]
 
 [[package]]
 name = "rustix"

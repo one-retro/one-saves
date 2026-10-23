@@ -1,0 +1,18 @@
+[package]
+name = "rom-id"
+description = "Identify a cartridge ROM dump: its system, its header, and the hardware on its cartridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["parser-implementations", "emulators"]
+keywords = ["rom", "cartridge", "header", "emulation", "retro"]
+readme = "README.md"
+
+[dependencies]
+one-saves-registry.workspace = true
+
+[lints]
+workspace = true
