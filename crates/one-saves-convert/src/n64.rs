@@ -30,7 +30,7 @@
 //! | `0x20800` | `0x8000`      | SRAM                                |
 //! | `0x28800` | `0x20000`     | FlashRAM                            |
 //!
-//! That is a console's storage rather than one game's state, because the paks hold notes for games
+//! That is a console's storage rather than one game's save, because the paks hold notes for games
 //! the cartridge knows nothing about, so [`read_srm`] makes a [`device`](one_saves::Shape::Device)
 //! of it: the cartridge as a nested save, and each pak that holds a note as a nested card.
 //! [`game_save`] cuts one game out of such a device as a plain save, its cartridge beside only its
@@ -71,7 +71,7 @@ pub struct N64Options {
     /// A human-readable note about the bundle.
     pub description: Option<String>,
     /// When the bundle was assembled, in whole epoch seconds.
-    pub created_at: Option<i64>,
+    pub bundled_at: Option<i64>,
 }
 
 /// A chip's memory in normal form, from a file as an emulator wrote it.
@@ -119,7 +119,7 @@ pub fn wrap(bytes: &[u8], save: N64Save, order: WordOrder, options: &N64Options)
     }
     let normal = normalize(bytes, save, order)?;
     let mut header = Header::new(Shape::Save)
-        .created_at(options.created_at)
+        .bundled_at(options.bundled_at)
         .system(slug(SYSTEM))
         .game(options.game.clone())
         .source(options.source.clone());
@@ -306,7 +306,7 @@ mod srm {
             return Err(Error::NotConvertible("this save holds nothing yet".into()));
         }
         let mut header = Header::new(Shape::Device)
-            .created_at(options.created_at)
+            .bundled_at(options.bundled_at)
             .system(slug(SYSTEM))
             .source(options.source.clone());
         header.description.clone_from(&options.description);
@@ -619,7 +619,7 @@ mod srm {
         }
 
         let mut header = Header::new(Shape::Save)
-            .created_at(device.header.created_at)
+            .bundled_at(device.header.bundled_at)
             .system(slug(SYSTEM))
             .game(game)
             .source(device.header.source.clone());

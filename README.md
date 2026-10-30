@@ -5,7 +5,8 @@ self-describing CBOR container for retro console save files and everything attac
 
 A retro save is a bare binary dump with no agreed way to say what game it belongs to, what wrote
 it, or what else belongs with it. Every emulator invented its own convention. This is the
-container that fixes that, plus the tools to move real saves and memory cards in and out of it.
+container that fixes that, plus the tools to move real saves and memory cards in and out of it,
+and the save states and screenshots an emulator keeps beside them.
 
 ```console
 $ 1saves convert card.mcr --from duckstation
@@ -13,7 +14,7 @@ card.mcr -> card.1saves (PS1 memory card, 2 save(s), 58034 bytes)
 
 $ 1saves inspect card.1saves
 card.1saves
-  58034 bytes, spec version 0.5
+  58034 bytes, spec version 0.6
   shape        card
   system       psx (PlayStation)
   card         ps1-mc, capacity 131072 bytes
@@ -94,6 +95,7 @@ consumer pays for what it uses. Reading and writing bundles needs none of them.
 | `dat` | `one-saves-convert`, `one-saves-cli` | `datary`, `quick-xml`, `serde` and its derive |
 | `dat-cmpro` | `one-saves-convert`, `one-saves-cli` | `winnow` |
 | `rom` | `one-saves-convert`, `one-saves-cli` | `crc32fast`, `md-5`, `sha1` |
+| `states` | `one-saves-cli`; off in `one-saves-convert` | `flate2` and `png`, for the state files emulators compress and the framebuffers they keep |
 | `zstd` | those two and `one-saves` | `zstd`, and the C library it compiles |
 | `multithread` | off; `one-saves-convert` and `one-saves` | nothing — `Arc` rather than `Rc` under `dcbor`, so a `Bundle` is `Send` and `Sync` |
 
@@ -125,6 +127,10 @@ Each crate's README has the detail.
 | PS2 memory cards | `.ps2`, with or without ECC spare | yes |
 | Neo Geo memory cards and a Neo Geo CD's memory | `.neo`, bare or in a MiSTer save | yes |
 | Saturn backup RAM | `.bkr` `.bcr`, internal and Backup RAM Cart | yes |
+| RetroArch save states | `.state`, `.state1`…, `.state.auto`, and the `.png` beside | yes |
+| mGBA save states | `.ss0`…`.ss9` | yes |
+| DuckStation save states | `.sav` and `.bak` under `savestates` | yes |
+| Screenshots | `.png` `.jpg` | yes, as written |
 
 Detection reads the bytes before the extension, because the extension is the less reliable of the
 two: the same PS1 card ships as `.mcr`, `.mcd`, `.bin` and `.srm`, and that last one is also what
@@ -151,6 +157,39 @@ card format cannot rebuild the card and **must not** attempt the write.
 
 A card with nothing saved on it converts too, as a single `card-image` part: a formatted card is
 still a real card, and an image is the only part it can have when there is no save to nest.
+
+## Save states and screenshots
+
+A save state is not a save. The game wrote a save, and anything that runs the game reads it; an
+emulator took a state, the whole machine at one moment, and only the core that took it loads it.
+The format carries a state as a shape of its own, so a consumer restoring a save never meets one,
+and its `source` names the core it loads into.
+
+```console
+$ 1saves convert "states/Genesis Plus GX Wide/Sonic CD (USA).state" --system sega-cd
+states/Genesis Plus GX Wide/Sonic CD (USA).state: took the core genesis-plus-gx-wide from the folder RetroArch filed it in
+states/Genesis Plus GX Wide/Sonic CD (USA).state -> states/Genesis Plus GX Wide/Sonic CD (USA).state.1saves (RetroArch state, slot 0, loads into genesis-plus-gx-wide, 1 part(s), 1036411 bytes)
+```
+
+| Emulator | Its files | In the bundle |
+| -------- | --------- | ------------- |
+| RetroArch | `X.state`, `X.state1`…, `X.state.auto`, and a `.png` thumbnail beside | the core's data, unwrapped and decompressed; the thumbnail as the screenshot; the achievement and replay blocks as `aux` parts |
+| mGBA | `X.ss1`…`X.ss9`, and `X.ss0` to resume from | the core's data with the player's cheats on it, the screenshot, the in-game save as a save part, and when and by which mGBA it was taken |
+| DuckStation | `SERIAL_N.sav`, `SERIAL_resume.sav`, and `SERIAL_N.bak` for what a slot held before | the core's data decompressed, the version DuckStation stamped on it, the game's title and serial, and the screenshot as a PNG |
+
+The slot is in each file's name, and becomes the state part's `slot`; a state the emulator took on
+its own to resume from has none, and an `origin` of `auto`. RetroArch's file does not say which
+core took it, so `--core` does, or the folder RetroArch filed the state in when it sorts states by
+core. Pass `--rom` as for a save: a state loads only against the ROM it was taken with, and the
+ROM's hashes are what finds it again.
+
+`extract` rebuilds the emulator's file, named for its slot, and RetroArch's thumbnail beside it. It
+refuses to write a state for an emulator that does not run the core the state names. A rebuilt file
+loads, and is not promised byte for byte; a RetroArch state comes back identical once decompressed.
+
+A PNG or a JPEG on its own converts to a `screenshot` bundle, kept exactly as it was written. Any
+other image would have to be encoded as PNG first, which is a choice of the producer's rather than
+something a converter should do quietly, so it is refused.
 
 ## Clock state
 
@@ -220,8 +259,8 @@ this crate cannot identify does.
 
 ## Conformance
 
-`one-saves` passes the [conformance corpus][corpus] published alongside the specification: all 28
-valid cases and all 66 invalid ones, vendored under
+`one-saves` passes the [conformance corpus][corpus] published alongside the specification: all 37
+valid cases and all 92 invalid ones, vendored under
 [`crates/one-saves/tests/conformance/`](crates/one-saves/tests/conformance).
 
 A green corpus run is deliberately not full coverage, and its README says so. The four properties
@@ -230,8 +269,9 @@ no single file can express are tested directly:
 - **Determinism** — every valid case is decoded, re-encoded, and asserted byte-identical.
 - **Nesting depth** — a bundle one level past the cap is built and asserted rejected.
 - **Unknown values round-trip** — a name or key the decoder does not recognise survives re-encoding.
-- **Decoder versus schema** — an integer key from a later minor version is *rejected* by the v0.1
-  schema and *accepted and round-tripped* by a shipped decoder. The crate has both modes.
+- **Decoder versus schema** — an integer key from a later minor version is *rejected* by the schema
+  of the version this crate implements and *accepted and round-tripped* by a shipped decoder. The
+  crate has both modes.
 
 ## Determinism
 
@@ -280,8 +320,8 @@ is what CI checks. Nothing at build time needs either form.
 
 ## Status
 
-Version 0.1, tracking version 0.1 of the specification, which is **not yet stabilized**. Until the
-spec reaches 1.0, breaking changes happen in place under the same bundle tag.
+Tracking version 0.6 of the specification, which is **not yet stabilized**. Until the spec reaches
+1.0, breaking changes happen in place under the same bundle tag.
 
 ## License
 

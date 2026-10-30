@@ -1,7 +1,8 @@
 # one-saves
 
 The [Universal Saves Format][spec] (`.1saves`, `1SAV`): a portable, self-describing CBOR container
-for retro console save files and everything attached to them.
+for retro console save files and everything attached to them, an emulator's save states and
+screenshots among it.
 
 ```rust,no_run
 use one_saves::Bundle;
@@ -16,11 +17,14 @@ println!("content hash: {}", bundle.content_hash()?);
 ## What it does
 
 - **Decodes and encodes** bundles, enforcing the deterministic encoding the format rests on.
-- **Validates** every structural rule: nesting depth, normalized nested bundles, part addressing,
-  hash-value ordering, and the shape rules that make `size` present exactly where it is needed.
-- **Classifies** an arbitrary bundle into the tier it belongs to — a save, a card, a collection,
-  or none of the three — so every consumer reads the same file the same way. A formatted card with
-  nothing on it is still a card, and a collection is recognised by what it lacks.
+- **Validates** every structural rule, at every depth: what each shape may hold, normalized nested
+  bundles, part addressing, hash-value ordering, and the rules that make `size` present exactly
+  where it is needed. One malformed save fails the card it sits on, since what a decoder salvaged
+  would be a bundle nobody wrote.
+- **Reads a bundle's shape** — a save, a save state, a screenshot, a card, a device or a
+  collection — and holds its header and its parts to that shape's rules, so every consumer reads
+  the same file the same way. A state names the core it loads into, holds exactly one `state` part
+  and at most one screenshot, and says when and with what it was taken.
 - **Hashes** a bundle two ways. The *file hash* identifies this exact file; the *content hash* is
   a pure function of what the bundle says, and is what a content-addressable store keys on.
 - **Types the extension keys the specification defines** — a clock reading, a label, an icon, a
@@ -35,12 +39,13 @@ println!("content hash: {}", bundle.content_hash()?);
 `Strictness::Decoder` is what to ship: an unrecognised integer key is kept and round-tripped,
 because the only thing it can be is a field a later minor version assigned.
 
-`Strictness::Schema` is the v0.1 schema exactly, which rejects such a key. It is what the
-conformance corpus tests, and it is not what a shipped decoder should do.
+`Strictness::Schema` is the schema of the version this crate implements, exactly, which rejects
+such a key. It is what the conformance corpus tests, and it is not what a shipped decoder should
+do.
 
 ## Conformance
 
-Passes all 73 cases of the corpus published with the specification, plus direct tests for the four
+Passes all 129 cases of the corpus published with the specification, plus direct tests for the four
 properties the corpus README says a green run cannot prove. See the [workspace README][root].
 
 ## Features

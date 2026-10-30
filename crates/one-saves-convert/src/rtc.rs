@@ -234,7 +234,7 @@ impl From<S3511aClock> for RtcS3511a {
 ///
 /// The anchor is key 2. Where a bundle has none, the chip resumes from its components with no
 /// time passed, so the anchor is the moment of rebuilding, which is what `x.1sav.rtc` says a
-/// consumer should use. Neither the reading nor `created_at` stands in for it: the one is what the
+/// consumer should use. Neither the reading nor `bundled_at` stands in for it: the one is what the
 /// chip says rather than when it was taken, and the other is when the bundle was assembled.
 fn s3511a_of(bundle: &one_saves::Bundle) -> Option<(RtcS3511a, i64)> {
     let chip = bundle.header.extensions.get::<RtcS3511a>()?;
@@ -1755,7 +1755,7 @@ mod tests {
     fn a_chip_without_an_anchor_resumes_from_the_moment_it_is_rebuilt() {
         // A producer that keeps no anchor leaves key 2 out, as one-saves 0.4.0 did. The chip then
         // resumes from its components with no time passed, which is the moment of rebuilding.
-        // The reading is not the anchor, and neither is `created_at`, however close either is.
+        // The reading is not the anchor, and neither is `bundled_at`, however close either is.
         use one_saves::{Header, Name, Part, Source};
         let mut extensions = one_saves::Extensions::new();
         extensions.insert(Rtc::new(1_786_556_383));
@@ -1768,7 +1768,7 @@ mod tests {
         let header = Header::default()
             .source(Source::default().core(Name::parse("mgba").unwrap()))
             .extensions(extensions)
-            .created_at(1_786_556_383);
+            .bundled_at(1_786_556_383);
         let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
 
         let before = now();

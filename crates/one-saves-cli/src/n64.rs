@@ -85,7 +85,7 @@ pub fn convert(
 ) -> Result<(Bundle, String), Box<dyn std::error::Error>> {
     let core_name = source.as_ref().and_then(|s| s.core.as_ref()).map(ToString::to_string);
     let stated = args.n64_save.as_deref().map(parse_chip).transpose()?.or(rom_save);
-    let options = N64Options { source, game, description: args.description.clone(), created_at: None };
+    let options = N64Options { source, game, description: args.description.clone(), bundled_at: None };
 
     let (bundle, label) = if let Some(read) = read_whole_console(bytes, extension, stated, &options)? {
         read

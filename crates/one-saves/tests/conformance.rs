@@ -57,7 +57,7 @@ fn cases() -> Vec<Case> {
 /// The corpus is run at [`Strictness::Schema`].
 ///
 /// Two invalid cases — `header-unknown-integer-key` and `part-unknown-integer-key` — are invalid
-/// against the version 0.4 schema and *accepted* by a shipped decoder, which ignores and
+/// against the version 0.6 schema and *accepted* by a shipped decoder, which ignores and
 /// round-trips an integer key it does not know. Running the corpus in decoder mode would fail
 /// those two for being right. A shape a later version assigned is the same asymmetry; see
 /// `a_decoder_round_trips_a_shape_a_later_version_defined` for why the corpus cannot show it.
@@ -68,7 +68,7 @@ fn corpus() {
 
     // A manifest this harness failed to read would otherwise pass by testing nothing.
     let (valid, invalid): (Vec<_>, Vec<_>) = cases.iter().partition(|c| c.expect_valid);
-    assert_eq!((valid.len(), invalid.len()), (28, 66), "the corpus is not the size it should be");
+    assert_eq!((valid.len(), invalid.len()), (37, 92), "the corpus is not the size it should be");
 
     for case in cases {
         let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
@@ -165,7 +165,7 @@ fn unknown_names_and_keys_survive_a_round_trip() {
 /// A shape a later minor version assigned is round-tripped, not rejected.
 ///
 /// The corpus covers half of this — `shape-unknown` is invalid against the schema, which pins the
-/// four shapes 0.2 defines. It cannot cover the other half: the harness runs everything at
+/// six shapes 0.6 defines. It cannot cover the other half: the harness runs everything at
 /// [`Strictness::Schema`], and the manifest has no category for "invalid to the schema, fine for a
 /// decoder". So the accepting side is built here, exactly as it is for the two unknown-integer-key
 /// cases below.
@@ -179,7 +179,7 @@ fn a_decoder_round_trips_a_shape_a_later_version_defined() {
     );
     let bytes = later.to_vec().expect("encodes");
 
-    // The schema pins the four this version defines, so it refuses.
+    // The schema pins the six this version defines, so it refuses.
     assert!(
         Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
         "the schema must refuse a shape it does not define"
@@ -200,7 +200,7 @@ fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
 
         assert!(
             Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
-            "{name} must fail against the version 0.4 schema"
+            "{name} must fail against the version 0.6 schema"
         );
 
         let bundle = Bundle::from_slice(&bytes)
@@ -244,8 +244,8 @@ fn a_source_names_its_core_and_platform_apart_from_its_app() {
 
 /// What each shape may hold, which is what replaced the depth cap in 0.2.
 ///
-/// A save holds no nested bundle, a card holds saves, a device holds cards and saves, and a
-/// collection holds anything but another collection. Nesting is bounded by those rules rather
+/// A save, a state and a screenshot hold no nested bundle, a card holds saves, a device holds
+/// cards and saves, and a collection holds anything but another collection. Nesting is bounded by those rules rather
 /// than by counting, so the check is that each refusal names the shape that refused.
 #[test]
 fn a_shape_holds_only_what_its_document_allows() {
@@ -286,6 +286,22 @@ fn a_shape_holds_only_what_its_document_allows() {
     // A device holds cards and saves, never a collection.
     assert!(wrap(&collection, Shape::Device).validate().is_err(), "a device holds no collection");
 
+    // A state travels beside an in-game save in a collection, and inside nothing else.
+    let source = one_saves::Source::default().core(Name::parse("mgba").unwrap());
+    let state = Bundle::new(
+        Header::new(Shape::State).source(source),
+        vec![Part::new(0, *b"CORE").kind(PartKind::State)],
+    );
+    state.validate().expect("a bare state is valid");
+    wrap(&state, Shape::Collection).validate().expect("a collection holds a state");
+    assert!(wrap(&state, Shape::Device).validate().is_err(), "a device holds no state");
+    let mut holding = wrap(&save, Shape::Collection);
+    holding.header.shape = Shape::State;
+    holding.header.source = state.header.source.clone();
+    holding.parts.insert(0, Part::new(0, *b"CORE").kind(PartKind::State));
+    holding.parts[1].id = 1;
+    assert!(holding.validate().is_err(), "a state holds no nested bundle");
+
     // And every one of a device's parts names a role, since that is the only thing telling two
     // components apart: without it both would fall back to `primary`.
     let mut roleless = wrap(&save, Shape::Device);
@@ -297,7 +313,7 @@ fn a_shape_holds_only_what_its_document_allows() {
 ///
 /// Since 0.2 a bundle names its own shape, so this is no longer a test of a derivation. What it
 /// pins is the mapping from the slug on the wire to [`Shape`], and that the corpus still exercises
-/// all four: a decoder that silently read every shape as `save` would pass a round-trip test and
+/// all six: a decoder that silently read every shape as `save` would pass a round-trip test and
 /// fail this one.
 #[test]
 fn valid_cases_carry_the_shapes_the_corpus_describes() {
@@ -311,12 +327,22 @@ fn valid_cases_carry_the_shapes_the_corpus_describes() {
         // "One console's storage read whole. A Sega CD carries internal backup RAM and a Backup
         // RAM Cart." Two places, one console.
         ("device", Shape::Device),
-        // One game whose state spans a cartridge and a Controller Pak. Before 0.2 this was the
+        // One game whose save spans a cartridge and a Controller Pak. Before 0.2 this was the
         // case that fell through every tier; it is a device, because the console is what keeps
         // the two halves together.
         ("cartridge-and-pak", Shape::Device),
         // "No system, no game, no card of its own, and entries that do not agree on a system."
         ("collection", Shape::Collection),
+        // "A save state at its smallest: the core it loads into, and the core's own data."
+        ("state-minimal", Shape::State),
+        // "mGBA's own state file is a PNG": a state part, a screenshot and an ordinary save part,
+        // which is still one state rather than a save with a state beside it.
+        ("state-with-in-game-save", Shape::State),
+        // "A screenshot on its own, linked to its game and the emulator that took it."
+        ("screenshot", Shape::Screenshot),
+        // "One game's in-game save beside a state and a screenshot of it. Each stays a bundle of
+        // its own."
+        ("collection-of-one-game", Shape::Collection),
     ];
 
     let mut failures = Vec::new();
@@ -330,7 +356,7 @@ fn valid_cases_carry_the_shapes_the_corpus_describes() {
     }
     assert!(failures.is_empty(), "{} case(s) failed:\n{}", failures.len(), failures.join("\n"));
 
-    // Every valid case names a shape this version defines, and between them they cover all four.
+    // Every valid case names a shape this version defines, and between them they cover all six.
     let mut seen = std::collections::BTreeSet::new();
     for case in cases().into_iter().filter(|c| c.expect_valid) {
         let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
@@ -345,7 +371,81 @@ fn valid_cases_carry_the_shapes_the_corpus_describes() {
     }
     assert_eq!(
         seen.iter().map(String::as_str).collect::<Vec<_>>(),
-        ["card", "collection", "device", "save"],
+        ["card", "collection", "device", "save", "screenshot", "state"],
         "the corpus should exercise every shape"
     );
+}
+
+/// The keys 0.6 gave a state are read as fields, not carried as integer keys nobody knows.
+///
+/// The schema refuses `taken_at` on a save because key 7 is not in a save's header, and a decoder
+/// that predated 0.6 would pass the case at the schema level for that reason while accepting it
+/// in decoder mode, keeping key 7 as a later version's. So a shipped decoder is held to refusing
+/// these too, which it can only do by knowing what each key is, and the valid cases are checked
+/// for what they say.
+#[test]
+fn a_state_says_when_and_with_what_it_was_taken() {
+    use one_saves::extension::{CheatsMgba, Rtc, RtcS3511a};
+    use one_saves::{ByteOrder, Origin, PartKind, Recorded, WordSize};
+
+    let read = |name: &str| {
+        let bytes = fs::read(corpus_dir().join(format!("valid/{name}.cbor"))).expect("read case");
+        Bundle::from_slice_with(&bytes, Strictness::Schema).unwrap_or_else(|e| panic!("{name}: {e}"))
+    };
+
+    let taken = read("state-taken-with");
+    assert_eq!(taken.header.taken_at, Some(1_793_000_000));
+    let with = taken.header.taken_with.as_ref().expect("taken_with");
+    assert_eq!(with.byte_order, Some(Recorded::Known(ByteOrder::Little)));
+    assert_eq!(with.word_size, Some(Recorded::Known(WordSize::Bits64)));
+    assert_eq!(with.language, Some(Recorded::Known("ja".to_owned())));
+    let firmware = with.firmware.as_ref().and_then(Recorded::known).expect("a known BIOS");
+    assert_eq!(firmware.keys().map(String::as_str).collect::<Vec<_>>(), ["dc/dc_boot.bin"]);
+    let options = with.options.as_ref().and_then(Recorded::known).expect("the core's options");
+    assert_eq!(options.get("reicast_region").map(String::as_str), Some("Japan"));
+    assert!(with.unknown.is_empty(), "every key in it is a field");
+
+    // Null and absence say different things: DuckStation booted a BIOS nobody could name, and its
+    // state does not depend on the host's byte order.
+    let duckstation = read("state-duckstation");
+    let with = duckstation.header.taken_with.as_ref().expect("taken_with");
+    assert_eq!(with.firmware, Some(Recorded::Unknown));
+    assert_eq!(with.format_version, Some(Recorded::Known(72)));
+    assert_eq!(with.byte_order, None);
+
+    assert_eq!(read("state-auto").header.origin, Some(Origin::Auto));
+    assert_eq!(read("state-undo").header.origin, Some(Origin::Undo));
+    assert_eq!(read("state-undo").parts[0].slot, Some(2));
+
+    // The mGBA case: the cheats on the state part, the clock on the header, and an ordinary save
+    // beside the core's data.
+    let mgba = read("state-with-in-game-save");
+    let kinds: Vec<&PartKind> = mgba.parts.iter().map(|part| &part.kind).collect();
+    assert_eq!(kinds, [&PartKind::State, &PartKind::Screenshot, &PartKind::Save]);
+    let cheats = mgba.parts[0].extensions.get::<CheatsMgba>().expect("mGBA's cheats");
+    assert_eq!(cheats.sets[0].name.as_deref(), Some("Infinite money"));
+    assert_eq!(cheats.sets[0].directives, ["GSAv1"]);
+    assert!(mgba.header.extensions.get::<Rtc>().is_some(), "the clock's reading");
+    assert!(mgba.header.extensions.get::<RtcS3511a>().is_some(), "and its chip");
+
+    for name in ["taken-at-on-a-save", "taken-with-on-a-screenshot", "origin-on-a-save", "origin-reverse-dns"]
+    {
+        let bytes = fs::read(corpus_dir().join(format!("invalid/{name}.cbor"))).expect("read case");
+        assert!(
+            Bundle::from_slice(&bytes).is_err(),
+            "{name}: keys 7 to 9 are fields now, not a later version's"
+        );
+    }
+}
+
+/// A malformed bundle fails the file it sits in, however deep, and a decoder keeps none of it.
+///
+/// The corpus runs at [`Strictness::Schema`]. The rule is a decoder's, so it is held to it in its
+/// loose mode too.
+#[test]
+fn one_malformed_save_fails_the_card_it_sits_on() {
+    let bytes =
+        fs::read(corpus_dir().join("invalid/nested-save-spelling-out-a-default.cbor")).expect("read case");
+    let error = Bundle::from_slice(&bytes).expect_err("a card holding a malformed save is malformed");
+    assert!(error.path().starts_with("parts[1]"), "names the save that broke it: {error}");
 }

@@ -19,7 +19,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.2"
+version = "0.6.0"
 edition = "2024"
 # 1.88 is the floor `dcbor` imposes: it uses let-chains and declares no rust-version
 # of its own, so ours has to state the real one.
@@ -35,25 +35,25 @@ keywords = ["1saves", "emulation", "retro", "savegame", "cbor"]
 # `default-features = false` on the two crates that carry optional weight, so a member decides
 # what it pays for rather than inheriting it. Both re-expose what they need as their own features,
 # and both keep it on by default; see each crate's README for the list.
-one-saves = { version = "0.4.2", path = "crates/one-saves", default-features = false }
-one-saves-registry = { version = "0.4.2", path = "crates/one-saves-registry" }
-one-saves-convert = { version = "0.4.2", path = "crates/one-saves-convert", default-features = false }
+one-saves = { version = "0.6.0", path = "crates/one-saves", default-features = false }
+one-saves-registry = { version = "0.6.0", path = "crates/one-saves-registry" }
+one-saves-convert = { version = "0.6.0", path = "crates/one-saves-convert", default-features = false }
 # One crate per card filesystem. None of them depends on anything, in this workspace or outside it,
 # so a consumer that only wants to read a card takes one and none of the container above it. They
 # still share the workspace version: nothing here is released without the rest.
-dreamcast-vmu = { version = "0.4.2", path = "crates/dreamcast-vmu" }
-gc-memcard = { version = "0.4.2", path = "crates/gc-memcard" }
-n64-cpak = { version = "0.4.2", path = "crates/n64-cpak" }
-neogeo-memcard = { version = "0.4.2", path = "crates/neogeo-memcard" }
-ps1-memcard = { version = "0.4.2", path = "crates/ps1-memcard" }
-ps2-memcard = { version = "0.4.2", path = "crates/ps2-memcard" }
-saturn-backup = { version = "0.4.2", path = "crates/saturn-backup" }
+dreamcast-vmu = { version = "0.6.0", path = "crates/dreamcast-vmu" }
+gc-memcard = { version = "0.6.0", path = "crates/gc-memcard" }
+n64-cpak = { version = "0.6.0", path = "crates/n64-cpak" }
+neogeo-memcard = { version = "0.6.0", path = "crates/neogeo-memcard" }
+ps1-memcard = { version = "0.6.0", path = "crates/ps1-memcard" }
+ps2-memcard = { version = "0.6.0", path = "crates/ps2-memcard" }
+saturn-backup = { version = "0.6.0", path = "crates/saturn-backup" }
 # What a game's own media says about it: a disc image's system and serial, a ROM's system, header
 # and cartridge hardware. Each depends on the registry for the systems it names and on nothing else
 # outside this workspace, so a caller sorting a library of dumps needs neither the format nor the
 # converters.
-disc-id = { version = "0.4.2", path = "crates/disc-id" }
-rom-id = { version = "0.4.2", path = "crates/rom-id" }
+disc-id = { version = "0.6.0", path = "crates/disc-id" }
+rom-id = { version = "0.6.0", path = "crates/rom-id" }
 
 dcbor = "0.25"
 # CHD disc images, for disc-id's `chd` feature only.
@@ -63,14 +63,15 @@ sha2 = "0.11"
 md-5 = "0.11"
 crc32fast = "1.4"
 zstd = "0.13"
-# Gzip, for the one producer that compresses what it writes: standalone Mednafen gzips a Saturn
-# Backup RAM Cart and leaves the internal memory plain. `zlib-rs` rather than the `rust_backend`
-# default: both are pure Rust, and this is the one `zip` already asks flate2 for, so a build that
-# reads archives carries no second inflater to also read a Saturn cart.
+# Gzip and zlib, for the producers that compress what they write: standalone Mednafen gzips a
+# Saturn Backup RAM Cart, and RetroArch, mGBA and DuckStation deflate their save states. `zlib-rs`
+# rather than the `rust_backend` default: both are pure Rust, and this is the one `zip` already
+# asks flate2 for, so a build that reads archives carries no second inflater to read the rest.
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
-# Encoding only, and only for `x.1sav.icon`: a console icon is decoded to pixels here and a
-# consumer should need no decoder of its own. Optional, because a converter that does not carry
-# icons should not compile a deflate implementation to do it.
+# For `x.1sav.icon`, where a console icon is decoded to pixels so a consumer needs no decoder of
+# its own, and for a save state's screenshot, which an emulator keeps as a bare framebuffer and the
+# format carries as a PNG. Optional, because a converter that carries neither should not compile a
+# deflate implementation to do it.
 png = "0.18"
 # Shift-JIS, which is what a PlayStation, a PS2 and a Japanese GameCube release write a title in.
 # A title half-read is worse than one omitted, so this is a real decoder rather than a table of

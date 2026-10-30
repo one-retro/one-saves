@@ -3,12 +3,13 @@
 //!
 //! A retro save is a bare binary dump with no agreed way to say what game it belongs to, what
 //! wrote it, or what else belongs with it. This crate reads and writes the container that fixes
-//! that: typed binary parts plus whatever identifying context a producer has, in one file.
+//! that: typed binary parts plus whatever identifying context a producer has, in one file. The
+//! same container carries an emulator's save states and screenshots, as shapes of their own.
 //!
 //! The specification lives at
-//! <https://docs.1retro.com/specifications/universal-saves-format/>. This crate implements
-//! version 0.1, which is **not yet stabilized** — until 1.0, breaking changes happen in place
-//! under the same bundle tag.
+//! <https://docs.1retro.com/specifications/universal-saves-format/>. This crate implements the
+//! version [`SPEC_VERSION`] names, which is **not yet stabilized** — until 1.0, breaking changes
+//! happen in place under the same bundle tag.
 //!
 //! # Determinism
 //!
@@ -105,6 +106,27 @@
 //! matters, [`from_cbor`](crate::Bundle::from_cbor) skips validation and lets you decode the
 //! outer bundle once without walking into its payloads.
 //!
+//! # Save states and screenshots
+//!
+//! A [`state`](crate::Shape::State) is an emulator's snapshot of a running game, and only the core
+//! that took it loads it, so it never stands in for a save: its `source` names that core, its one
+//! [`State`](crate::PartKind::State) part is the core's data, and its header says
+//! [when](crate::Header::taken_at) and [with what](crate::TakenWith) it was taken. A
+//! [`screenshot`](crate::Shape::Screenshot) is one image on its own, and a state carries one as its
+//! picture. Neither part sits in any other shape, so a consumer restoring a save never meets one.
+//!
+//! ```
+//! use one_saves::{Bundle, Header, Name, Part, PartKind, Shape, Source};
+//!
+//! let source = Source::default().core(Name::parse("mgba").unwrap());
+//! let state = Bundle::new(
+//!     Header::new(Shape::State).source(source).taken_at(1_793_000_000),
+//!     vec![Part::new(0, *b"the core's data").kind(PartKind::State).slot(1)],
+//! );
+//! state.validate()?;
+//! # Ok::<(), one_saves::Error>(())
+//! ```
+//!
 //! # Threads
 //!
 //! Every type here is a plain owned value except for the CBOR under an extension key, which
@@ -113,7 +135,7 @@
 //! feature switches on:
 //!
 //! ```toml
-//! one-saves = { version = "0.5", features = ["multithread"] }
+//! one-saves = { version = "0.6", features = ["multithread"] }
 //! ```
 //!
 //! Turn it on to hold a bundle across an `.await` in a future that has to be `Send`, or to move
@@ -144,7 +166,10 @@ pub use codec::Strictness;
 pub use error::{Error, ErrorKind};
 pub use extension::{Extension, Extensions};
 pub use hash::{HashAlgorithm, HashError, HashValue};
-pub use model::{Bundle, Card, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys};
+pub use model::{
+    Bundle, ByteOrder, Card, Game, GameId, Header, Origin, Part, PartKind, Payload, Recorded, Source,
+    TakenWith, UnknownKeys, WordSize,
+};
 pub use name::{Name, NameError, ReverseDnsName, Slug};
 pub use shape::Shape;
 
@@ -166,7 +191,7 @@ pub const EXTENSION: &str = "1saves";
 pub const MEDIA_TYPE: &str = "application/vnd.1saves+cbor";
 
 /// The version of the specification this crate implements.
-pub const SPEC_VERSION: &str = "0.5";
+pub const SPEC_VERSION: &str = "0.6";
 
 /// How long a part's `path` may run, in bytes.
 ///

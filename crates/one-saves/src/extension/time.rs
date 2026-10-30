@@ -7,7 +7,7 @@ use std::fmt;
 /// No zone is printed, because what the seconds mean is the caller's to say: an `x.1sav.rtc`
 /// reading is an instant, where an `x.1sav.dirent` one is a wall clock read as though it were UTC.
 ///
-/// Public so that a listing shows a header's `created_at` the way the keys here show theirs.
+/// Public so that a listing shows a header's `bundled_at` the way the keys here show theirs.
 #[derive(Debug, Clone, Copy)]
 pub struct Civil(pub i64);
 

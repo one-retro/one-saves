@@ -1,10 +1,10 @@
 {
   "corpus": "Universal Saves Format conformance cases",
-  "spec_version": "0.5",
+  "spec_version": "0.6",
   "generated_from": "test/bundles.js",
   "counts": {
-    "valid": 28,
-    "invalid": 66
+    "valid": 37,
+    "invalid": 92
   },
   "cases": [
     {
@@ -54,7 +54,7 @@
       "expect": "valid",
       "file": "valid/device.cbor",
       "sha256": "c578027b7faefee949ad1cf3c9fc64c5f5e0a2b575bca549d8fdce37717f0859",
-      "note": "One console's storage read whole. A Sega CD carries internal backup RAM and a Backup RAM Cart at once; neither is one game's state, and the pair is not a collection, because both came off one system."
+      "note": "One console's storage read whole. A Sega CD carries internal backup RAM and a Backup RAM Cart at once; neither is one game's save, and the pair is not a collection, because both came off one system."
     },
     {
       "name": "collection",
@@ -82,14 +82,14 @@
       "expect": "valid",
       "file": "valid/cartridge-and-pak.cbor",
       "sha256": "2a6302f15394a1d4b07738599e419b48900ff078eb0c103dbcde37e5cd591758",
-      "note": "One game whose state spans a cartridge and a memory card, which is neither a card (the bundle is not one) nor a collection (it has a system and a game). Mixing a plain save part with a `bundle` part is what covers it."
+      "note": "One game whose save spans a cartridge and a memory card, which is neither a card (the bundle is not one) nor a collection (it has a system and a game). Mixing a plain save part with a `bundle` part is what covers it."
     },
     {
       "name": "fully-identified",
       "expect": "valid",
       "file": "valid/fully-identified.cbor",
       "sha256": "59da31aaf04cd0bcde579e1c5bd78e9d5cae330418995a069b1fd70036aee7a3",
-      "note": "Every identification hint at once, plus a populated metadata slot. A real producer emits the hashes it has already computed rather than all four; this is the upper bound, and the only fixture carrying a clock reading."
+      "note": "Every identification hint at once, plus a populated metadata slot. A real producer emits the hashes it has already computed rather than all four; this is the upper bound, and the only save fixture with a clock reading."
     },
     {
       "name": "compressed-and-aux",
@@ -204,12 +204,75 @@
       "note": "`game` takes extension keys too, for a clue none of its integer keys names. A cartridge reader that read only the ROM header has a serial and a title and no hash, and the header's revision byte beside them is what tells two releases sharing that serial apart. A consumer that does not recognise the key skips it when matching and hands it back unchanged."
     },
     {
+      "name": "state-minimal",
+      "expect": "valid",
+      "file": "valid/state-minimal.cbor",
+      "sha256": "d6a4645d7d21ed59051bcc47f19458b55908ec2ee08b59912a4649a7a2e742bf",
+      "note": "A save state at its smallest: the core it loads into, and the core's own data. A state with no game, no time and no screenshot still loads where it was taken, so nothing else is required."
+    },
+    {
+      "name": "state-retroarch",
+      "expect": "valid",
+      "file": "valid/state-retroarch.cbor",
+      "sha256": "ba876fd8e8e157169eec34019f74c139816826d5d9ef88209a258bbab7555bd3",
+      "note": "A RetroArch state in slot 3, with the screenshot RetroArch keeps beside it. The state part is the RASTATE file's memory block, unwrapped and decompressed. The achievement block is RetroArch's own and opaque, so it rides as an `aux` part named for the block it came from."
+    },
+    {
+      "name": "state-with-in-game-save",
+      "expect": "valid",
+      "file": "valid/state-with-in-game-save.cbor",
+      "sha256": "f748dfc102f7f1d44e403f086a987e953cb77f5c42e0ec9c2152389031800b55",
+      "note": "mGBA's own state file is a PNG: its image is the screenshot, and its chunks carry the core's data and the in-game save beside it. Split, that is a state part, a screenshot, and an ordinary save part, which a consumer can lift into a save bundle of its own. The cartridge's clock stays inside the core's data, and the two clock keys are a reading of it, which that lifted save takes with it. The player's cheats ride on the state part, and stay behind when the save is lifted."
+    },
+    {
+      "name": "state-auto",
+      "expect": "valid",
+      "file": "valid/state-auto.cbor",
+      "sha256": "666be2bd257708ec80118fec86140a6a1de6f54a7bd7334e7b73da83e6b2896a",
+      "note": "The state an emulator writes on its own to resume from, as RetroArch's `.state.auto` is. Neither it nor its screenshot has a slot, which is fine: no two parts of one kind share an address, and these are two kinds."
+    },
+    {
+      "name": "state-undo",
+      "expect": "valid",
+      "file": "valid/state-undo.cbor",
+      "sha256": "d85effd502b9097f49a55bb9c2f369f6a2c09e38260d10c13d7e3e46847c7a87",
+      "note": "A state the emulator kept so a player can take back a save: what slot 2 held before it was overwritten. Without a slot, an undo state is the game just before a load."
+    },
+    {
+      "name": "state-taken-with",
+      "expect": "valid",
+      "file": "valid/state-taken-with.cbor",
+      "sha256": "d771a7ff6113643a3bfbb52a6e2c633a1cd551f324782a59f94f08001ce0b9aa",
+      "note": "Everything a state can record about what it was taken with: the host's byte order and word size, the BIOS the machine booted, the machine's language setting and the core's options."
+    },
+    {
+      "name": "state-duckstation",
+      "expect": "valid",
+      "file": "valid/state-duckstation.cbor",
+      "sha256": "db7d91165128912976da73957c9b2d5370cdd572a6ec597cae292410ea855fed",
+      "note": "A DuckStation state lifted out of its file. The version DuckStation stamps in its own header goes in `format_version`, since the core's data no longer carries it. The producer could not tell which BIOS the machine booted, which null says; leaving the key out would say there was none."
+    },
+    {
+      "name": "screenshot",
+      "expect": "valid",
+      "file": "valid/screenshot.cbor",
+      "sha256": "6e32a94795bb4063e790139ef88cdce4a8dd82631700aec7f8c768a009867280",
+      "note": "A screenshot on its own, linked to its game and the emulator that took it. PPSSPP writes JPEG, and it stays JPEG: encoding it again could not get back what the first encode dropped."
+    },
+    {
+      "name": "collection-of-one-game",
+      "expect": "valid",
+      "file": "valid/collection-of-one-game.cbor",
+      "sha256": "38ebc47f679b6c970b32396e03d54bc58f75027719652a4ad5a5d542197b0abc",
+      "note": "One game's in-game save beside a state and a screenshot of it. Each stays a bundle of its own, so the in-game save's content hash does not move every time a state is taken, and a collection is what puts them in one file."
+    },
+    {
       "name": "part-unknown-integer-key",
       "expect": "invalid",
       "rejected_by": "schema",
       "file": "invalid/part-unknown-integer-key.cbor",
       "sha256": "f35a7f557ea356a7f764c22b6b31626ddd8da0891fcf91824df0a1ad5df5faaa",
-      "note": "This schema describes v0.5, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+      "note": "This schema describes v0.6, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
     },
     {
       "name": "header-unknown-integer-key",
@@ -217,7 +280,7 @@
       "rejected_by": "schema",
       "file": "invalid/header-unknown-integer-key.cbor",
       "sha256": "38d3710e8cca5034c58a831bb3b81fa64f54c8c129909e229af966448c92f818",
-      "note": "This schema describes v0.5, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+      "note": "This schema describes v0.6, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
     },
     {
       "name": "header-without-shape",
@@ -345,7 +408,7 @@
       "rejected_by": "schema",
       "file": "invalid/path-spelled-empty.cbor",
       "sha256": "76772f6a5c641d1d8f9c6230f2892a1d717206f9f1e9079f0d9f69a78bd3ea6d",
-      "note": "A default written out, which would give one part several encodings. The schema catches these two; a spelled-out `role: \"primary\"` it cannot, since `primary` is a well-formed slug, so that one is pinned in layout.test.js."
+      "note": "A default written out, which would give one part several encodings. Each of the four is written by leaving its key out."
     },
     {
       "name": "encoding-spelled-none",
@@ -353,7 +416,23 @@
       "rejected_by": "schema",
       "file": "invalid/encoding-spelled-none.cbor",
       "sha256": "53e67168090794ea9b89ae614bddf4875630dbbb134e10696e8e459bb7109e5f",
-      "note": "A default written out, which would give one part several encodings. The schema catches these two; a spelled-out `role: \"primary\"` it cannot, since `primary` is a well-formed slug, so that one is pinned in layout.test.js."
+      "note": "A default written out, which would give one part several encodings. Each of the four is written by leaving its key out."
+    },
+    {
+      "name": "kind-spelled-save",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/kind-spelled-save.cbor",
+      "sha256": "b8e90649e36178d23c74624db3e65e184a9605833cb192e2b863fd44327e9740",
+      "note": "A default written out, which would give one part several encodings. Each of the four is written by leaving its key out."
+    },
+    {
+      "name": "role-spelled-primary",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/role-spelled-primary.cbor",
+      "sha256": "bec12084a19ce63f48f68c3073b39e8490cb3ed366471b45376de9e646f0a9f6",
+      "note": "A default written out, which would give one part several encodings. Each of the four is written by leaving its key out."
     },
     {
       "name": "role-with-underscore",
@@ -524,12 +603,164 @@
       "note": "An extension key is a reverse-DNS name or it is nothing. Without that there is no way to tell whose key this is, which is the one thing the namespace buys. A bare word and an uppercase name are both unmintable, in `game` as much as on the header or a part."
     },
     {
-      "name": "created-at-as-float",
+      "name": "bundled-at-as-float",
       "expect": "invalid",
       "rejected_by": "schema",
-      "file": "invalid/created-at-as-float.cbor",
+      "file": "invalid/bundled-at-as-float.cbor",
       "sha256": "c38af71c37c676d75b7fe4f75d5691b07be8fd710b87efb7ba272f4300329e75",
       "note": "Tag 1 admits a float and this format does not. Left open, one instant would have two conforming encodings and the content hash would stop being a function of what the bundle says."
+    },
+    {
+      "name": "state-without-source",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/state-without-source.cbor",
+      "sha256": "265a96175ca84937d490f81778d35000221b17672a365abd1b151a25690c38bb",
+      "note": "A state only loads into the core that took it, so its header has to say which: a core, or the app where nothing runs one."
+    },
+    {
+      "name": "state-source-without-core-or-app",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/state-source-without-core-or-app.cbor",
+      "sha256": "4f7841c8ea629477798449c8e154f812d523dc7a08bc6fb9395860a94de84e60",
+      "note": "A state only loads into the core that took it, so its header has to say which: a core, or the app where nothing runs one."
+    },
+    {
+      "name": "state-part-in-a-save",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/state-part-in-a-save.cbor",
+      "sha256": "da94e5199d2a4da9bad07e2c67eb2690a950e94fa9772de252e92dc64cbbc958",
+      "note": "A state part and a screenshot part sit only in the shapes that hold them, so a consumer restoring an in-game save never meets either."
+    },
+    {
+      "name": "screenshot-part-in-a-save",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/screenshot-part-in-a-save.cbor",
+      "sha256": "c82006b11eb300420db44e01fe02d378af13b5e8977d43879e551e54e22bd95f",
+      "note": "A state part and a screenshot part sit only in the shapes that hold them, so a consumer restoring an in-game save never meets either."
+    },
+    {
+      "name": "state-part-with-content-type",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/state-part-with-content-type.cbor",
+      "sha256": "bd637d0d49fde738f6cea49236efa6381c7544347f2e4f18d33e01458a962d10",
+      "note": "A state part is the core's own data, which has no media type to name."
+    },
+    {
+      "name": "screenshot-without-content-type",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/screenshot-without-content-type.cbor",
+      "sha256": "fbc9c1080b8e4f0a189ec266246edefdb19c522e6510d85a7ba7600afcf645b4",
+      "note": "A screenshot names its image type, and the type is one every consumer can show. Anything else is encoded as PNG on the way in."
+    },
+    {
+      "name": "screenshot-as-webp",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/screenshot-as-webp.cbor",
+      "sha256": "46f5b076d04e3c5f80beea15a276926121c72e831e184dced0b61f018d5cbe59",
+      "note": "A screenshot names its image type, and the type is one every consumer can show. Anything else is encoded as PNG on the way in."
+    },
+    {
+      "name": "screenshot-with-two-images",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/screenshot-with-two-images.cbor",
+      "sha256": "7b4a6a24e101358d63e5b9bddf269e44f3c5dbf92a02789349dd32eba76bf874",
+      "note": "A screenshot bundle is one image. Two images are two bundles, which a collection can hold together."
+    },
+    {
+      "name": "screenshot-holding-a-save",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/screenshot-holding-a-save.cbor",
+      "sha256": "ea42907d88fc35ff8fb4dd92aad5e15d7d59022a38d72956f2dce406159dbe0b",
+      "note": "A screenshot bundle is one image. Two images are two bundles, which a collection can hold together."
+    },
+    {
+      "name": "taken-at-on-a-save",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/taken-at-on-a-save.cbor",
+      "sha256": "30997c78991b799fc62738dcb6b65f601f35e4934855e463b37cc53ec17c4200",
+      "note": "`taken_at` is when a state or a screenshot was taken, which an in-game save has no field for. `taken_with` and `origin` belong to a state alone."
+    },
+    {
+      "name": "taken-with-on-a-screenshot",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/taken-with-on-a-screenshot.cbor",
+      "sha256": "df133973f9c6c259869574460d3b1cf655d9acae8700fd7f92eeef9d7f1509f8",
+      "note": "`taken_at` is when a state or a screenshot was taken, which an in-game save has no field for. `taken_with` and `origin` belong to a state alone."
+    },
+    {
+      "name": "origin-on-a-save",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/origin-on-a-save.cbor",
+      "sha256": "269c9015883536e35e3795f1cb3c0fe68d125f2e04296d22cd4c11be8f4427b7",
+      "note": "`taken_at` is when a state or a screenshot was taken, which an in-game save has no field for. `taken_with` and `origin` belong to a state alone."
+    },
+    {
+      "name": "origin-reverse-dns",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/origin-reverse-dns.cbor",
+      "sha256": "6bbdb1fbb6f57cc2d41b7c7f556c8b462716ad60419ef4dac639c31ed4eee6d5",
+      "note": "An origin names a category everyone shares, so like a binding it is spec-owned, and a minted one is malformed."
+    },
+    {
+      "name": "byte-order-unknown",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/byte-order-unknown.cbor",
+      "sha256": "86de53020d997a87952926b3558bc5165d3905f9985c253a83670decb0fe0acb",
+      "note": "Each `taken_with` entry takes only its own values, so that one setting has one spelling. A byte order is little or big and a word size 32 or 64 bits. A format version is a number, never the text a file writes it as. A language tag is in BCP 47's own case, with the language in lower case."
+    },
+    {
+      "name": "word-size-16",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/word-size-16.cbor",
+      "sha256": "0c1f8b94163d4c034454c068a4dcda3ce0a73672088e5fd9881ee739eb6b180d",
+      "note": "Each `taken_with` entry takes only its own values, so that one setting has one spelling. A byte order is little or big and a word size 32 or 64 bits. A format version is a number, never the text a file writes it as. A language tag is in BCP 47's own case, with the language in lower case."
+    },
+    {
+      "name": "format-version-as-text",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/format-version-as-text.cbor",
+      "sha256": "c796b488e892c68e8c71d5b69e69e6bba5aab254845b23dbd70297ca38c1be43",
+      "note": "Each `taken_with` entry takes only its own values, so that one setting has one spelling. A byte order is little or big and a word size 32 or 64 bits. A format version is a number, never the text a file writes it as. A language tag is in BCP 47's own case, with the language in lower case."
+    },
+    {
+      "name": "language-not-canonical",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/language-not-canonical.cbor",
+      "sha256": "6813dfd88bca22bfbf82078fe5ac0cc27f1d3112229be93c0ab28bdaa3aad88d",
+      "note": "Each `taken_with` entry takes only its own values, so that one setting has one spelling. A byte order is little or big and a word size 32 or 64 bits. A format version is a number, never the text a file writes it as. A language tag is in BCP 47's own case, with the language in lower case."
+    },
+    {
+      "name": "empty-core-options",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/empty-core-options.cbor",
+      "sha256": "6b99fd2770884a7a42c949e4579840b519cefcb045f784be4ebe8a9e41f3af76",
+      "note": "Empty maps, which absence already encodes."
+    },
+    {
+      "name": "empty-firmware",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/empty-firmware.cbor",
+      "sha256": "f5a4882dd07522e5fefef004260b82bfa97af01ca65e55901764fce3174f9ee5",
+      "note": "Empty maps, which absence already encodes."
     },
     {
       "name": "rom-hash-wrong-length",
@@ -708,6 +939,14 @@
       "note": "The outer sha256 is the inner bundle's identity, which is what makes extracting a save a byte copy. Here it names bytes the payload is not."
     },
     {
+      "name": "nested-save-spelling-out-a-default",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/nested-save-spelling-out-a-default.cbor",
+      "sha256": "e87cbac13f22b61303d8dd232a9184e8616a81a3324dad8bfaeb2dc897627725",
+      "note": "One bad part makes the whole bundle malformed, however deep it sits. The card and its first save are fine; the second save writes out a default, so the card is malformed too, and a decoder keeps neither save."
+    },
+    {
       "name": "collection-in-a-collection",
       "expect": "invalid",
       "rejected_by": "structure",
@@ -730,6 +969,38 @@
       "file": "invalid/parts-share-an-address.cbor",
       "sha256": "f76ae1ecabc30f2e697df0c9ff4b983d2864c2fbb1c3200eecabd26069867b74",
       "note": "No two parts may agree on `role`, `path` and `slot` together, and with all three defaulting to absence two bare parts collide on every one of them. That is a bundle a consumer cannot name a part in, or match against a target, so it cannot act on it at all."
+    },
+    {
+      "name": "state-without-a-state-part",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/state-without-a-state-part.cbor",
+      "sha256": "df16f1f7c123e583de3c21a923cadccf53464854cf3b6052446dfa0e6b5ddcb0",
+      "note": "A state bundle holds exactly one state part. Without one there is nothing to load, and with two a consumer cannot tell which one the bundle is."
+    },
+    {
+      "name": "state-with-two-state-parts",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/state-with-two-state-parts.cbor",
+      "sha256": "f78ebf57bc6f4d96ec650bcaf53ad5e8ba9014676ee8b9a5b0ae8c6415a8a365",
+      "note": "A state bundle holds exactly one state part. Without one there is nothing to load, and with two a consumer cannot tell which one the bundle is."
+    },
+    {
+      "name": "state-with-two-screenshots",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/state-with-two-screenshots.cbor",
+      "sha256": "b461100574b8d5414940092db861133bbdea15cf8c19ffd39269f1d31ead7911",
+      "note": "And at most one screenshot, since the screenshot is the state's picture."
+    },
+    {
+      "name": "state-holding-a-bundle-part",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/state-holding-a-bundle-part.cbor",
+      "sha256": "94160cad6b9412042804e93a9f7c730a4cb2ed9ce8efa9cab71966db87e8c035",
+      "note": "A state holds no nested bundle. A state and an in-game save in one file is a collection of two bundles."
     }
   ]
 }

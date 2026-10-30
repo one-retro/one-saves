@@ -10,18 +10,32 @@ use std::fmt;
 use crate::model::Bundle;
 use crate::name::Slug;
 
-/// What a bundle is: one of the four shapes this version defines, or one it does not know.
+/// What a bundle is: one of the six shapes this version defines, or one it does not know.
 ///
 /// The vocabulary is spec-owned and closed — a producer may not mint one, because a shape needs a
 /// document and rules of its own. A later minor version assigns a new one, which is why
 /// [`Unknown`](Shape::Unknown) exists and why it round-trips rather than failing.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum Shape {
-    /// One game's state; the parts are the regions or files that state is made of.
+    /// One game's in-game save; the parts are the regions or files that save is made of.
     ///
-    /// The default, and the floor of the format: a bare dump with an empty header is this.
+    /// The default, and the floor of the format: a bare dump with an empty header is this. A save
+    /// state is never one: it is a [`State`](Shape::State).
     #[default]
     Save,
+    /// One save state: what an emulator took of a running game, the whole machine at one moment.
+    ///
+    /// Only the core that took it can load it, so `source` is required and names that core, or
+    /// the app where nothing runs one. The parts are exactly one [`state`](crate::PartKind::State)
+    /// part, at most one [`screenshot`](crate::PartKind::Screenshot), the in-game save where the
+    /// emulator keeps one beside the core's data, and `aux` parts for the rest of its file. A
+    /// consumer **must not** write a state's data as an in-game save, or load an in-game save as a
+    /// state.
+    State,
+    /// One image of a game's screen, travelling on its own.
+    ///
+    /// Its one part is a [`screenshot`](crate::PartKind::Screenshot), and nothing else.
+    Screenshot,
     /// One memory card; the parts are one `bundle` per save, plus the card's own image.
     ///
     /// The header's [`card`](crate::Card) map is what makes it one, and is required here.
@@ -51,6 +65,8 @@ impl Shape {
     pub fn as_str(&self) -> &str {
         match self {
             Shape::Save => "save",
+            Shape::State => "state",
+            Shape::Screenshot => "screenshot",
             Shape::Card => "card",
             Shape::Device => "device",
             Shape::Collection => "collection",
@@ -65,6 +81,8 @@ impl Shape {
     pub fn from_slug(slug: Slug) -> Self {
         match slug.as_str() {
             "save" => Shape::Save,
+            "state" => Shape::State,
+            "screenshot" => Shape::Screenshot,
             "card" => Shape::Card,
             "device" => Shape::Device,
             "collection" => Shape::Collection,

@@ -26,6 +26,8 @@ ps1-memcard = { workspace = true, optional = true }
 ps2-memcard = { workspace = true, optional = true }
 saturn-backup = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+zstd = { workspace = true, optional = true }
 encoding_rs = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 crc32fast = { workspace = true, optional = true }
@@ -78,9 +80,16 @@ icon = ["dep:png"]
 # so it is what saves a caller a round trip through a temporary directory. Reading only: an archive
 # is a way a save arrived and not a format this crate writes back.
 archive = ["dep:zip"]
+# Reading and writing the save states RetroArch, mGBA and DuckStation take, and the screenshots in
+# them. Off by default for the reason `icon` is: every one of those emulators compresses, and two of
+# them keep their screenshot as a bare framebuffer the format carries as a PNG, so this compiles a
+# deflate implementation and a PNG encoder. Off, a state is still recognised, and refused in those
+# words rather than misread as a save.
+states = ["dep:flate2", "dep:png"]
 # Forwarded to one-saves, whose `zstd` compiles a C library. Off, a part whose payload carries
-# `encoding: "zstd"` still round-trips; its payload just cannot be inflated.
-zstd = ["one-saves/zstd"]
+# `encoding: "zstd"` still round-trips; its payload just cannot be inflated. With `states`, it is
+# also what reads a DuckStation state compressed the way DuckStation does by default.
+zstd = ["one-saves/zstd", "dep:zstd"]
 # Forwarded to one-saves: `Arc` rather than `Rc` under `dcbor`, which is what makes a `Bundle` and
 # everything this crate hands back `Send` and `Sync`. Needed to hold one across an `.await` in a
 # future that has to be `Send`. Unlike the rest, it is off by default — the atomic refcounts cost

@@ -68,7 +68,11 @@ pub struct Header {
     /// [`Unknown`](Shape::Unknown) and round-trips; see there before acting on one.
     pub shape: Shape,
     /// When the bundle was assembled, in whole epoch seconds.
-    pub created_at: Option<i64>,
+    ///
+    /// Never when the bytes inside it were made: a save written decades ago can be bundled today.
+    /// When a state or a screenshot was taken is [`taken_at`](Header::taken_at). Before 0.6 this
+    /// key was named `created_at`; nothing on the wire changed.
+    pub bundled_at: Option<i64>,
     /// The system **these bytes are a save for**: the one that reads them natively, whatever
     /// happened to write them.
     ///
@@ -83,7 +87,22 @@ pub struct Header {
     /// Present when the bundle *is* a memory card.
     pub card: Option<Card>,
     /// A free-form human-readable note.
+    ///
+    /// Where an emulator lets the player name a state, the name goes here.
     pub description: Option<String>,
+    /// When a state or a screenshot was taken, in whole epoch seconds.
+    ///
+    /// On those two shapes only. It is what a list of slots shows, and it is not
+    /// [`bundled_at`](Header::bundled_at), which can come long after.
+    pub taken_at: Option<i64>,
+    /// What a state was taken with, where that bears on loading it anywhere else.
+    ///
+    /// On a state only.
+    pub taken_with: Option<TakenWith>,
+    /// Who made a state, when it was not the player.
+    ///
+    /// On a state only. Absent means the player made it.
+    pub origin: Option<Origin>,
     /// Extension keys, flat alongside the integer ones.
     pub extensions: Extensions,
     /// Integer keys from a later minor version.
@@ -105,8 +124,8 @@ impl Header {
 
     /// Sets when the bundle was assembled, in whole epoch seconds.
     #[must_use]
-    pub fn created_at(mut self, seconds: impl Into<Option<i64>>) -> Self {
-        self.created_at = seconds.into();
+    pub fn bundled_at(mut self, seconds: impl Into<Option<i64>>) -> Self {
+        self.bundled_at = seconds.into();
         self
     }
 
@@ -145,6 +164,27 @@ impl Header {
         self
     }
 
+    /// Sets when a state or a screenshot was taken, in whole epoch seconds.
+    #[must_use]
+    pub fn taken_at(mut self, seconds: impl Into<Option<i64>>) -> Self {
+        self.taken_at = seconds.into();
+        self
+    }
+
+    /// Sets what a state was taken with.
+    #[must_use]
+    pub fn taken_with(mut self, taken_with: impl Into<Option<TakenWith>>) -> Self {
+        self.taken_with = taken_with.into();
+        self
+    }
+
+    /// Sets who made a state, when it was not the player.
+    #[must_use]
+    pub fn origin(mut self, origin: impl Into<Option<Origin>>) -> Self {
+        self.origin = origin.into();
+        self
+    }
+
     /// Puts an extension value under its key.
     #[must_use]
     pub fn extension<T: Extension>(mut self, value: T) -> Self {
@@ -157,6 +197,235 @@ impl Header {
     pub fn extensions(mut self, extensions: Extensions) -> Self {
         self.extensions = extensions;
         self
+    }
+}
+
+/// Who made a state, when it was not the player.
+///
+/// Spec-owned, like a binding: an origin names a category everyone shares, so a producer may not
+/// mint one. A later minor version can still assign one, which is what
+/// [`Unknown`](Origin::Unknown) holds.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Origin {
+    /// The emulator made it on its own, to resume from: on exit, on sleep or on a timer.
+    ///
+    /// RetroArch's `.state.auto`, the resume states of PCSX2 and DuckStation, and the state an
+    /// Analogue Pocket takes when it sleeps.
+    Auto,
+    /// The emulator kept it so the player can undo taking or loading a state.
+    ///
+    /// With a `slot` on the state part, it is what that slot held before a new state replaced it.
+    /// Without one, it is the game just before a state was loaded, as Snes9x's `.oops` is.
+    Undo,
+    /// An origin a later minor version assigned.
+    ///
+    /// A consumer **must not** show such a state as one the player made.
+    Unknown(Slug),
+}
+
+impl Origin {
+    /// The slug this origin is written as.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Origin::Auto => "auto",
+            Origin::Undo => "undo",
+            Origin::Unknown(slug) => slug.as_str(),
+        }
+    }
+
+    /// The origin a slug names, taking one this version does not define as
+    /// [`Unknown`](Origin::Unknown).
+    #[must_use]
+    pub fn from_slug(slug: Slug) -> Self {
+        match slug.as_str() {
+            "auto" => Origin::Auto,
+            "undo" => Origin::Undo,
+            _ => Origin::Unknown(slug),
+        }
+    }
+}
+
+impl std::fmt::Display for Origin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What a state was taken with, where that bears on loading it anywhere else.
+///
+/// Every entry is optional, and each says one of three things. Absent (`None`) means the entry
+/// does not apply: the core's states do not depend on the host's byte order, or the machine
+/// booted no firmware. [`Recorded::Unknown`] means it applies and the producer does not know it,
+/// which is null on the wire. [`Recorded::Known`] is the value.
+///
+/// A consumer compares each entry it recognises with what it would load the state with, and
+/// warns on a difference. The core has the last word: it can load a state that differs or refuse
+/// one that matches.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct TakenWith {
+    /// The host's byte order, where the core's states depend on it.
+    pub byte_order: Option<Recorded<ByteOrder>>,
+    /// The host's word size, where the core's states depend on it.
+    pub word_size: Option<Recorded<WordSize>>,
+    /// Each file the machine booted, keyed by the path the core loads it from, to its hash
+    /// values: at most one per algorithm, ascending by tag. Never empty when known.
+    pub firmware: Option<Recorded<BTreeMap<String, Vec<HashValue>>>>,
+    /// The machine's language setting, as a BCP 47 tag in its canonical case: `ja`, `en-US`,
+    /// `zh-Hans`.
+    ///
+    /// The language is in lower case, a script in title case and a region in upper case, so one
+    /// setting has one spelling; and the tag stops at the region.
+    pub language: Option<Recorded<String>>,
+    /// The core's options, under the names the core gives them. Never empty when known.
+    pub options: Option<Recorded<BTreeMap<String, String>>>,
+    /// The version an emulator stamps on its states outside the core's data, as DuckStation does
+    /// in its file's header.
+    pub format_version: Option<Recorded<u64>>,
+    /// Extension keys, flat alongside the integer ones, for a condition none of the fields names.
+    pub extensions: Extensions,
+    /// Integer keys from a later minor version.
+    pub unknown: UnknownKeys,
+}
+
+impl TakenWith {
+    /// Whether every entry is absent, which is a shape the format forbids on the wire.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.byte_order.is_none()
+            && self.word_size.is_none()
+            && self.firmware.is_none()
+            && self.language.is_none()
+            && self.options.is_none()
+            && self.format_version.is_none()
+            && self.extensions.is_empty()
+            && self.unknown.is_empty()
+    }
+
+    /// Sets the host's byte order, or that it is not known.
+    #[must_use]
+    pub fn byte_order(mut self, byte_order: impl Into<Recorded<ByteOrder>>) -> Self {
+        self.byte_order = Some(byte_order.into());
+        self
+    }
+
+    /// Sets the host's word size, or that it is not known.
+    #[must_use]
+    pub fn word_size(mut self, word_size: impl Into<Recorded<WordSize>>) -> Self {
+        self.word_size = Some(word_size.into());
+        self
+    }
+
+    /// Sets the files the machine booted, or that they are not known.
+    #[must_use]
+    pub fn firmware(mut self, firmware: impl Into<Recorded<BTreeMap<String, Vec<HashValue>>>>) -> Self {
+        self.firmware = Some(firmware.into());
+        self
+    }
+
+    /// Sets the machine's language setting, or that it is not known.
+    #[must_use]
+    pub fn language(mut self, language: impl Into<Recorded<String>>) -> Self {
+        self.language = Some(language.into());
+        self
+    }
+
+    /// Sets the core's options, or that they are not known.
+    #[must_use]
+    pub fn options(mut self, options: impl Into<Recorded<BTreeMap<String, String>>>) -> Self {
+        self.options = Some(options.into());
+        self
+    }
+
+    /// Sets the version the emulator stamped outside the core's data, or that it is not known.
+    #[must_use]
+    pub fn format_version(mut self, format_version: impl Into<Recorded<u64>>) -> Self {
+        self.format_version = Some(format_version.into());
+        self
+    }
+
+    /// Puts an extension value under its key.
+    #[must_use]
+    pub fn extension<T: Extension>(mut self, value: T) -> Self {
+        self.extensions.insert(value);
+        self
+    }
+}
+
+/// An entry a producer knows, or knows applies without knowing its value.
+///
+/// The second is null on the wire. It says something absence cannot: a DuckStation state whose
+/// producer could not tell which BIOS the machine booted still booted one, and leaving the entry
+/// out would say it booted none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recorded<T> {
+    /// The entry applies, and the producer's source did not keep its value.
+    Unknown,
+    /// The value.
+    Known(T),
+}
+
+impl<T> Recorded<T> {
+    /// The value, where it is known.
+    #[must_use]
+    pub fn known(&self) -> Option<&T> {
+        match self {
+            Recorded::Unknown => None,
+            Recorded::Known(value) => Some(value),
+        }
+    }
+}
+
+impl<T> From<T> for Recorded<T> {
+    fn from(value: T) -> Self {
+        Recorded::Known(value)
+    }
+}
+
+impl From<&str> for Recorded<String> {
+    fn from(value: &str) -> Self {
+        Recorded::Known(value.to_owned())
+    }
+}
+
+/// A host's byte order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ByteOrder {
+    /// Least significant byte first, as x86 and most ARM hosts run.
+    Little,
+    /// Most significant byte first.
+    Big,
+}
+
+impl ByteOrder {
+    /// The text this byte order is written as.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ByteOrder::Little => "little",
+            ByteOrder::Big => "big",
+        }
+    }
+}
+
+/// A host's word size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WordSize {
+    /// A 32-bit host.
+    Bits32,
+    /// A 64-bit host.
+    Bits64,
+}
+
+impl WordSize {
+    /// The size in bits, which is what the format writes.
+    #[must_use]
+    pub fn bits(self) -> u64 {
+        match self {
+            WordSize::Bits32 => 32,
+            WordSize::Bits64 => 64,
+        }
     }
 }
 
@@ -476,9 +745,21 @@ impl Card {
 /// Absent on the wire means [`Save`](PartKind::Save), which is the vast majority of parts.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum PartKind {
-    /// Save data. The default, and never written out.
+    /// An in-game save: what a game wrote to its medium. The default, and never written out.
     #[default]
     Save,
+    /// A save state's own data, as the core that took it loads it.
+    ///
+    /// Only in a [state](crate::Shape::State), which holds exactly one. It names no
+    /// `content_type`, since the data has no media type, and takes `slot` and nothing else of a
+    /// part's addressing: the slot is the number the emulator gave the state.
+    State,
+    /// An image of the game's screen, `image/png` or `image/jpeg`.
+    ///
+    /// Only in a [state](crate::Shape::State), which holds at most one, or as the one part of a
+    /// [screenshot](crate::Shape::Screenshot). `content_type` is required, and the part takes no
+    /// addressing at all.
+    Screenshot,
     /// A complete memory-card image, kept whole instead of split into its saves.
     CardImage,
     /// The payload is itself a complete bundle. This is how a card holds its saves.
@@ -492,10 +773,12 @@ pub enum PartKind {
 }
 
 impl PartKind {
-    /// The kind a name denotes, mapping the three the spec defines and keeping anything else.
+    /// The kind a name denotes, mapping the five the spec writes and keeping anything else.
     #[must_use]
     pub fn from_name(name: Name) -> Self {
         match name.as_str() {
+            "state" => PartKind::State,
+            "screenshot" => PartKind::Screenshot,
             "card-image" => PartKind::CardImage,
             "bundle" => PartKind::Bundle,
             "aux" => PartKind::Aux,
@@ -508,6 +791,8 @@ impl PartKind {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             PartKind::Save => None,
+            PartKind::State => Some("state"),
+            PartKind::Screenshot => Some("screenshot"),
             PartKind::CardImage => Some("card-image"),
             PartKind::Bundle => Some("bundle"),
             PartKind::Aux => Some("aux"),
@@ -606,8 +891,9 @@ impl Part {
 
     /// The address a consumer names this part by: its role, path and slot together.
     ///
-    /// No two parts in one bundle may share it, because those three are how a part is named to a
-    /// user and matched against a target.
+    /// No two parts of one kind in a bundle may share it, because those three are how a part is
+    /// named to a user and matched against a target. Parts of different kinds never clash, so a
+    /// state part and its screenshot need no address at all.
     #[must_use]
     pub fn address(&self) -> (Option<&Slug>, Option<&str>, Option<u64>) {
         (self.role.as_ref(), self.path.as_deref(), self.slot)
@@ -763,7 +1049,7 @@ mod tests {
 
     #[test]
     fn a_spec_kind_round_trips_through_its_name() {
-        for text in ["card-image", "bundle", "aux"] {
+        for text in ["state", "screenshot", "card-image", "bundle", "aux"] {
             let kind = PartKind::from_name(Name::parse(text).unwrap());
             assert_eq!(kind.as_str(), Some(text));
             assert!(!matches!(kind, PartKind::Other(_)), "{text} should be a known kind");

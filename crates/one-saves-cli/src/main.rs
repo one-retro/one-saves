@@ -6,10 +6,11 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use one_saves::extension::{Civil, SHOWN_BYTES, SHOWN_CHARS};
-use one_saves::{Bundle, Game, Name, Part, PartKind, Payload, Source};
+use one_saves::{Bundle, Game, Name, Origin, Part, PartKind, Payload, Recorded, Source, TakenWith};
 use one_saves_convert::{Format, Profile, card, detect, raw};
 
 mod n64;
+mod state;
 
 /// Move retro saves and memory cards in and out of the Universal Saves Format.
 #[derive(Parser)]
@@ -21,12 +22,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Wrap a save or memory card into a .1saves bundle.
+    /// Wrap a save, a memory card, a save state or a screenshot into a .1saves bundle.
     ///
     /// The input may be a .zip holding a card, or holding loose PlayStation saves, in which
-    /// case a card is built to carry them.
+    /// case a card is built to carry them. A RetroArch, mGBA or DuckStation state is recognised
+    /// as one, and RetroArch's thumbnail beside it is taken along.
     Convert(Box<Convert>),
-    /// Write a bundle back out in the format it came from.
+    /// Write a bundle back out in the format it came from: a save, a card, an emulator's state
+    /// file, or a screenshot's image.
     Extract(Extract),
     /// Show what a bundle is and what it holds.
     Inspect(FileArg),
@@ -64,6 +67,9 @@ struct Convert {
     #[arg(long, value_name = "VERSION")]
     app_version: Option<String>,
     /// The emulator core the app ran, for an app such as RetroArch that runs many.
+    ///
+    /// A RetroArch state needs it, since only that core loads the state and the file does not say
+    /// which it was. Where RetroArch sorted its states into a folder per core, the folder says.
     ///
     /// A listed core is written as its registry slug, so `mGBA` and `mgba` both write `mgba`. One
     /// the registry does not list has to be given as its owner's reverse-DNS name.
@@ -147,6 +153,10 @@ struct Extract {
     #[arg(short, long)]
     output: Option<PathBuf>,
     /// The format to write. Defaults to what the bundle says it is.
+    ///
+    /// For a state, the emulator to rebuild its file for: retroarch, mgba or duckstation. A state
+    /// loads only into the core that took it, so it is refused for an emulator that does not run
+    /// that core.
     #[arg(long, value_name = "NAME")]
     to: Option<String>,
     /// Extract one part's payload by id, rather than the whole thing.
@@ -292,6 +302,12 @@ fn convert(args: Convert) -> Fallible {
 
     // `--from` names either a producer (mgba, duckstation) or a format (ps1, raw). A producer
     // says who wrote the bytes; the format is still detected from the bytes themselves.
+    // A save state or an image is its own thing, and looks like a save to the detection below: a
+    // DuckStation state is a `.sav`, and an mGBA one a PNG.
+    if let Some(kind) = state::kind_of(&args.input, &bytes) {
+        return state::convert(&args, kind, &bytes);
+    }
+
     let profile = args.from.as_deref().and_then(one_saves_convert::profile);
     let named_format = args.from.as_deref().and_then(Format::from_name);
     let format = match named_format {
@@ -317,21 +333,7 @@ fn convert(args: Convert) -> Fallible {
     let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at.unwrap_or_default()));
 
     let source = source_of(&args, profile.as_ref())?;
-    // A profile or a core that covers exactly one system settles `system` when the user did not say.
-    let core_system = source
-        .as_ref()
-        .and_then(|source| source.core.as_ref())
-        .and_then(|core| one_saves_registry::core(core.as_str()))
-        .and_then(|core| match core.systems {
-            [only] => Some(*only),
-            _ => None,
-        });
-    let system = args
-        .system
-        .clone()
-        .or_else(|| rom_system.map(ToOwned::to_owned))
-        .or_else(|| profile.as_ref().and_then(Profile::only_system).map(ToOwned::to_owned))
-        .or_else(|| core_system.map(ToOwned::to_owned));
+    let system = system_of(&args, rom_system, profile.as_ref(), source.as_ref());
 
     let mut label = format.label().to_owned();
     let mut bundle = if n64::is_n64(system.as_deref(), &extension, &bytes) {
@@ -424,6 +426,28 @@ fn report_clock(sidecar: Option<&(PathBuf, bool)>, instant_given: bool, bundle: 
 /// Every layer is checked against the registry before it is written, since `source` sits in the
 /// header and a misspelt name changes the content hash as surely as a different one.
 /// A flag's value as a slug, or an error naming the flag.
+/// The system the bytes are for: what the user said, else what the ROM's header names, else the one
+/// system a profile or a core covers, when it covers exactly one.
+fn system_of(
+    args: &Convert,
+    rom_system: Option<&str>,
+    profile: Option<&Profile>,
+    source: Option<&Source>,
+) -> Option<String> {
+    let core_system = source
+        .and_then(|source| source.core.as_ref())
+        .and_then(|core| one_saves_registry::core(core.as_str()))
+        .and_then(|core| match core.systems {
+            [only] => Some(*only),
+            _ => None,
+        });
+    args.system
+        .clone()
+        .or_else(|| rom_system.map(ToOwned::to_owned))
+        .or_else(|| profile.and_then(Profile::only_system).map(ToOwned::to_owned))
+        .or_else(|| core_system.map(ToOwned::to_owned))
+}
+
 fn slug_flag(flag: &str, text: &str) -> Result<one_saves::Slug, String> {
     one_saves::Slug::parse(text).map_err(|e| format!("{flag} {text:?} is not a slug: {e}"))
 }
@@ -567,6 +591,11 @@ fn extract(args: Extract) -> Fallible {
         write_out(&output, &payload, args.force)?;
         println!("part {id} -> {} ({} bytes)", output.display(), payload.len());
         return Ok(());
+    }
+
+    // A state rebuilds as its emulator's file, and a screenshot comes out as its image.
+    if matches!(bundle.shape(), one_saves::Shape::State | one_saves::Shape::Screenshot) {
+        return state::extract(&args, &bundle);
     }
 
     // An N64 save is several files or one, in either word order, depending on what reads it, so
@@ -715,11 +744,30 @@ fn describe(bundle: &Bundle, indent: usize, depth: usize, inflatable: &mut u64) 
     if let Some(source) = &header.source {
         describe_source(indent, source);
     }
-    if let Some(seconds) = header.created_at {
-        field(indent, "created", &format!("{} UTC", Civil(seconds)));
+    if let Some(seconds) = header.bundled_at {
+        field(indent, "bundled", &format!("{} UTC", Civil(seconds)));
+    }
+    // When a state or a screenshot was taken, and by whom when the player did not take it, are
+    // what a list of slots shows, so they go beside when the bundle was made.
+    if let Some(seconds) = header.taken_at {
+        field(indent, "taken", &format!("{} UTC", Civil(seconds)));
+    }
+    if let Some(origin) = &header.origin {
+        let what = match origin {
+            Origin::Auto => "the emulator took it to resume from".to_owned(),
+            Origin::Undo => "the emulator kept it to undo a save or a load".to_owned(),
+            // Never shown as the player's: that is the one reading a consumer must not give it.
+            Origin::Unknown(_) => format!("not an origin spec {} defines", one_saves::SPEC_VERSION),
+        };
+        field(indent, "origin", &format!("{origin} ({what})"));
+    }
+    if let Some(taken_with) = &header.taken_with {
+        describe_taken_with(indent, taken_with);
     }
     match &header.game {
         Some(game) => describe_game(indent, game),
+        // A device and a collection hold saves for many games, so neither has one to identify.
+        None if matches!(shape, one_saves::Shape::Device | one_saves::Shape::Collection) => {}
         None => field(indent, "game", "unidentified"),
     }
     if let Some(description) = &header.description {
@@ -742,7 +790,12 @@ fn describe(bundle: &Bundle, indent: usize, depth: usize, inflatable: &mut u64) 
 /// holds one. `depth` is the depth of the bundle the part is in.
 fn describe_part(part: &Part, indent: usize, depth: usize, inflatable: &mut u64) {
     let kind = part.kind.as_str().unwrap_or("save");
-    let role = part.role.as_ref().map_or("primary", |r| r.as_str());
+    // A state's data and its picture take no role, so they come out of no socket to name.
+    let role = match (&part.role, &part.kind) {
+        (Some(role), _) => role.as_str(),
+        (None, PartKind::State | PartKind::Screenshot) => "",
+        (None, _) => "primary",
+    };
     // A save's own product code, where the card carried one. It is what identifies a part
     // whose format writes no name — a Neo Geo card has no filenames at all, and a game that
     // skips the BIOS's title convention leaves `path` empty with nothing else to go on.
@@ -834,6 +887,61 @@ fn describe_part(part: &Part, indent: usize, depth: usize, inflatable: &mut u64)
         Some(Ok(inner)) => describe(&inner, indent + 2, depth + 1, inflatable),
         Some(Err(why)) => field(indent, "bundle", &why),
         None => {}
+    }
+}
+
+/// What a state was taken with, one entry a line.
+///
+/// An entry the producer knows applies without knowing its value is said to be unknown, which is
+/// not the same as an entry left out: a state that booted a BIOS nobody could name still booted
+/// one.
+fn describe_taken_with(indent: usize, taken_with: &TakenWith) {
+    fn entry<T>(
+        lines: &mut Vec<String>,
+        name: &str,
+        value: Option<&Recorded<T>>,
+        show: impl Fn(&T) -> Vec<String>,
+    ) {
+        match value {
+            None => {}
+            Some(Recorded::Unknown) => lines.push(format!("{name} unknown")),
+            Some(Recorded::Known(value)) => {
+                lines.extend(show(value).into_iter().map(|line| format!("{name} {line}")));
+            }
+        }
+    }
+
+    let mut lines = Vec::new();
+    entry(&mut lines, "byte order", taken_with.byte_order.as_ref(), |order| vec![order.as_str().to_owned()]);
+    entry(&mut lines, "word size", taken_with.word_size.as_ref(), |size| {
+        vec![format!("{} bits", size.bits())]
+    });
+    entry(&mut lines, "firmware", taken_with.firmware.as_ref(), |files| {
+        files
+            .iter()
+            .map(|(file, hashes)| {
+                let hashes: Vec<String> = hashes.iter().map(ToString::to_string).collect();
+                format!("{} {}", printable(file), hashes.join(" "))
+            })
+            .collect()
+    });
+    entry(&mut lines, "language", taken_with.language.as_ref(), |language| vec![printable(language)]);
+    entry(&mut lines, "option", taken_with.options.as_ref(), |options| {
+        options.iter().map(|(name, value)| format!("{} = {}", printable(name), printable(value))).collect()
+    });
+    entry(&mut lines, "format version", taken_with.format_version.as_ref(), |version| {
+        vec![version.to_string()]
+    });
+    lines.extend(
+        taken_with
+            .extensions
+            .keys()
+            .map(|key| format!("extension {}", describe_extension(&taken_with.extensions, key))),
+    );
+    lines.extend(unknown_keys(&taken_with.unknown).map(|line| format!("unknown {line}")));
+
+    for (index, line) in lines.iter().enumerate() {
+        field(indent, if index == 0 { "taken with" } else { "" }, line);
     }
 }
 

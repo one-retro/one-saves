@@ -35,7 +35,7 @@ pub struct RawOptions {
     /// A human-readable note about this bundle.
     pub description: Option<String>,
     /// When the bundle was assembled, in whole epoch seconds.
-    pub created_at: Option<i64>,
+    pub bundled_at: Option<i64>,
     /// Whether to split an appended real-time-clock footer off the save.
     ///
     /// On by default. Leaving it inline keeps the payload byte-identical to the emulator's file,
@@ -65,7 +65,7 @@ impl Default for RawOptions {
             source: None,
             game: None,
             description: None,
-            created_at: None,
+            bundled_at: None,
             split_rtc: true,
             rtc_sidecar: None,
             clock_chip: None,
@@ -183,9 +183,9 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
         extensions = split.extensions();
     }
 
-    // A raw dump is one game's state: the parts are the regions that state is made of.
+    // A raw dump is one game's in-game save: the parts are the regions that save is made of.
     let mut header = Header::new(one_saves::Shape::Save)
-        .created_at(options.created_at)
+        .bundled_at(options.bundled_at)
         .system(system)
         .game(options.game.clone())
         .source(options.source.clone())

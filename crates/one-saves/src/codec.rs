@@ -11,7 +11,10 @@ use dcbor::prelude::*;
 use crate::error::{Error, ErrorKind};
 use crate::extension::Extensions;
 use crate::hash::{HashAlgorithm, HashValue};
-use crate::model::{Bundle, Card, Game, GameId, Header, Part, PartKind, Payload, Source, UnknownKeys};
+use crate::model::{
+    Bundle, ByteOrder, Card, Game, GameId, Header, Origin, Part, PartKind, Payload, Recorded, Source,
+    TakenWith, UnknownKeys, WordSize,
+};
 use crate::name::{Name, ReverseDnsName, Slug};
 use crate::shape::Shape;
 
@@ -24,7 +27,7 @@ pub enum Strictness {
     /// unchanged, because the only thing it can be is a later minor version's field.
     #[default]
     Decoder,
-    /// What the version 0.1 schema does: reject an integer key it does not list.
+    /// What the schema does: reject an integer key it does not list.
     ///
     /// A schema describes one version exactly and cannot state a rule about the next one, so
     /// this is the stricter reading and it is the one the conformance corpus tests. Do not ship
@@ -244,8 +247,8 @@ fn decode_header(value: &CBOR, strictness: Strictness) -> Result<Header, Error> 
         .ok_or_else(|| Error::at("header", ErrorKind::MissingKey("shape")))
         .and_then(|v| want_slug(&v, "header.shape"))
         .map(Shape::from_slug)?;
-    // The schema pins the four shapes this version defines, so validating against it says "this
-    // is a conforming 0.2 bundle" rather than "some decoder can read this". A decoder is looser
+    // The schema pins the six shapes this version defines, so validating against it says "this
+    // is a conforming 0.6 bundle" rather than "some decoder can read this". A decoder is looser
     // on purpose, and declines at the point of use instead.
     if strictness == Strictness::Schema
         && let Shape::Unknown(slug) = &shape
@@ -257,52 +260,113 @@ fn decode_header(value: &CBOR, strictness: Strictness) -> Result<Header, Error> 
     let source = fields.take(3).map(|v| decode_source(&v, "header.source", strictness)).transpose()?;
     let card = fields.take(4).map(|v| decode_card(&v, "header.card", strictness)).transpose()?;
     let description = fields.take(5).map(|v| want_text(&v, "header.description")).transpose()?;
-    let created_at = fields.take(6).map(|v| want_epoch(&v, "header.created_at")).transpose()?;
+    let bundled_at = fields.take(6).map(|v| want_epoch(&v, "header.bundled_at")).transpose()?;
+    let taken_at = fields.take(7).map(|v| want_epoch(&v, "header.taken_at")).transpose()?;
+    let taken_with =
+        fields.take(8).map(|v| decode_taken_with(&v, "header.taken_with", strictness)).transpose()?;
+    let origin = fields.take(9).map(|v| want_slug(&v, "header.origin").map(Origin::from_slug)).transpose()?;
 
-    // Each shape admits a different header, and the shape is read first, so a contradiction is a
-    // decode error rather than something a consumer has to re-derive. A shape this version does
-    // not define constrains nothing: its rules are in a document this decoder has not seen.
-    let forbid = |present: bool, field: &'static str, shape: &'static str| {
-        present.then(|| Error::at("header", ErrorKind::KeyNotInShape { shape, field })).map_or(Ok(()), Err)
-    };
-    match &shape {
-        // A save is one game's state, and a card map is what would make it a card instead.
-        Shape::Save => forbid(card.is_some(), "card", "save")?,
-        // The card map is the claim proper: it carries the format and capacity a writer needs.
-        Shape::Card => {
-            if card.is_none() {
-                return Err(Error::at("header", ErrorKind::MissingKey("card")));
-            }
-        }
-        // `system` is what tells a device from a collection; its components hold saves for many
-        // games rather than for one, so `game` says nothing at this level.
-        Shape::Device => {
-            if system.is_none() {
-                return Err(Error::at("header", ErrorKind::MissingKey("system")));
-            }
-            forbid(game.is_some(), "game", "device")?;
-            forbid(card.is_some(), "card", "device")?;
-        }
-        // A collection's entries do not agree on any of the three, so it names none of them.
-        Shape::Collection => {
-            forbid(system.is_some(), "system", "collection")?;
-            forbid(game.is_some(), "game", "collection")?;
-            forbid(card.is_some(), "card", "collection")?;
-        }
-        Shape::Unknown(_) => {}
-    }
-
+    // Which keys each shape admits is checked by `validate`, which a bundle built rather than read
+    // goes through as well, so a contradiction is refused on the way out as on the way in.
     Ok(Header {
         shape,
-        created_at,
+        bundled_at,
         system,
         game,
         source,
         card,
         description,
+        taken_at,
+        taken_with,
+        origin,
         extensions,
         unknown: fields.unknown("header", strictness)?,
     })
+}
+
+/// Reads an entry of `taken_with`, where null says the producer does not know the value.
+fn recorded<T>(
+    value: &CBOR,
+    path: &str,
+    read: impl FnOnce(&CBOR, &str) -> Result<T, Error>,
+) -> Result<Recorded<T>, Error> {
+    if value.is_null() { Ok(Recorded::Unknown) } else { read(value, path).map(Recorded::Known) }
+}
+
+fn decode_taken_with(value: &CBOR, path: &str, strictness: Strictness) -> Result<TakenWith, Error> {
+    let map = want_map(value, path)?;
+    let mut fields = Fields::split(map, path)?;
+    let extensions = fields.extensions(path)?;
+
+    // Each entry takes only its own values, so that one setting has one spelling.
+    let byte_order = fields
+        .take(0)
+        .map(|v| {
+            recorded(&v, &format!("{path}.byte_order"), |v, path| match want_text(v, path)?.as_str() {
+                "little" => Ok(ByteOrder::Little),
+                "big" => Ok(ByteOrder::Big),
+                _ => Err(Error::at(path, ErrorKind::Type { expected: r#""little" or "big""# })),
+            })
+        })
+        .transpose()?;
+    let word_size = fields
+        .take(1)
+        .map(|v| {
+            recorded(&v, &format!("{path}.word_size"), |v, path| match want_uint(v, path)? {
+                32 => Ok(WordSize::Bits32),
+                64 => Ok(WordSize::Bits64),
+                _ => Err(Error::at(path, ErrorKind::Type { expected: "32 or 64" })),
+            })
+        })
+        .transpose()?;
+    let firmware =
+        fields.take(2).map(|v| recorded(&v, &format!("{path}.firmware"), decode_firmware)).transpose()?;
+    let language =
+        fields.take(3).map(|v| recorded(&v, &format!("{path}.language"), want_text)).transpose()?;
+    let options =
+        fields.take(4).map(|v| recorded(&v, &format!("{path}.options"), decode_options)).transpose()?;
+    let format_version =
+        fields.take(5).map(|v| recorded(&v, &format!("{path}.format_version"), want_uint)).transpose()?;
+
+    Ok(TakenWith {
+        byte_order,
+        word_size,
+        firmware,
+        language,
+        options,
+        format_version,
+        extensions,
+        unknown: fields.unknown(path, strictness)?,
+    })
+}
+
+/// Reads the files a machine booted: each path the core loads one from, to its hash values.
+fn decode_firmware(value: &CBOR, path: &str) -> Result<BTreeMap<String, Vec<HashValue>>, Error> {
+    let mut firmware = BTreeMap::new();
+    for (key, hashes) in want_map(value, path)?.iter() {
+        let file = want_text(key, path)?;
+        let at = format!("{path}[{file:?}]");
+        let items =
+            hashes.as_array().ok_or_else(|| Error::at(&at, ErrorKind::Type { expected: "an array" }))?;
+        let hashes = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| want_hash(item, &format!("{at}[{index}]")))
+            .collect::<Result<_, _>>()?;
+        firmware.insert(file, hashes);
+    }
+    Ok(firmware)
+}
+
+/// Reads a core's options, text to text.
+fn decode_options(value: &CBOR, path: &str) -> Result<BTreeMap<String, String>, Error> {
+    let mut options = BTreeMap::new();
+    for (key, option) in want_map(value, path)?.iter() {
+        let name = want_text(key, path)?;
+        let option = want_text(option, &format!("{path}[{name:?}]"))?;
+        options.insert(name, option);
+    }
+    Ok(options)
 }
 
 fn decode_game(value: &CBOR, path: &str, strictness: Strictness) -> Result<Game, Error> {
@@ -548,7 +612,7 @@ fn decode_payload(
 }
 
 /// Checks a `path`: non-empty, at most 512 bytes, no leading `/` and no `..` segment.
-fn check_path(text: &str, path: &str) -> Result<(), Error> {
+pub(crate) fn check_path(text: &str, path: &str) -> Result<(), Error> {
     if text.is_empty() {
         return Err(Error::at(path, ErrorKind::DefaultSpelledOut("absent")));
     }
@@ -612,8 +676,17 @@ impl Header {
     pub fn to_cbor(&self) -> CBOR {
         let mut map = Map::new();
         map.insert(0u64, self.shape.as_str());
-        if let Some(created_at) = self.created_at {
-            map.insert(6u64, epoch_cbor(created_at));
+        if let Some(bundled_at) = self.bundled_at {
+            map.insert(6u64, epoch_cbor(bundled_at));
+        }
+        if let Some(taken_at) = self.taken_at {
+            map.insert(7u64, epoch_cbor(taken_at));
+        }
+        if let Some(taken_with) = &self.taken_with {
+            map.insert(8u64, taken_with.to_cbor());
+        }
+        if let Some(origin) = &self.origin {
+            map.insert(9u64, origin.as_str());
         }
         if let Some(system) = &self.system {
             map.insert(1u64, system.as_str());
@@ -630,6 +703,41 @@ impl Header {
         if let Some(description) = &self.description {
             map.insert(5u64, description.as_str());
         }
+        finish(map, &self.unknown, &self.extensions)
+    }
+}
+
+impl TakenWith {
+    /// Writes what a state was taken with as a CBOR map.
+    #[must_use]
+    pub fn to_cbor(&self) -> CBOR {
+        fn put<T>(map: &mut Map, key: u64, entry: Option<&Recorded<T>>, write: impl FnOnce(&T) -> CBOR) {
+            match entry {
+                None => {}
+                Some(Recorded::Unknown) => map.insert(key, CBOR::null()),
+                Some(Recorded::Known(value)) => map.insert(key, write(value)),
+            }
+        }
+
+        let mut map = Map::new();
+        put(&mut map, 0, self.byte_order.as_ref(), |order| order.as_str().into());
+        put(&mut map, 1, self.word_size.as_ref(), |size| size.bits().into());
+        put(&mut map, 2, self.firmware.as_ref(), |firmware| {
+            let mut files = Map::new();
+            for (file, hashes) in firmware {
+                files.insert(file.as_str(), hashes.iter().map(hash_cbor).collect::<Vec<_>>());
+            }
+            files.into()
+        });
+        put(&mut map, 3, self.language.as_ref(), |language| language.as_str().into());
+        put(&mut map, 4, self.options.as_ref(), |options| {
+            let mut names = Map::new();
+            for (name, option) in options {
+                names.insert(name.as_str(), option.as_str());
+            }
+            names.into()
+        });
+        put(&mut map, 5, self.format_version.as_ref(), |version| (*version).into());
         finish(map, &self.unknown, &self.extensions)
     }
 }

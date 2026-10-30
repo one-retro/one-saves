@@ -111,16 +111,47 @@ pub enum ErrorKind {
         field: &'static str,
     },
 
-    /// A part whose kind the bundle's shape does not admit.
+    /// A part whose kind the bundle's shape does not admit, or too many of one kind.
     ///
     /// A save holds no nested bundle: a component that is a card of its own makes the bundle a
-    /// device rather than a save.
+    /// device rather than a save. A state holds exactly one `state` part and at most one
+    /// `screenshot`, a screenshot holds its image and nothing else, and neither kind sits in any
+    /// other shape.
     PartNotInShape {
         /// The shape the header named.
         shape: &'static str,
         /// What was wrong with the part.
         reason: &'static str,
     },
+
+    /// A key a `state` or a `screenshot` part does not take.
+    ///
+    /// A state part is the core's own data: it takes `slot`, for the number the emulator gave
+    /// it, and nothing else of a part's addressing, and no `content_type`, since the data has no
+    /// media type. A screenshot takes no addressing at all.
+    KeyNotOnPart {
+        /// The part's kind.
+        kind: &'static str,
+        /// The field that kind does not take.
+        field: &'static str,
+    },
+
+    /// A state's `source` named neither a `core` nor an `app`.
+    ///
+    /// A state loads only into the core that took it, so its `source` is required to say which:
+    /// the core, or the app where nothing runs one.
+    StateLoadsIntoNothing,
+
+    /// A screenshot's `content_type` was neither `image/png` nor `image/jpeg`.
+    ///
+    /// Those are the two any image library reads. A producer encodes anything else as PNG.
+    ScreenshotType(String),
+
+    /// A `taken_with` language was not a BCP 47 tag in its canonical case.
+    ///
+    /// The language is in lower case, a script in title case and a region in upper case, and the
+    /// tag stops at the region, so one setting has one spelling.
+    LanguageNotCanonical(String),
 
     /// An integer key this version does not define.
     ///
@@ -164,10 +195,11 @@ pub enum ErrorKind {
     /// Two parts shared an `id`.
     DuplicatePartId(u64),
 
-    /// Two parts agreed on `role`, `path` and `slot` together.
+    /// Two parts of one kind agreed on `role`, `path` and `slot` together.
     ///
     /// Those three are how a consumer names a part to a user and matches it against a target, so
-    /// two parts a consumer cannot tell apart is a bundle it cannot act on.
+    /// two parts a consumer cannot tell apart is a bundle it cannot act on. Parts of different
+    /// kinds never clash.
     PartsShareAnAddress {
         /// The `id` of the earlier part.
         first: u64,
@@ -199,9 +231,10 @@ pub enum ErrorKind {
     /// An extension key placed somewhere its own specification does not allow.
     ///
     /// Each key names every placement it admits, and names it by shape, because a header and a
-    /// part mean different things in each. The clock keys are a save's bundle header and nowhere
-    /// else: a nested bundle inherits nothing from the header around it, so a reading put on a
-    /// part would be dropped by the byte copy that extracting a save is.
+    /// part mean different things in each. The clock keys are a save's or a state's bundle header
+    /// and nowhere else: a nested bundle inherits nothing from the header around it, so a reading
+    /// put on a part would be dropped by the byte copy that extracting a save is. mGBA's cheat
+    /// list is a state's `state` part and nowhere else, since it loads with the core's data.
     KeyOutOfPlace {
         /// The key.
         key: String,
@@ -249,6 +282,18 @@ impl fmt::Display for ErrorKind {
             ErrorKind::PartNotInShape { shape, reason } => {
                 write!(f, "a `{shape}` bundle {reason}")
             }
+            ErrorKind::KeyNotOnPart { kind, field } => write!(f, "a `{kind}` part does not carry `{field}`"),
+            ErrorKind::StateLoadsIntoNothing => {
+                f.write_str("names neither a `core` nor an `app`, so nothing says what the state loads into")
+            }
+            ErrorKind::ScreenshotType(found) => {
+                write!(f, "`{found}` is not a type a screenshot takes; it is `image/png` or `image/jpeg`")
+            }
+            ErrorKind::LanguageNotCanonical(tag) => write!(
+                f,
+                "`{tag}` is not a BCP 47 tag in its canonical case: a lower-case language, then a \
+                 title-case script, then an upper-case region"
+            ),
             ErrorKind::UnknownIntegerKey(key) => {
                 write!(f, "integer key {key} is not defined by version {}", crate::SPEC_VERSION)
             }
@@ -265,8 +310,8 @@ impl fmt::Display for ErrorKind {
             ErrorKind::DuplicatePartId(id) => write!(f, "two parts share the id {id}"),
             ErrorKind::PartsShareAnAddress { first, second } => write!(
                 f,
-                "parts {first} and {second} agree on `role`, `path` and `slot` together, so nothing \
-                 can tell them apart"
+                "parts {first} and {second} are of one kind and agree on `role`, `path` and `slot` \
+                 together, so nothing can tell them apart"
             ),
             ErrorKind::RomHashesOutOfOrder => f.write_str("is not in ascending tag order"),
             ErrorKind::RomHashesDuplicateAlgorithm(algorithm) => {

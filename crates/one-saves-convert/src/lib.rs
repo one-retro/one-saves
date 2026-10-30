@@ -1,4 +1,4 @@
-//! Convert emulator saves and memory cards to and from the Universal Saves Format.
+//! Convert emulator saves, memory cards and save states to and from the Universal Saves Format.
 //!
 //! The format itself is [`one-saves`](https://docs.rs/one-saves); this crate is the half that
 //! knows about real hardware. It reads what emulators and cartridge readers actually write, and
@@ -14,6 +14,8 @@
 //! | Dreamcast VMU (`.bin`) | [`dreamcast_vmu`] | `vmu` |
 //! | PS2 memory cards (`.ps2`, with or without ECC) | [`ps2_memcard`] | `ps2` |
 //! | Neo Geo memory cards and a Neo Geo CD's memory (`.neo`, bare or in a MiSTer save) | [`neogeo_memcard`] | `neogeo` |
+//! | RetroArch, mGBA and DuckStation save states, in [`state`] | — | `states` |
+//! | Screenshots on their own (`.png`, `.jpg`), in [`screenshot`] | — | always |
 //!
 //! Every card format reads and writes. No filesystem is implemented here: each lives in a crate of
 //! its own, because a memory card is a reusable format and nothing about reading one needs this
@@ -37,7 +39,8 @@
 //!
 //! # Features
 //!
-//! Everything optional is a feature, and all of them are on by default.
+//! Everything optional is a feature. Those below are on by default but `states`, which compiles a
+//! PNG encoder and a deflate implementation a consumer of saves alone has no use for.
 //!
 //! | Feature | What it is | What it brings |
 //! | ------- | ---------- | -------------- |
@@ -46,7 +49,8 @@
 //! | `dat` | The `dat` module: resolving a digest through a DAT catalog | `datary`, an XML reader and a derive macro |
 //! | `dat-cmpro` | The ClrMamePro syntax as well as Logiqx XML | `winnow` |
 //! | `rom` | The `rom` module: ROM headers and digests | `crc32fast`, `md-5`, `sha1`, `sha2` |
-//! | `zstd` | Forwarded to [`one_saves`] | `zstd`, and the C library it compiles |
+//! | `states` | Reading and writing save states | `flate2`, `png` |
+//! | `zstd` | Forwarded to [`one_saves`], and what inflates a DuckStation state | `zstd`, and the C library it compiles |
 //!
 //! Flat saves, detection, profiles and [`rtc`] are always present: they are what this crate is,
 //! and they depend on nothing but [`one_saves`].
@@ -88,6 +92,8 @@ pub mod raw;
 #[cfg_attr(docsrs, doc(cfg(feature = "rom")))]
 pub mod rom;
 pub mod rtc;
+pub mod screenshot;
+pub mod state;
 
 pub use card::CardOptions;
 pub use detect::{Format, detect};
