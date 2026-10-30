@@ -305,7 +305,11 @@ the order CI runs it, so a green run locally means a green run there:
 just            # list the recipes
 just check      # fmt, lint, tests, docs, and the registry drift check
 just fixtures   # the converters against the real emulator saves under data/
+just states ~/ROMs:~/states   # the state readers against real states, read where they lie
 ```
+
+States stay out of the repository, since a state holds the game's own code beside the player's
+progress, so `just states` reads them from the folders it is given, separated as `PATH` is.
 
 The registry data under `crates/one-saves-registry/data/` is synced from the registry pages at
 [docs.1retro.com][spec], whose source the recipe fetches into `target/spec`:

@@ -2,7 +2,9 @@
 //!
 //! mGBA writes a state in one of two containers, and the core's data is the same in both: a fixed
 //! size, `0x61000` bytes for the GBA and `0x11800` for the Game Boy, opening with a version word
-//! (`0x01000000` and `0x00400000` plus the version).
+//! (`0x01000000` and `0x00400000` plus the version). After the word come the ROM's CRC-32 and the
+//! title out of its header, which become `game`, and for the Game Boy the model mGBA emulated,
+//! which says whether a game that runs on both ran as a Game Boy or a Game Boy Color.
 //!
 //! - **A PNG**, whenever it has a screenshot to write, which is the default. The image is what the
 //!   screen showed. After it come mGBA's own chunks: `gbAs`, the core's data as a zlib stream, and
@@ -18,7 +20,7 @@
 //! | Tag | Item | In the bundle |
 //! | --- | ---- | ------------- |
 //! | 1 | The screen, as a bare framebuffer | the screenshot, encoded as a PNG |
-//! | 2 | The game's save memory | a save part: the in-game save as it stood when the state was taken |
+//! | 2 | The game's save memory | a save part: the in-game save as it stood when the state was taken; a Game Boy clock footer after it goes into [`x.1sav.rtc`](one_saves::extension::Rtc) and the chip's key on the header, as on a save |
 //! | 3 | The player's cheats, as mGBA's `.cheats` text | [`x.1sav.cheats.mgba`](one_saves::extension::CheatsMgba) on the state part |
 //! | 5 | The framebuffer's width and height | nothing: it is how the framebuffer is read |
 //! | `0x101` | When the state was taken, in microseconds | `taken_at` |
@@ -33,7 +35,7 @@
 //! the core's data with its items still in it, since that is what the core loads.
 
 use one_saves::extension::{CheatSet, CheatsMgba};
-use one_saves::{Bundle, Part, PartKind, Slug};
+use one_saves::{Bundle, Game, HashAlgorithm, HashValue, Part, PartKind, Slug};
 
 use crate::error::{Error, Result};
 use crate::state::image::{self, Chunk, le32};
@@ -61,16 +63,87 @@ const ITEM_PATH: &str = "extdata/";
 /// mGBA's items of extra data, each with its tag, in the order the file holds them.
 type Items = Vec<(u32, Vec<u8>)>;
 
-/// Which machine a state is for, from the version word it opens with, and the data's size.
-fn machine(state: &[u8]) -> Option<(&'static str, usize)> {
-    let word = u32::from_le_bytes(state.get(..4)?.try_into().ok()?);
-    match word & 0xFFFF_FF00 {
-        0x0100_0000 => Some(("gba", 0x61000)),
-        // A Game Boy core runs the Game Boy and the Game Boy Color both, so the data does not say
-        // which game it is; the system is the caller's to give.
-        0x0040_0000 => Some(("", 0x11800)),
-        _ => None,
+/// The two cores mGBA runs, each with a data layout of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Machine {
+    Gba,
+    /// The Game Boy core, which runs the Game Boy and the Game Boy Color both.
+    Gb,
+}
+
+impl Machine {
+    /// Which core a state's data is for, from the version word it opens with.
+    fn of(data: &[u8]) -> Option<Machine> {
+        let word = u32::from_le_bytes(data.get(..4)?.try_into().ok()?);
+        match word & 0xFFFF_FF00 {
+            0x0100_0000 => Some(Machine::Gba),
+            0x0040_0000 => Some(Machine::Gb),
+            _ => None,
+        }
     }
+
+    /// How many bytes the core's data runs to.
+    fn size(self) -> usize {
+        match self {
+            Machine::Gba => 0x61000,
+            Machine::Gb => 0x11800,
+        }
+    }
+}
+
+/// The system a state's game ran as, and what the core's data says of the game.
+///
+/// Both cores open their data with the ROM's CRC-32, which mGBA checks a state against before it
+/// loads one, and with the title the ROM's header gives: a GBA one at `0x10` with its game code
+/// after it, and the Game Boy's sixteen header bytes at `0x10`, the last of them the cartridge's
+/// Color flag. The CRC is the hash that finds the ROM the state was taken against.
+///
+/// A Game Boy cartridge says whether it needs a Color (`0xC0`), runs on both (`0x80`) or predates
+/// the Color. One that runs on both ran as whichever model mGBA emulated, which the Game Boy's data
+/// keeps at `0x08`, the Color's models setting `0x80`. Its release is left unsaid, since No-Intro
+/// files such games under either system.
+fn identity(machine: Machine, data: &[u8]) -> (Slug, Option<Game>) {
+    let slug = |text: &str| Slug::parse(text).expect("a system slug");
+    let crc = |at: usize| data.get(at..at + 4).map(|word| [word[3], word[2], word[1], word[0]]);
+    let mut game = Game::default();
+    let system = match machine {
+        Machine::Gba => {
+            game.rom_hashes = crc(0x08).into_iter().map(hash).collect();
+            game.title = data.get(0x10..0x1C).and_then(field);
+            game.serial = data.get(0x1C..0x20).and_then(field);
+            game.system = Some(slug("gba"));
+            slug("gba")
+        }
+        Machine::Gb => {
+            game.rom_hashes = crc(0x04).into_iter().map(hash).collect();
+            let model = data.get(0x08).copied().unwrap_or_default();
+            let header = data.get(0x10..0x20).unwrap_or_default();
+            let flag = header.get(15).copied().unwrap_or_default();
+            // The title gave its last byte to the flag, as rom-id reads it.
+            let title = if matches!(flag, 0x80 | 0xC0) { header.get(..15) } else { Some(header) };
+            game.title = title.and_then(field);
+            let (release, ran_as) = match flag {
+                0xC0 => (Some("gbc"), "gbc"),
+                0x80 => (None, if model & 0x80 == 0 { "gb" } else { "gbc" }),
+                _ => (Some("gb"), "gb"),
+            };
+            game.system = release.map(slug);
+            slug(ran_as)
+        }
+    };
+    (system, (!game.is_empty()).then_some(game))
+}
+
+/// A CRC-32, as the format carries one: its digest in the order it is written out.
+fn hash(digest: [u8; 4]) -> HashValue {
+    HashValue::new(HashAlgorithm::Crc32, digest.to_vec()).expect("a CRC-32 is four bytes")
+}
+
+/// A text field of a ROM's header, up to its first zero and trimmed, as rom-id reads one.
+fn field(bytes: &[u8]) -> Option<String> {
+    let end = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
+    let text = String::from_utf8_lossy(&bytes[..end]).trim().to_owned();
+    (!text.is_empty()).then_some(text)
 }
 
 /// Reads an mGBA state file, in either of its containers, into a state bundle.
@@ -86,17 +159,19 @@ pub fn read(file: &StateFile<'_>, options: &StateOptions) -> Result<Bundle> {
         let (data, items) = unpack_bare(file.bytes)?;
         (data, items, None)
     };
-    let (system, _) = machine(&data).ok_or_else(|| Error::NotThisFormat {
+    let machine = Machine::of(&data).ok_or_else(|| Error::NotThisFormat {
         format: FORMAT,
         why: "its data opens with no version word mGBA writes".into(),
     })?;
+    let (system, game) = identity(machine, &data);
     let (origin, slot) =
         crate::state::origin_and_slot(crate::state::mgba_slot(&file.name.to_ascii_lowercase()));
 
     let mut found = Found {
         app: Some("mgba"),
         core: Some("mgba"),
-        system: (!system.is_empty()).then(|| Slug::parse(system).expect("a system slug")),
+        system: Some(system),
+        game,
         origin,
         ..Found::default()
     };
@@ -113,7 +188,16 @@ pub fn read(file: &StateFile<'_>, options: &StateOptions) -> Result<Bundle> {
                 None => rest.push(aux(tag, item)),
             },
             SAVEDATA if !rest.iter().any(|part: &Part| part.kind == PartKind::Save) => {
-                rest.push(Part::new(0, item));
+                // The Game Boy core hands over its save as the save file holds it, with the clock
+                // footer after the SRAM. The footer goes into the header's keys, as on a save.
+                let system = found.system.as_ref().map(Slug::as_str);
+                match (machine == Machine::Gb).then(|| crate::rtc::split(&item, system)).flatten() {
+                    Some(split) => {
+                        found.extensions = split.extensions();
+                        rest.push(Part::new(0, split.sram));
+                    }
+                    None => rest.push(Part::new(0, item)),
+                }
             }
             CHEATS => match std::str::from_utf8(&item).map(parse_cheats) {
                 Ok(sets) if !sets.is_empty() => state = state.extension(CheatsMgba::new(sets)),
@@ -160,11 +244,20 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let contents = Contents::of(bundle)?;
     crate::state::require_core(bundle, "mgba", "mGBA")?;
 
+    let data = contents.state.bytes()?;
     let mut left_out = Vec::new();
     let mut items: Vec<(u32, Vec<u8>)> = Vec::new();
     for (index, save) in contents.saves.iter().enumerate() {
         if index == 0 {
-            items.push((SAVEDATA, save.bytes()?.into_owned()));
+            let mut save = save.bytes()?.into_owned();
+            // The Game Boy core takes its save back with the clock footer on it, as its file has
+            // it; the GBA core keeps its clock elsewhere.
+            if Machine::of(&data) == Some(Machine::Gb)
+                && let Some(footer) = crate::rtc::footer_of(bundle)
+            {
+                save.extend_from_slice(&footer);
+            }
+            items.push((SAVEDATA, save));
         } else {
             left_out.push(save.id);
         }
@@ -194,7 +287,6 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     }
     items.sort_by_key(|(tag, _)| *tag);
 
-    let data = contents.state.bytes()?;
     // A picture that is not a PNG mGBA can read back, and cannot be made one, stays in the bundle
     // rather than costing the state its rebuild; the state is then written without one.
     let png = match contents.screenshot {
@@ -273,15 +365,18 @@ fn unpack_png(bytes: &[u8]) -> Result<(Vec<u8>, Items, Option<Vec<u8>>)> {
 /// Unpacks the bare container: the core's data at its fixed size, then the items.
 fn unpack_bare(bytes: &[u8]) -> Result<(Vec<u8>, Items)> {
     let corrupt = |why: String| Error::Corrupt { format: FORMAT, why };
-    let (_, size) = machine(bytes).ok_or_else(|| Error::NotThisFormat {
-        format: FORMAT,
-        why: "it opens with no version word mGBA writes".into(),
-    })?;
+    let size = Machine::of(bytes)
+        .ok_or_else(|| Error::NotThisFormat {
+            format: FORMAT,
+            why: "it opens with no version word mGBA writes".into(),
+        })?
+        .size();
     let data = bytes
         .get(..size)
         .ok_or_else(|| corrupt(format!("it ends before the {size} bytes of the core's data")))?;
 
     let mut items = Vec::new();
+    let mut copied: usize = 0;
     let mut at = size;
     // A state with no items has nothing after its data, not even the list's end.
     while at < bytes.len() {
@@ -300,6 +395,12 @@ fn unpack_bare(bytes: &[u8]) -> Result<(Vec<u8>, Items)> {
             .zip(usize::try_from(length).ok())
             .and_then(|(offset, length)| bytes.get(offset..offset.checked_add(length)?))
             .ok_or_else(|| corrupt(format!("item {tag} lies outside the file")))?;
+        // Each header names its own span, and nothing stops a thousand of them naming the same
+        // one, so the file's own length bounds no item's copy but not the sum of them.
+        copied = copied.saturating_add(item.len());
+        if copied > MAX_ITEMS {
+            return Err(corrupt("its items claim more than any mGBA writes".into()));
+        }
         items.push((tag, item.to_vec()));
         at += 16;
     }
@@ -509,6 +610,115 @@ mod tests {
     }
 
     #[test]
+    fn the_data_names_the_rom_it_was_taken_against() {
+        let mut data = gba_data();
+        data[0x08..0x0C].copy_from_slice(&0x1F1C_08FBu32.to_le_bytes());
+        data[0x10..0x20].copy_from_slice(b"POKEMON EMERBPEE");
+        let file = pack_bare(&data, &[]);
+        let bundle =
+            read(&StateFile { bytes: &file, name: "game.ss1", screenshot: None }, &StateOptions::default())
+                .unwrap();
+        let game = bundle.header.game.as_ref().unwrap();
+        assert_eq!(game.title.as_deref(), Some("POKEMON EMER"));
+        assert_eq!(game.serial.as_deref(), Some("BPEE"));
+        assert_eq!(game.rom_hashes, [hash([0x1F, 0x1C, 0x08, 0xFB])], "the CRC as a DAT writes it");
+        assert_eq!(game.system.as_ref().map(Slug::as_str), Some("gba"));
+    }
+
+    #[test]
+    fn a_game_boy_state_ran_as_the_model_mgba_emulated() {
+        // The cartridge's Color flag, the model mGBA ran, then the system the state is for and the
+        // release the game's hints name.
+        let cases = [
+            (0x80, 0x80, "gbc", None, "POKEMON_GLDAAUE"),
+            (0x80, 0x00, "gb", None, "POKEMON_GLDAAUE"),
+            (0xC0, 0xC0, "gbc", Some("gbc"), "POKEMON_GLDAAUE"),
+            (0x00, 0x80, "gb", Some("gb"), "POKEMON_GLDAAUEX"),
+        ];
+        for (flag, model, system, release, title) in cases {
+            let mut data = vec![0; 0x11800];
+            data[..4].copy_from_slice(&0x0040_0003u32.to_le_bytes());
+            data[0x04..0x08].copy_from_slice(&0x6BDE_3C3Eu32.to_le_bytes());
+            data[0x08] = model;
+            data[0x10..0x1F].copy_from_slice(b"POKEMON_GLDAAUE");
+            data[0x1F] = if flag == 0 { b'X' } else { flag };
+            let file = pack_bare(&data, &[]);
+            let state = StateFile { bytes: &file, name: "game.ss1", screenshot: None };
+            let bundle = read(&state, &StateOptions::default()).unwrap();
+            let game = bundle.header.game.as_ref().unwrap();
+            assert_eq!(
+                bundle.header.system.as_ref().map(Slug::as_str),
+                Some(system),
+                "{flag:#x} on {model:#x}"
+            );
+            assert_eq!(game.system.as_ref().map(Slug::as_str), release, "{flag:#x} on {model:#x}");
+            assert_eq!(game.title.as_deref(), Some(title), "the flag is no part of the title");
+            assert_eq!(game.rom_hashes, [hash([0x6B, 0xDE, 0x3C, 0x3E])]);
+        }
+    }
+
+    #[test]
+    fn a_game_boy_saves_clock_footer_moves_to_the_header_and_back() {
+        use one_saves::extension::{Rtc, RtcMbc3};
+
+        let mut data = vec![0; 0x11800];
+        data[..4].copy_from_slice(&0x0040_0003u32.to_le_bytes());
+        data[0x1F] = 0x80;
+        let registers = [3, 2, 0, 0, 0];
+        // Written fifty seconds before the state, as mGBA writes the footer when it flushes the save.
+        let anchor = 1_793_379_451;
+        let mut save = vec![0x42; 0x8000];
+        save.extend_from_slice(&crate::rtc::build_mbc3(&registers, &registers, anchor, 8));
+        let items =
+            [(SAVEDATA, save.clone()), (META_TIME, ((anchor + 50) * 1_000_000).to_le_bytes().to_vec())];
+        let file = pack_bare(&data, &items);
+
+        let state = StateFile { bytes: &file, name: "Pokemon Gold.ss1", screenshot: None };
+        let bundle = read(&state, &StateOptions::default()).unwrap();
+        assert_eq!(bundle.parts[1].bytes().unwrap().as_ref(), &save[..0x8000], "the SRAM alone");
+        let clock = bundle.header.extensions.get::<RtcMbc3>().expect("the footer's clock");
+        assert_eq!((clock.live, clock.taken_at), (registers, anchor), "anchored when the footer was written");
+        assert_eq!(bundle.header.taken_at, Some(anchor + 50));
+        assert!(bundle.header.extensions.get::<Rtc>().is_some());
+
+        let rebuilt = write(&bundle, "Pokemon Gold").unwrap();
+        assert_eq!(unpack_bare(&rebuilt.bytes).unwrap().1[0], (SAVEDATA, save), "the footer goes back on");
+        assert_eq!(rebuilt.bytes, file);
+    }
+
+    #[test]
+    fn a_gba_save_keeps_its_bytes_whatever_its_length() {
+        // mGBA keeps a GBA cartridge's clock out of the save it puts in a state, so nothing after the
+        // save memory is a footer to take off.
+        let mut save = vec![0x42; 0x20000];
+        save.extend_from_slice(&[0; 16]);
+        let file = pack_bare(&gba_data(), &[(SAVEDATA, save.clone())]);
+        let state = StateFile { bytes: &file, name: "game.ss1", screenshot: None };
+        let bundle = read(&state, &StateOptions::default()).unwrap();
+        assert_eq!(bundle.parts[1].bytes().unwrap().as_ref(), save.as_slice());
+        assert!(bundle.header.extensions.is_empty());
+    }
+
+    #[test]
+    fn a_game_the_caller_names_keeps_its_hashes_and_takes_the_files_where_it_has_none() {
+        let mut data = gba_data();
+        data[0x08..0x0C].copy_from_slice(&0x1F1C_08FBu32.to_le_bytes());
+        let file = pack_bare(&data, &[]);
+        let state = StateFile { bytes: &file, name: "game.ss1", screenshot: None };
+
+        let mut named = Game::default();
+        named.title = Some("Pokémon Emerald".into());
+        let bundle = read(&state, &StateOptions::default().game(named.clone())).unwrap();
+        let game = bundle.header.game.as_ref().unwrap();
+        assert_eq!(game.title.as_deref(), Some("Pokémon Emerald"), "the caller's title wins");
+        assert_eq!(game.rom_hashes, [hash([0x1F, 0x1C, 0x08, 0xFB])], "the file's hash fills the gap");
+
+        named.rom_hashes = vec![HashValue::new(HashAlgorithm::Sha1, vec![7; 20]).unwrap()];
+        let bundle = read(&state, &StateOptions::default().game(named.clone())).unwrap();
+        assert_eq!(bundle.header.game.as_ref().unwrap().rom_hashes, named.rom_hashes);
+    }
+
+    #[test]
     fn a_bare_state_reads_its_items_by_offset() {
         let file =
             pack_bare(&gba_data(), &[(SCREENSHOT, vec![0x80; 240 * 160 * 4]), (SAVEDATA, vec![1; 512])]);
@@ -518,6 +728,24 @@ mod tests {
         assert_eq!(bundle.parts[1].content_type.as_deref(), Some("image/png"), "the framebuffer, made a PNG");
         assert_eq!(bundle.parts[2].bytes().unwrap().as_ref(), &[1; 512]);
         assert_eq!(unpack_bare(&pack_bare(&gba_data(), &[])).unwrap().1, []);
+    }
+
+    #[test]
+    fn items_that_all_name_one_span_are_refused_before_they_are_copied() {
+        // One large item, then headers that all point back at it: each copy is in bounds, and
+        // together they would be gigabytes.
+        let mut file = gba_data();
+        let span = 1 << 20;
+        let headers = 128;
+        let item_at = file.len() + (headers + 1) * 16;
+        for _ in 0..headers {
+            file.extend_from_slice(&4u32.to_le_bytes());
+            file.extend_from_slice(&i32::try_from(span).unwrap().to_le_bytes());
+            file.extend_from_slice(&i64::try_from(item_at).unwrap().to_le_bytes());
+        }
+        file.extend_from_slice(&[0; 16]);
+        file.resize(item_at + span, 0);
+        assert!(matches!(unpack_bare(&file), Err(Error::Corrupt { .. })));
     }
 
     #[test]

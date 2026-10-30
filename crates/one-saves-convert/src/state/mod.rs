@@ -429,6 +429,11 @@ pub(crate) fn header(options: &StateOptions, found: Found) -> one_saves::Header 
             game.title = game.title.or(found.title);
             game.serial = game.serial.or(found.serial);
             game.rom_filename = game.rom_filename.or(found.rom_filename);
+            game.system = game.system.or(found.system);
+            // A ROM the caller hashed has every digest; the file's are only where it gave none.
+            if game.rom_hashes.is_empty() {
+                game.rom_hashes = found.rom_hashes;
+            }
             Some(game)
         }
         (game, found) => game.or(found),
@@ -450,7 +455,8 @@ pub(crate) fn header(options: &StateOptions, found: Found) -> one_saves::Header 
         .bundled_at(options.bundled_at)
         .taken_at(found.taken_at.or(options.taken_at))
         .taken_with(taken_with)
-        .origin(found.origin);
+        .origin(found.origin)
+        .extensions(found.extensions);
     header.description.clone_from(&options.description);
     header
 }
@@ -468,6 +474,8 @@ pub(crate) struct Found {
     pub taken_at: Option<i64>,
     pub taken_with: Option<TakenWith>,
     pub origin: Option<one_saves::Origin>,
+    /// The header's keys, such as the clock a save the emulator kept beside the data carried.
+    pub extensions: one_saves::Extensions,
 }
 
 /// The origin and the slot a name's slot says.

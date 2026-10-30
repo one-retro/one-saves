@@ -36,6 +36,11 @@ conformance:
 fixtures:
     cargo test -p one-saves-convert --test real_saves -- --nocapture
 
+# Run the state readers against real emulator states, read where they lie in `folders`, which are
+# separated as `PATH` is. They stay out of the repository: a state holds the game's own code.
+states folders:
+    ONE_SAVES_STATES='{{ folders }}' cargo test -p one-saves-convert --features states --test real_states -- --nocapture
+
 # `just test` runs --all-features, which never compiles a `#[cfg(not(feature = ...))]` arm, so a
 # slim build can rot with CI green. Clippy is in here for the same reason: the lints that fire on
 # an arm only one configuration has are lints --all-features cannot see.
