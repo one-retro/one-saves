@@ -11,8 +11,8 @@
 //! that holds it. The keys these specifications define under `x.1sav` have their types here —
 //! [`Label`], [`Icon`], [`Dirent`], [`DirentGcMc`], [`Rtc`] and one for each cartridge clock under
 //! it, [`RtcHuc3`], [`RtcJoybus`], [`RtcMbc3`], [`RtcRtc4513`], [`RtcS3511a`], [`RtcSrtc`],
-//! [`RtcTc8521`] and [`RtcTpp1`] — and so does 1retro's [`Forge`]. Any other producer's key is a
-//! type of its own implementing the same trait.
+//! [`RtcTc8521`] and [`RtcTpp1`], and [`N64`] for an N64 cartridge's save memory — and so does
+//! 1retro's [`Forge`]. Any other producer's key is a type of its own implementing the same trait.
 //!
 //! ```
 //! use one_saves::{Extensions, extension::Label};
@@ -40,6 +40,7 @@ mod forge;
 mod gc_mc;
 mod icon;
 mod label;
+mod n64;
 mod rtc;
 mod time;
 
@@ -48,6 +49,7 @@ pub use forge::Forge;
 pub use gc_mc::DirentGcMc;
 pub use icon::{Icon, IconFrame};
 pub use label::Label;
+pub use n64::{N64, N64Save};
 pub use rtc::{
     Rtc, RtcHuc3, RtcJoybus, RtcMbc3, RtcRtc4513, RtcS3511a, RtcSrtc, RtcTc8521, RtcTpp1, S3511aAlarm,
 };
@@ -126,7 +128,7 @@ type Decoder = fn(&CBOR) -> Option<Box<dyn Erased>>;
 /// The type this crate has for a key, so a value read off the wire can be shown without a caller
 /// naming its type.
 fn known(key: &ReverseDnsName) -> Option<Decoder> {
-    let known: [(ReverseDnsName, Decoder); 14] = [
+    let known: [(ReverseDnsName, Decoder); 15] = [
         (Rtc::KEY, decode::<Rtc>),
         (RtcHuc3::KEY, decode::<RtcHuc3>),
         (RtcJoybus::KEY, decode::<RtcJoybus>),
@@ -140,6 +142,7 @@ fn known(key: &ReverseDnsName) -> Option<Decoder> {
         (Icon::KEY, decode::<Icon>),
         (Dirent::KEY, decode::<Dirent>),
         (DirentGcMc::KEY, decode::<DirentGcMc>),
+        (N64::KEY, decode::<N64>),
         (Forge::KEY, decode::<Forge>),
     ];
     known.into_iter().find(|(name, _)| name == key).map(|(_, decoder)| decoder)

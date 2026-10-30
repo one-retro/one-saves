@@ -9,6 +9,7 @@
 //! | Flat cartridge saves (`.srm`, `.sav`, `.eep`, `.fla`) | — | always |
 //! | PS1 memory cards (`.mcr`, `.mcd`, `.gme`, `.vgs`, `.vmp`) | [`ps1_memcard`] | `ps1` |
 //! | N64 Controller Paks (`.mpk`) | [`n64_cpak`] | `n64` |
+//! | N64 cartridge saves (`.eep`, `.sra`, `.fla`), and a libretro core's `.srm` of every chip and pak | [`n64_cpak`], for the paks | always; the `.srm`, `n64` |
 //! | GameCube memory cards (`.raw`, `.gcp`) | [`gc_memcard`] | `gc` |
 //! | Dreamcast VMU (`.bin`) | [`dreamcast_vmu`] | `vmu` |
 //! | PS2 memory cards (`.ps2`, with or without ECC) | [`ps2_memcard`] | `ps2` |
@@ -80,6 +81,7 @@ mod icon;
     feature = "saturn"
 ))]
 mod label;
+pub mod n64;
 pub mod profile;
 pub mod raw;
 #[cfg(feature = "rom")]

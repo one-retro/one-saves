@@ -24,6 +24,9 @@ pub struct RomInfo {
     /// `x.1sav.rtc.huc3`: what [`RawOptions::clock_chip`](crate::raw::RawOptions::clock_chip)
     /// takes.
     pub clock: Option<&'static str>,
+    /// The save chip an N64 cartridge carries, where the header says: only a homebrew header does,
+    /// in the byte a retail one keeps its revision in.
+    pub n64_save: Option<one_saves::extension::N64Save>,
 }
 
 /// Identifies a ROM from its header.
@@ -39,6 +42,24 @@ pub fn identify(bytes: &[u8]) -> Option<RomInfo> {
         title: id.title,
         serial: id.serial,
         clock: id.cartridge.clock.map(rom_id::Clock::key),
+        n64_save: if id.system.slug == crate::n64::SYSTEM {
+            id.cartridge.save.and_then(n64_save)
+        } else {
+            None
+        },
+    })
+}
+
+/// The chip a header's save memory is, by its kind and size.
+fn n64_save(save: rom_id::Save) -> Option<one_saves::extension::N64Save> {
+    use one_saves::extension::N64Save;
+    N64Save::ALL.into_iter().find(|chip| {
+        let kind = match chip {
+            N64Save::Eeprom4k | N64Save::Eeprom16k => rom_id::SaveKind::Eeprom,
+            N64Save::Sram256k | N64Save::Sram768k => rom_id::SaveKind::Sram,
+            N64Save::Flash1m => rom_id::SaveKind::Flash,
+        };
+        save.kind == kind && save.size.and_then(|size| usize::try_from(size).ok()) == Some(chip.size())
     })
 }
 

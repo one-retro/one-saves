@@ -236,6 +236,15 @@ impl ControllerPak {
     pub fn label(&self) -> &[u8] {
         &self.image[..NOTE_ENTRY]
     }
+
+    /// The whole of page 0: the label, and the ID block a console identifies the pak by.
+    ///
+    /// What [`PakBuilder::id_area`] takes to rebuild this pak as itself rather than as a freshly
+    /// formatted one.
+    #[must_use]
+    pub fn id_area(&self) -> &[u8] {
+        &self.image[..PAGE]
+    }
 }
 
 /// Reads the index table, falling back to the backup copy when the primary is unusable.
@@ -286,6 +295,17 @@ mod tests {
     pub(crate) fn pak_with(notes: &[(&str, &str, usize)]) -> Vec<u8> {
         let mut pak = vec![0u8; CAPACITY];
         pak[..NOTE_ENTRY].copy_from_slice(&[0xAAu8; NOTE_ENTRY]);
+        // The ID block a console wrote when it formatted the pak: a serial of its own, the same in
+        // all four copies, each sealed.
+        for at in build::ID_BLOCKS {
+            for (offset, byte) in pak[at..at + 0x18].iter_mut().enumerate() {
+                *byte = u8::try_from(offset * 7 + 3).expect("a byte");
+            }
+            pak[at + 0x1A] = 0x01;
+            let sum = build::id_checksum(&pak[at..at + 0x20]);
+            pak[at + 0x1C..at + 0x1E].copy_from_slice(&sum.to_be_bytes());
+            pak[at + 0x1E..at + 0x20].copy_from_slice(&0xFFF2u16.wrapping_sub(sum).to_be_bytes());
+        }
 
         let mut index = vec![CHAIN_FREE; PAGES];
         for entry in index.iter_mut().take(FIRST_DATA_PAGE) {
@@ -310,11 +330,13 @@ mod tests {
             pak[offset + 0x10..offset + 0x20].copy_from_slice(&font::encode(name, 16));
             next += pages;
         }
+        let mut table = vec![0u8; PAGE];
         for (page, entry) in index.iter().enumerate() {
-            let bytes = entry.to_be_bytes();
-            pak[INDEX_PAGE * PAGE + page * 2..][..2].copy_from_slice(&bytes);
-            pak[INDEX_BACKUP_PAGE * PAGE + page * 2..][..2].copy_from_slice(&bytes);
+            table[page * 2..page * 2 + 2].copy_from_slice(&entry.to_be_bytes());
         }
+        table[1] = build::index_checksum(&table);
+        pak[INDEX_PAGE * PAGE..(INDEX_PAGE + 1) * PAGE].copy_from_slice(&table);
+        pak[INDEX_BACKUP_PAGE * PAGE..(INDEX_BACKUP_PAGE + 1) * PAGE].copy_from_slice(&table);
         pak
     }
 

@@ -81,6 +81,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
     ("srm", "cartridge save RAM, as libretro cores write it"),
     ("sav", "cartridge save memory"),
     ("eep", "EEPROM"),
+    ("sra", "N64 cartridge SRAM, as mupen64plus and Project64 name it"),
     ("fla", "flash memory"),
     ("flash", "flash memory"),
     ("sa1", "SA-1 cartridge save RAM"),

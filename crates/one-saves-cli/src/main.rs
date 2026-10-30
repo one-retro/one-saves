@@ -9,6 +9,8 @@ use one_saves::extension::{Civil, SHOWN_BYTES, SHOWN_CHARS};
 use one_saves::{Bundle, Game, Name, Part, PartKind, Payload, Source};
 use one_saves_convert::{Format, Profile, card, detect, raw};
 
+mod n64;
+
 /// Move retro saves and memory cards in and out of the Universal Saves Format.
 #[derive(Parser)]
 #[command(name = "1saves", version, about, long_about = None)]
@@ -106,6 +108,26 @@ struct Convert {
     /// sidecar records its own instant, and takes none.
     #[arg(long, value_name = "EPOCH")]
     rtc_captured_at: Option<i64>,
+    /// For an N64 cartridge save, the chip the cartridge has: eeprom-4k, eeprom-16k, sram-256k,
+    /// sram-768k or flash-1m.
+    ///
+    /// Neither a file's bytes nor its length always say, and the chip is what a restore writes.
+    /// `--rom` settles it for a homebrew ROM, whose header names it.
+    #[arg(long, value_name = "CHIP")]
+    n64_save: Option<String>,
+    /// For an N64 SRAM or FlashRAM save, the order the file keeps the chip's words in: `console`,
+    /// as an EverDrive writes it, or `swapped`, as mupen64plus and Project64 do.
+    ///
+    /// `--from everdrive` and `--from mupen64plus` say the same, so this is for a file that came
+    /// from somewhere else.
+    #[arg(long, value_name = "ORDER")]
+    n64_order: Option<String>,
+    /// For a file holding Controller Paks, keep only this game's notes beside its cartridge, by the
+    /// four-character code its ROM header and its notes carry, such as `NKTE`.
+    ///
+    /// Without it the paks are kept whole, other games' notes and all.
+    #[arg(long, value_name = "CODE")]
+    n64_game: Option<String>,
     /// Keep an appended real-time-clock footer inside the save rather than splitting it out.
     ///
     /// Splitting is the default because the footer carries a live timestamp, so leaving it inline
@@ -130,6 +152,16 @@ struct Extract {
     /// Extract one part's payload by id, rather than the whole thing.
     #[arg(long, value_name = "ID")]
     part: Option<u64>,
+    /// For an N64 save, the emulator or cartridge to write it out for, which decides the files and
+    /// their names.
+    #[arg(long, value_name = "TARGET")]
+    n64: Option<n64::Target>,
+    /// For an N64 save, the file to write it onto: a `.srm` for RetroArch, an `.mpk` otherwise.
+    ///
+    /// What the bundle says nothing about is kept from it, so one game's notes go onto a pak without
+    /// taking the others off.
+    #[arg(long, value_name = "FILE")]
+    onto: Option<PathBuf>,
     /// Write the clock to a sidecar file instead of appending it: Gambatte's for a Game Boy clock,
     /// mincer_ray's for a GBA one.
     #[arg(long, value_name = "FILE")]
@@ -272,10 +304,12 @@ fn convert(args: Convert) -> Fallible {
     }
 
     #[cfg(feature = "rom")]
-    let Identified { mut game, system: rom_system, clock: rom_clock } = identify(&args)?;
+    let Identified { mut game, system: rom_system, clock: rom_clock, n64_save: rom_n64_save } =
+        identify(&args)?;
     // Without `rom` there is no `--rom` to read, so there is nothing a ROM could have said.
     #[cfg(not(feature = "rom"))]
-    let Identified { mut game, system: rom_system, clock: rom_clock } = Identified::default();
+    let Identified { mut game, system: rom_system, clock: rom_clock, n64_save: rom_n64_save } =
+        Identified::default();
 
     let sidecar = sidecar_clock(&args)?;
     let sidecar_path = sidecar.as_ref().map(|(path, _, at)| (path.clone(), at.is_some()));
@@ -299,7 +333,12 @@ fn convert(args: Convert) -> Fallible {
         .or_else(|| profile.as_ref().and_then(Profile::only_system).map(ToOwned::to_owned))
         .or_else(|| core_system.map(ToOwned::to_owned));
 
-    let mut bundle = if format == Format::Raw {
+    let mut label = format.label().to_owned();
+    let mut bundle = if n64::is_n64(system.as_deref(), &extension, &bytes) {
+        let (bundle, read_as) = n64::convert(&args, &bytes, &extension, source, game.clone(), rom_n64_save)?;
+        label = read_as;
+        bundle
+    } else if format == Format::Raw {
         let options = raw::RawOptions {
             system,
             role: args.role.clone(),
@@ -336,18 +375,7 @@ fn convert(args: Convert) -> Fallible {
     let encoded = bundle.to_vec()?;
     write_out(&output, &encoded, args.force)?;
 
-    if let Some((path, needed_instant)) = &sidecar_path {
-        let how = if !needed_instant {
-            "the instant it records".to_owned()
-        } else if args.rtc_captured_at.is_some() {
-            "the instant given".to_owned()
-        } else {
-            "the time it was read".to_owned()
-        };
-        println!("read the clock from {}, using {how}", path.display());
-    } else if one_saves_convert::rtc::footer_of(&bundle).is_some() {
-        println!("split a real-time-clock footer off the save, so its bytes hash the same over time");
-    }
+    report_clock(sidecar_path.as_ref(), args.rtc_captured_at.is_some(), &bundle);
 
     // A backup RAM is a flat save to this build, but saying "flat cartridge save" about one would
     // be wrong twice over: the internal RAM is not a cartridge, and the cart is not a game. What
@@ -369,10 +397,26 @@ fn convert(args: Convert) -> Fallible {
         "{} -> {} ({}, {what}, {} bytes)",
         args.input.display(),
         output.display(),
-        if backup_ram { "Sega CD backup RAM" } else { format.label() },
+        if backup_ram { "Sega CD backup RAM" } else { label.as_str() },
         encoded.len()
     );
     Ok(())
+}
+
+/// Says where a save's clock came from, when it had one.
+fn report_clock(sidecar: Option<&(PathBuf, bool)>, instant_given: bool, bundle: &Bundle) {
+    if let Some((path, needed_instant)) = sidecar {
+        let how = if !needed_instant {
+            "the instant it records"
+        } else if instant_given {
+            "the instant given"
+        } else {
+            "the time it was read"
+        };
+        println!("read the clock from {}, using {how}", path.display());
+    } else if one_saves_convert::rtc::footer_of(bundle).is_some() {
+        println!("split a real-time-clock footer off the save, so its bytes hash the same over time");
+    }
 }
 
 /// The `source` a bundle carries: what `--from` names, and what the other flags add to it.
@@ -480,6 +524,8 @@ struct Identified {
     system: Option<&'static str>,
     /// The key of the clock chip the ROM's header says the cartridge has.
     clock: Option<&'static str>,
+    /// The save chip an N64 ROM's header says the cartridge has.
+    n64_save: Option<one_saves::extension::N64Save>,
 }
 
 /// Works out what game a save belongs to, from a ROM's header and a catalog.
@@ -507,7 +553,7 @@ fn identify(args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
             eprintln!("note: this ROM is not in {}", dat.display());
         }
     }
-    Ok(Identified { game: Some(game), system: info.system, clock: info.clock })
+    Ok(Identified { game: Some(game), system: info.system, clock: info.clock, n64_save: info.n64_save })
 }
 
 fn extract(args: Extract) -> Fallible {
@@ -521,6 +567,24 @@ fn extract(args: Extract) -> Fallible {
         write_out(&output, &payload, args.force)?;
         println!("part {id} -> {} ({} bytes)", output.display(), payload.len());
         return Ok(());
+    }
+
+    // An N64 save is several files or one, in either word order, depending on what reads it, so
+    // which is the caller's to say.
+    if let Some(target) = args.n64 {
+        if !n64::is_n64_bundle(&bundle) {
+            return Err("--n64 writes an N64 save, and this bundle is not one".into());
+        }
+        let base = args.output.unwrap_or_else(|| args.input.with_extension(""));
+        return n64::extract(&bundle, target, &base, args.onto.as_deref(), args.force);
+    }
+    if n64::is_n64_bundle(&bundle) && args.to.is_none() {
+        return Err("an N64 save is written differently for each emulator; pass --n64 retroarch, \
+                    mupen64plus, project64 or everdrive"
+            .into());
+    }
+    if args.onto.is_some() {
+        return Err("--onto is for an N64 save, with --n64".into());
     }
 
     // Otherwise the bundle says what it is: a card writes back as that card, and anything else

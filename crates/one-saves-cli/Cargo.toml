@@ -27,7 +27,7 @@ default = ["archive", "cards", "dat", "dat-cmpro", "rom", "zstd"]
 # Every card format. Each is forwarded to one-saves-convert, where it gates one crate and one
 # adapter. A format that is off is still named — `1saves inspect` reads a bundle of it, and
 # `convert` and `extract` say which feature would have handled it — and cannot be read or written.
-cards = ["one-saves-convert/cards"]
+cards = ["gc", "n64", "neogeo", "ps1", "ps2", "saturn", "vmu", "one-saves-convert/cards"]
 gc = ["one-saves-convert/gc"]
 n64 = ["one-saves-convert/n64"]
 neogeo = ["one-saves-convert/neogeo"]
