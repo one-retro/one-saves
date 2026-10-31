@@ -45,6 +45,16 @@ pub enum Error {
     },
     /// A save with no bytes, which occupies no blocks and so cannot be filed.
     EmptySave(u16),
+    /// The card is larger than the container it was asked to go in has room for.
+    ///
+    /// A MiSTer save keeps 8 KiB for its card, which is the most either of the core's modes
+    /// emulates.
+    TooLargeForContainer {
+        /// The card's size in bytes.
+        size: usize,
+        /// The room the container has for it.
+        room: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -70,6 +80,9 @@ impl fmt::Display for Error {
                 write!(f, "the directory holds {available} saves and this is {given}")
             }
             Error::EmptySave(ngh) => write!(f, "the save for NGH {ngh:04X} has no bytes"),
+            Error::TooLargeForContainer { size, room } => {
+                write!(f, "a {size}-byte card does not fit a MiSTer save, which has room for {room}")
+            }
         }
     }
 }

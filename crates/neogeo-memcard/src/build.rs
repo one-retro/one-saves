@@ -76,6 +76,9 @@ impl CardBuilder {
 
     /// Writes the card out, in whatever container was asked for.
     pub fn build(&self) -> Result<Vec<u8>> {
+        if self.container == Container::MiSter && self.geometry.size > MISTER_CARD_REGION {
+            return Err(Error::TooLargeForContainer { size: self.geometry.size, room: MISTER_CARD_REGION });
+        }
         let card = self.build_bare()?;
         match self.container {
             Container::Bare => Ok(card),
@@ -314,5 +317,24 @@ mod tests {
         assert!(matches!(empty.build(), Err(Error::EmptySave(9))));
 
         assert!(matches!(CardBuilder::new(3000), Err(Error::UnknownSize(3000))));
+    }
+
+    /// A MiSTer save keeps 8 KiB for its card. Up to that, a card goes in and reads back out; past
+    /// it, the card is refused rather than copied into a region too short for it.
+    #[test]
+    fn a_card_goes_in_a_mister_save_only_where_it_fits() {
+        for size in [2048, 8192] {
+            let mut builder = CardBuilder::new(size).expect("a real size");
+            let image = builder.container(Container::MiSter).build().expect("fits");
+            assert_eq!(image.len(), crate::MISTER_BACKUP_RAM + MISTER_CARD_REGION);
+            let card = MemoryCard::parse(&image).expect("reads what it wrote");
+            assert_eq!((card.container(), card.capacity()), (Container::MiSter, size));
+        }
+
+        let mut builder = CardBuilder::new(10_240).expect("a real size");
+        assert_eq!(
+            builder.container(Container::MiSter).build(),
+            Err(Error::TooLargeForContainer { size: 10_240, room: MISTER_CARD_REGION })
+        );
     }
 }
