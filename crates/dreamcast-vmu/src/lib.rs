@@ -71,10 +71,10 @@ pub const ENTRY_LEN: usize = 32;
 pub const ENTRIES_PER_BLOCK: usize = BLOCK / ENTRY_LEN;
 
 /// An allocation table entry meaning "this is the last block of its file".
-pub const CHAIN_END: u16 = 0xFFFC;
+pub const CHAIN_END: u16 = 0xFFFA;
 
 /// An allocation table entry meaning "this block is free".
-pub const FREE: u16 = 0xFFFA;
+pub const FREE: u16 = 0xFFFC;
 
 /// What a directory entry's type byte says a save is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -289,10 +289,7 @@ mod tests {
         let mut image = vec![0u8; IMAGE_LEN];
         image[ROOT_BLOCK * BLOCK..].copy_from_slice(&build::default_root_block());
 
-        let mut fat = [FREE; BLOCKS];
-        for entry in &mut fat[USER_BLOCKS..] {
-            *entry = CHAIN_END;
-        }
+        let mut fat = build::formatted_fat();
 
         let mut next = 0usize;
         for (index, (name, blocks, kind)) in saves.iter().enumerate() {
