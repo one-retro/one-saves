@@ -187,9 +187,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     let mut parts = Vec::new();
     for save in card.saves() {
         // A GameCube save is opened by game code plus maker code plus filename, so the serial is
-        // the pair rather than either alone.
-        let mut game = Game::default();
-        game.serial = (!save.game_code.is_empty()).then(|| format!("{}{}", save.game_code, save.maker_code));
+        // the pair rather than either alone. A save with no game code has no game, rather than an
+        // empty one, which the format refuses.
+        let game = (!save.game_code.is_empty())
+            .then(|| Game::default().serial(format!("{}{}", save.game_code, save.maker_code)));
 
         // The picture travels with the save, so it goes in the header of the bundle that *is* the
         // save rather than on the card's part naming it.
@@ -201,11 +202,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         if let Some(label) = comments(&save.dirent, &save.data) {
             inner.insert(label);
         }
-        let mut part =
-            save_part_with(Format::GcCard, parts.len(), save.data.clone(), Some(game), options, inner)?
-                .path(save.filename.clone())
-                .slot(u64::try_from(save.slot).expect("slot fits"))
-                .dirent(save.dirent.clone());
+        let mut part = save_part_with(Format::GcCard, parts.len(), save.data.clone(), game, options, inner)?
+            .path(save.filename.clone())
+            .slot(u64::try_from(save.slot).expect("slot fits"))
+            .dirent(save.dirent.clone());
         // The directory's own record of the save, which is the card's rather than the save's, so
         // it rides on the part beside the raw entry rather than in the nested bundle's header.
         if let Some(seconds) = modified_at(&save.dirent) {
@@ -332,6 +332,19 @@ mod tests {
         let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap();
         assert_eq!(inner.parts[0].payload.len(), 2 * gc_memcard::BLOCK as u64);
         bundle.validate().expect("valid bundle");
+    }
+
+    /// A save with no game code is named for no game, so it carries no game, and its card still
+    /// encodes: an empty game, which this once gave it, is one the format refuses.
+    #[test]
+    fn a_save_with_no_game_code_has_no_game_and_its_card_still_encodes() {
+        let card = card_with(64, &[("\0\0\0\0\0\0", "nameless", 1), ("GAFE01", "super_mario_sunshine", 1)]);
+        let bundle = read(&card, &CardOptions::default()).expect("reads");
+
+        assert_eq!(bundle.parts[0].path.as_deref(), Some("nameless"));
+        assert_eq!(bundle.parts[0].game, None);
+        assert_eq!(bundle.parts[1].game.as_ref().unwrap().serial.as_deref(), Some("GAFE01"));
+        bundle.to_vec().expect("encodes");
     }
 
     #[test]

@@ -99,9 +99,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
     let mut parts = Vec::new();
     for (index, save) in saves.iter().enumerate() {
-        let mut game = Game::default();
-        game.serial = serial_from_name(&save.name);
-        let game = Some(game);
+        // A directory is named for its game's serial only when it is a game's: the system's own
+        // folders, such as BWNETCNF, carry none, and a save with no game has no `game` at all
+        // rather than an empty one, which the format refuses.
+        let game = serial_from_name(&save.name).map(|serial| Game::default().serial(serial));
         // The directory's record of the save: when it was made and when it was last written, both
         // qualified by the zone a PS2 keeps them in.
         let times = entry_seconds(&save.dirent, CREATED_AT)
@@ -332,6 +333,37 @@ mod tests {
         let from_dump = read(&dump, &CardOptions::default()).expect("reads the dump");
         assert_eq!(from_dump.header.card.as_ref().unwrap().capacity, 8_388_608);
         assert_eq!(from_dump.parts.len(), bundle.parts.len());
+    }
+
+    /// The system's own folders are named for no game, so their saves carry no game, and a card
+    /// holding one still encodes. This once gave such a save an empty game, which the format
+    /// refuses, so reading a card with network settings on it made a bundle that would not write.
+    #[test]
+    fn a_system_folder_has_no_game_and_its_card_still_encodes() {
+        let file = |name: &str| File {
+            name: name.into(),
+            dirent: vec![0u8; ps2_memcard::ENTRY],
+            data: vec![7u8; 100],
+        };
+        let mut builder = CardBuilder::new(Capacity::Mb8);
+        builder.add(Save {
+            name: "BWNETCNF".into(),
+            dirent: vec![0u8; ps2_memcard::ENTRY],
+            files: vec![file("BWNETCNF")],
+        });
+        builder.add(Save {
+            name: "BASLUS-20312".into(),
+            dirent: vec![0u8; ps2_memcard::ENTRY],
+            files: vec![file("BASLUS-20312")],
+        });
+        let bundle = read(&builder.build().expect("builds"), &CardOptions::default()).expect("reads");
+
+        assert_eq!(bundle.parts[0].path.as_deref(), Some("BWNETCNF"));
+        assert_eq!(bundle.parts[0].game, None);
+        let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).expect("inner bundle");
+        assert_eq!(inner.header.game, None);
+        assert_eq!(bundle.parts[1].game.as_ref().unwrap().serial.as_deref(), Some("SLUS-20312"));
+        bundle.to_vec().expect("encodes");
     }
 
     #[test]
