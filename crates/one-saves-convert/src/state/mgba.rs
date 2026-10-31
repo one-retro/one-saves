@@ -768,4 +768,169 @@ mod tests {
         bundle.header.source = options.source.map(|source| source.app(None));
         assert!(matches!(write(&bundle, "game"), Err(Error::NotConvertible(_))));
     }
+
+    fn read_as(file: &[u8], name: &str) -> Result<Bundle> {
+        read(&StateFile { bytes: file, name, screenshot: None }, &StateOptions::default())
+    }
+
+    /// The PNG's colour type: the tenth byte of IHDR's data, which opens at 16.
+    fn color_type(png: &[u8]) -> u8 {
+        png[25]
+    }
+
+    #[test]
+    fn an_rgb_picture_goes_back_as_it_came_and_any_other_as_the_rgb_mgba_reads() {
+        let bundle = read_as(&pack_png(&screen(), &gba_data(), &[]).unwrap(), "game.ss1").unwrap();
+        let rebuilt = write(&bundle, "game").unwrap();
+        let (_, _, picture) = unpack_png(&rebuilt.bytes).unwrap();
+        assert_eq!(picture.unwrap(), screen(), "eight-bit RGB is what mGBA reads, so it is kept");
+
+        // mGBA reads only eight-bit RGB, so a picture with an alpha channel is encoded again.
+        let pixels: Vec<u8> =
+            (0..240 * 160u32).flat_map(|n| [n.to_le_bytes()[0], 0x20, 0x40, 0x80]).collect();
+        let rgba = image::encode(240, 160, 4, &pixels).unwrap();
+        let mut bundle = bundle;
+        let mut part = crate::state::screenshot_part(rgba).unwrap();
+        part.id = 1;
+        bundle.parts[1] = part;
+        let rebuilt = write(&bundle, "game").unwrap();
+        assert_eq!(rebuilt.left_out, []);
+        let picture = unpack_png(&rebuilt.bytes).unwrap().2.unwrap();
+        assert_eq!(color_type(&picture), 2, "RGB");
+        let (width, height, again) = image::decode_rgba(&picture).unwrap();
+        assert_eq!(
+            (width, height, image::rgb_of(&again)),
+            (240, 160, image::rgb_of(&pixels)),
+            "the colours kept"
+        );
+    }
+
+    #[test]
+    fn a_picture_mgba_cannot_read_back_is_left_out_and_the_state_written_bare() {
+        let jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F'];
+        let broken = [PNG_SIGNATURE, b"not a picture"].concat();
+        for picture in [jpeg, broken] {
+            let mut bundle = read_as(&pack_bare(&gba_data(), &[]), "game.ss1").unwrap();
+            bundle.parts.push(crate::state::screenshot_part(picture).unwrap());
+            bundle.parts = crate::state::number(bundle.parts);
+            let rebuilt = write(&bundle, "game").unwrap();
+            assert_eq!(rebuilt.left_out, [1]);
+            assert_eq!(rebuilt.bytes, gba_data(), "the bare container, with nothing after the data");
+        }
+    }
+
+    #[test]
+    fn a_framebuffer_takes_its_shape_from_the_item_mgba_keeps_for_it() {
+        let screen = vec![0x33; 8 * 4 * 4];
+        let dimensions = [8, 0, 4, 0].to_vec();
+        let file =
+            pack_bare(&gba_data(), &[(SCREENSHOT, screen.clone()), (SCREENSHOT_DIMENSIONS, dimensions)]);
+        let bundle = read_as(&file, "game.ss1").unwrap();
+        let png = bundle.parts[1].bytes().unwrap();
+        assert_eq!(image::decode_rgba(&png).unwrap().0, 8, "eight wide, as the item says");
+        assert_eq!(bundle.parts.len(), 2, "the dimensions are how it was read, and nothing of their own");
+
+        // With no item, or one the framebuffer's length belies, a size no screen of mGBA's has is
+        // kept as mGBA wrote it.
+        for items in [
+            vec![(SCREENSHOT, screen.clone())],
+            vec![(SCREENSHOT, screen), (SCREENSHOT_DIMENSIONS, vec![9, 0, 4, 0])],
+        ] {
+            let bundle = read_as(&pack_bare(&gba_data(), &items), "game.ss1").unwrap();
+            assert_eq!(bundle.parts[1].kind, PartKind::Aux);
+            assert_eq!(bundle.parts[1].path.as_deref(), Some("extdata/1"));
+        }
+    }
+
+    #[test]
+    fn items_the_reader_cannot_take_apart_are_kept_as_mgba_wrote_them() {
+        let items = vec![
+            (SAVEDATA, vec![1; 512]),
+            (SAVEDATA, vec![2; 512]),
+            (CHEATS, vec![0xFF, 0xFE]),
+            (META_TIME, vec![0; 4]),
+            (META_CREATOR, b"medusa 0.1\0".to_vec()),
+        ];
+        let file = pack_bare(&gba_data(), &items);
+        let bundle = read_as(&file, "game.ss1").unwrap();
+        let paths: Vec<_> = bundle.parts[2..].iter().map(|part| part.path.as_deref().unwrap()).collect();
+        assert_eq!(
+            paths,
+            ["extdata/2", "extdata/3", "extdata/257", "extdata/258"],
+            "a second save, cheats that are not text, a time of another length, another creator"
+        );
+        assert_eq!(bundle.parts[1].kind, PartKind::Save, "the first save is the save");
+        assert_eq!(bundle.header.taken_at, None);
+        assert_eq!(bundle.header.source.as_ref().unwrap().app_version, None);
+
+        // And they go back where they were, so the file is mGBA's own again.
+        let rebuilt = write(&bundle, "game").unwrap();
+        assert_eq!((rebuilt.bytes, rebuilt.left_out), (file, vec![]));
+    }
+
+    #[test]
+    fn an_empty_cheats_section_is_no_cheats() {
+        let bundle = read_as(&pack_bare(&gba_data(), &[(CHEATS, b"\n\n".to_vec())]), "game.ss1").unwrap();
+        assert_eq!(bundle.parts.len(), 1, "nothing on the side");
+        assert!(bundle.parts[0].extensions.is_empty(), "and no key on the state part");
+    }
+
+    #[test]
+    fn what_mgba_has_no_item_for_is_left_out() {
+        let mut bundle = read_as(&pack_bare(&gba_data(), &[(SAVEDATA, vec![1; 512])]), "game.ss1").unwrap();
+        bundle.parts.push(Part::new(2, *b"SAVE").path("other.sav"));
+        bundle.parts.push(Part::new(3, *b"MORE").kind(PartKind::Aux).path("notes"));
+        bundle.validate().unwrap();
+        let rebuilt = write(&bundle, "game").unwrap();
+        assert_eq!(rebuilt.left_out, [2, 3], "a second save, and a part that names no item");
+        let (_, items) = unpack_bare(&rebuilt.bytes).unwrap();
+        assert_eq!(items, [(SAVEDATA, vec![1; 512])]);
+    }
+
+    #[test]
+    fn a_file_that_does_not_unpack_is_corrupt() {
+        let corrupt = |file: &[u8], what: &str| {
+            let error = read_as(file, "game.ss1").unwrap_err();
+            assert!(matches!(error, Error::Corrupt { .. }), "{what}: {error}");
+        };
+        let png = pack_png(&screen(), &gba_data(), &[(SAVEDATA, vec![1; 512])]).unwrap();
+        corrupt(&png[..png.len() - 20], "a PNG cut short");
+        corrupt(&screen(), "a picture with no core's data");
+
+        let item = |tag: u32, size: u32, data: &[u8]| {
+            let mut body = tag.to_le_bytes().to_vec();
+            body.extend_from_slice(&size.to_le_bytes());
+            body.extend_from_slice(&image::deflate_zlib(data));
+            image::chunk(*b"gbAx", &body)
+        };
+        let with = |chunks: &[Vec<u8>]| {
+            let mut out = pack_png(&screen(), &gba_data(), &[]).unwrap();
+            let end = out.len() - 12;
+            out.splice(end..end, chunks.concat());
+            out
+        };
+        corrupt(&with(&[item(2, 513, &[1; 512])]), "an item shorter than it says");
+        // Refused on its claim, before anything is inflated; the bare container's test above has
+        // the claims add up.
+        let claims = u32::try_from(MAX_ITEMS + 1).unwrap();
+        match read_as(&with(&[item(4, claims, &[])]), "game.ss1") {
+            Err(Error::Corrupt { why, .. }) => assert!(why.contains("claim"), "{why}"),
+            other => panic!("an item past the cap: {other:?}"),
+        }
+
+        let bare = pack_bare(&gba_data(), &[(SAVEDATA, vec![1; 512])]);
+        corrupt(&bare[..0x60000], "data cut short");
+        corrupt(&bare[..0x61000 + 8], "a list of items cut short");
+        let mut outside = bare.clone();
+        outside[0x61000 + 8..0x61000 + 16].copy_from_slice(&i64::MAX.to_le_bytes());
+        corrupt(&outside, "an item outside the file");
+    }
+
+    #[test]
+    fn data_with_no_version_word_mgba_writes_is_not_mgbas() {
+        let data = vec![0; 0x61000];
+        let error = read_as(&pack_png(&screen(), &data, &[]).unwrap(), "game.ss1").unwrap_err();
+        assert!(matches!(error, Error::NotThisFormat { .. }), "{error}");
+        assert!(matches!(read_as(&data, "game.ss1"), Err(Error::NotThisFormat { .. })));
+    }
 }

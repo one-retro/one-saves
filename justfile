@@ -80,7 +80,8 @@ test-features:
     cargo test -p saturn-backup
     cargo test -p saturn-backup --features gzip
     # States on their own, without `zstd`: the build where a DuckStation state compressed the way
-    # DuckStation compresses by default is named and refused rather than read. `just test` only
+    # DuckStation compresses by default, and a RetroArch RZIP version 2, are named and refused
+    # rather than read, and a DuckStation state is written back as a zlib stream. `just test` only
     # sees it with.
     cargo test -p one-saves-convert --no-default-features --features states
     # disc-id without `chd`, the build that carries no decompressor; `just test` only sees it with.

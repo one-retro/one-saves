@@ -577,4 +577,155 @@ mod tests {
         // A PNG that is only a picture is a screenshot, whatever it is called.
         assert_eq!(detect(b"\x89PNG\r\n\x1a\n\0\0\0\0IEND\xaeB`\x82", "game.ss1"), None);
     }
+
+    #[test]
+    fn every_emulator_is_named_back_by_its_slug() {
+        for emulator in Emulator::ALL {
+            assert_eq!(Emulator::from_app(emulator.app()), Some(emulator));
+            assert_eq!(emulator.is_supported(), cfg!(feature = "states"));
+        }
+        assert_eq!(Emulator::from_app("pcsx2"), None);
+    }
+
+    #[test]
+    fn the_app_says_whose_file_a_state_is_and_a_core_only_where_one_app_runs_it() {
+        let of = |app: Option<&str>, core: Option<&str>| {
+            let name = |name: &str| one_saves::Name::parse(name).unwrap();
+            let mut bundle = Bundle::default();
+            bundle.header.source = Some(Source::default().app(app.map(name)).core(core.map(name)));
+            emulator_of(&bundle)
+        };
+        assert_eq!(
+            of(Some("retroarch"), Some("mgba")),
+            Some(Emulator::RetroArch),
+            "RetroArch running mGBA's core"
+        );
+        assert_eq!(of(Some("mgba"), Some("mgba")), Some(Emulator::Mgba));
+        assert_eq!(of(None, Some("mgba")), Some(Emulator::Mgba), "mGBA's core, with no app to say otherwise");
+        assert_eq!(of(None, Some("duckstation")), Some(Emulator::DuckStation));
+        assert_eq!(of(None, Some("genesis-plus-gx")), None, "a libretro core alone names no app");
+        assert_eq!(of(Some("pcsx2"), Some("pcsx2")), None, "an app whose files this crate does not write");
+        assert_eq!(emulator_of(&Bundle::default()), None, "no source at all");
+    }
+
+    #[cfg(not(feature = "states"))]
+    #[test]
+    fn without_states_a_state_is_still_known_and_refused_in_those_words() {
+        let bytes = b"DUCC\x5d\0\0\0";
+        let emulator = detect(bytes, "SLUS-00594_1.sav").expect("known by its bytes");
+        let file = StateFile { bytes, name: "SLUS-00594_1.sav", screenshot: None };
+        let read = read(emulator, &file, &StateOptions::default()).unwrap_err();
+        assert!(matches!(read, Error::Unsupported { feature: "states", .. }), "{read}");
+        let write = write(emulator, &Bundle::default(), "game").unwrap_err();
+        assert!(matches!(write, Error::Unsupported { feature: "states", .. }), "{write}");
+    }
+
+    #[cfg(feature = "states")]
+    #[test]
+    fn each_emulator_reads_and_writes_through_the_one_entry_point() {
+        let mut mgba = vec![0; 0x61000];
+        mgba[..4].copy_from_slice(&0x0100_0007u32.to_le_bytes());
+        // A header and four bytes of data stored as they are, which is all a DuckStation state needs.
+        let mut duckstation = vec![0; 216];
+        for (at, value) in [(0, 0x4343_5544), (4, 93), (204, 4), (208, 4), (212, 216)] {
+            duckstation[at..at + 4].copy_from_slice(&u32::to_le_bytes(value));
+        }
+        duckstation.extend_from_slice(b"CORE");
+        // RetroArch's file does not say which core took it; the others name their own over this.
+        let options = StateOptions::default()
+            .source(Source::default().core(one_saves::Name::parse("genesis-plus-gx").ok()));
+
+        for (emulator, bytes, name) in [
+            (Emulator::RetroArch, b"CORE".to_vec(), "game.state2"),
+            (Emulator::Mgba, mgba, "game.ss2"),
+            (Emulator::DuckStation, duckstation, "game_2.sav"),
+        ] {
+            assert_eq!(detect(&bytes, name), Some(emulator), "{name}");
+            let file = StateFile { bytes: &bytes, name, screenshot: None };
+            let bundle = read(emulator, &file, &options).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(bundle.parts[0].slot, Some(2), "{name}");
+            assert_eq!(emulator_of(&bundle), Some(emulator), "{name}: the bundle says whose file to rebuild");
+            assert_eq!(write(emulator, &bundle, "game").unwrap().name, name);
+        }
+    }
+
+    #[cfg(feature = "states")]
+    #[test]
+    fn a_bundle_that_is_not_a_state_rebuilds_no_emulators_file() {
+        let save = Bundle::new(one_saves::Header::default(), vec![one_saves::Part::new(0, *b"SAVE")]);
+        for emulator in Emulator::ALL {
+            assert!(matches!(write(emulator, &save, "game"), Err(Error::NotConvertible(_))), "{emulator:?}");
+        }
+    }
+
+    #[cfg(feature = "states")]
+    #[test]
+    fn the_file_says_what_it_recorded_of_the_state_and_the_caller_fills_the_rest() {
+        use std::collections::BTreeMap;
+
+        use one_saves::{Name, Origin, Recorded, TakenWith};
+
+        let bios =
+            BTreeMap::from([("scph5501.bin".to_owned(), vec![one_saves::HashValue::sha256_of(b"BIOS")])]);
+        let options = StateOptions {
+            source: Some(
+                Source::default()
+                    .app(Name::parse("retroarch").ok())
+                    .app_version("1.19.1")
+                    .platform(Name::parse("macos").ok()),
+            ),
+            description: Some("before the boss".into()),
+            bundled_at: Some(1_800_000_000),
+            taken_at: Some(1_700_000_000),
+            taken_with: Some(TakenWith::default().firmware(bios.clone()).format_version(1).language("ja")),
+            ..StateOptions::default()
+        };
+        let found = || Found {
+            app: Some("duckstation"),
+            core: Some("duckstation"),
+            app_version: Some("0.1-12442".into()),
+            taken_at: Some(1_793_000_000),
+            taken_with: Some(TakenWith::default().firmware(Recorded::Unknown).format_version(93)),
+            origin: Some(Origin::Auto),
+            ..Found::default()
+        };
+
+        let merged = header(&options, found());
+        let source = merged.source.as_ref().unwrap();
+        let names = [&source.app, &source.core, &source.platform].map(|name| name.as_ref().map(Name::as_str));
+        assert_eq!(
+            names,
+            [Some("duckstation"), Some("duckstation"), Some("macos")],
+            "the file names what took it"
+        );
+        assert_eq!(source.app_version.as_deref(), Some("0.1-12442"));
+        assert_eq!(source.device_kind.as_ref().map(Slug::as_str), Some("emulator"));
+        assert_eq!(
+            merged.taken_at,
+            Some(1_793_000_000),
+            "the emulator's record of when, over the file's age"
+        );
+        assert_eq!(merged.origin, Some(Origin::Auto));
+        let with = merged.taken_with.as_ref().unwrap();
+        assert_eq!(with.format_version, Some(Recorded::Known(93)), "the version the file was stamped with");
+        assert_eq!(
+            with.firmware,
+            Some(Recorded::Known(bios)),
+            "a BIOS the caller named, where the file names none"
+        );
+        assert_eq!(with.language, Some(Recorded::Known("ja".into())));
+        assert_eq!(
+            (merged.bundled_at, merged.description.as_deref()),
+            (Some(1_800_000_000), Some("before the boss"))
+        );
+
+        // Where the file is silent, the caller's word is all there is.
+        let merged = header(&options, Found::default());
+        assert_eq!(merged.taken_at, Some(1_700_000_000));
+        assert_eq!(merged.taken_with, options.taken_with);
+        assert_eq!(merged.source.unwrap().app_version.as_deref(), Some("1.19.1"));
+        // And where the caller is, the file's.
+        let merged = header(&StateOptions::default(), found());
+        assert_eq!(merged.taken_with, found().taken_with);
+    }
 }

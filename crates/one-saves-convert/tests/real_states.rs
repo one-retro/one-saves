@@ -233,3 +233,126 @@ fn mgba_states_read_as_what_mgba_was_told_to_take_and_rebuild() {
     }
     eprintln!("checked {checked} of {} recorded mGBA states", MGBA.len());
 }
+
+/// What a DuckStation state should read as.
+struct DuckStation {
+    file: &'static str,
+    title: &'static str,
+    serial: &'static str,
+    /// The disc's file name, out of the path the state recorded.
+    disc: &'static str,
+    version: u64,
+    /// The slot, or `None` for the state DuckStation took on its own to resume from.
+    slot: Option<u64>,
+    screen: (u32, u32),
+    /// The core's data, uncompressed.
+    data: usize,
+}
+
+/// Taken with DuckStation 0.1-12442 for macOS in Final Fantasy VII, Zstandard as it compresses by
+/// default: slot 1 in the opening, slot 2 on the save screen just after the first save, and the
+/// state it took on quitting.
+const DUCKSTATION: &[DuckStation] = &[
+    DuckStation {
+        file: "SCUS-94163_1.sav",
+        title: "Final Fantasy VII (Disc 1)",
+        serial: "SCUS-94163",
+        disc: "Final Fantasy VII (USA) (Disc 1).cue",
+        version: 92,
+        slot: Some(1),
+        // DuckStation fits the picture to the screen's aspect, which can come out a line taller.
+        screen: (256, 193),
+        data: 4_367_930,
+    },
+    DuckStation {
+        file: "SCUS-94163_2.sav",
+        title: "Final Fantasy VII (Disc 1)",
+        serial: "SCUS-94163",
+        disc: "Final Fantasy VII (USA) (Disc 1).cue",
+        version: 92,
+        slot: Some(2),
+        screen: (256, 192),
+        data: 4_359_469,
+    },
+    DuckStation {
+        file: "SCUS-94163_resume.sav",
+        title: "Final Fantasy VII (Disc 1)",
+        serial: "SCUS-94163",
+        disc: "Final Fantasy VII (USA) (Disc 1).cue",
+        version: 92,
+        slot: None,
+        screen: (256, 192),
+        data: 4_359_469,
+    },
+];
+
+fn check_duckstation(expected: &DuckStation, bundle: &Bundle) {
+    use one_saves::{Origin, Recorded};
+
+    let file = expected.file;
+    assert_eq!(bundle.header.system.as_ref().map(one_saves::Slug::as_str), Some("psx"), "{file}");
+    let game = bundle.header.game.as_ref().expect("the header names the game");
+    assert_eq!(game.title.as_deref(), Some(expected.title), "{file}");
+    assert_eq!(game.serial.as_deref(), Some(expected.serial), "{file}");
+    assert_eq!(game.rom_filename.as_deref(), Some(expected.disc), "{file}");
+
+    let source = bundle.header.source.as_ref().expect("a state names what it loads into");
+    assert_eq!(source.core.as_ref().map(one_saves::Name::as_str), Some("duckstation"), "{file}");
+    let with = bundle.header.taken_with.as_ref().expect("the version it loads at");
+    assert_eq!(with.format_version, Some(Recorded::Known(expected.version)), "{file}");
+    assert_eq!(with.firmware, Some(Recorded::Unknown), "{file}: a BIOS booted, and the file says not which");
+
+    let state = &bundle.parts[0];
+    assert_eq!(state.kind, PartKind::State, "{file}");
+    assert_eq!(state.slot, expected.slot, "{file}");
+    let origin = if expected.slot.is_none() { Some(Origin::Auto) } else { None };
+    assert_eq!(bundle.header.origin, origin, "{file}");
+    assert_eq!(state.bytes().unwrap().len(), expected.data, "{file}: the data, inflated");
+
+    let screenshot =
+        bundle.parts.iter().find(|part| part.kind == PartKind::Screenshot).expect("a screenshot");
+    let png = screenshot.bytes().unwrap();
+    let size = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+    assert_eq!((size(16), size(20)), expected.screen, "{file}: the screen it showed");
+    assert_eq!(png[25], 2, "{file}: every pixel opaque, so RGB");
+    assert_eq!(bundle.parts.len(), 2, "{file}: the state and its picture, and nothing else");
+}
+
+#[test]
+fn duckstation_states_read_as_what_duckstation_was_told_to_take_and_rebuild() {
+    let mut checked = 0;
+    let named = |name: &str| {
+        let extension = std::path::Path::new(name).extension().unwrap_or_default();
+        extension.eq_ignore_ascii_case("sav") || extension.eq_ignore_ascii_case("bak")
+    };
+    for (name, bytes) in states_of(Emulator::DuckStation, named) {
+        let file = StateFile { bytes: &bytes, name: &name, screenshot: None };
+        let bundle = state::read(Emulator::DuckStation, &file, &StateOptions::default())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        if let Some(expected) = DUCKSTATION.iter().find(|expected| expected.file == name) {
+            check_duckstation(expected, &bundle);
+            checked += 1;
+        }
+
+        let game = bundle.header.game.as_ref();
+        let serial = game.and_then(|game| game.serial.as_deref()).unwrap_or_default();
+        let rebuilt = state::write(Emulator::DuckStation, &bundle, "state").unwrap();
+        // A state DuckStation kept for no game in particular comes back as the game's.
+        if !serial.is_empty() && name.starts_with(serial) {
+            assert_eq!(rebuilt.name, name, "the serial and the slot are in the name");
+        }
+        assert!(rebuilt.left_out.is_empty(), "{name}: DuckStation has a place for everything it wrote");
+        assert_eq!(rebuilt.bytes[4..8], bytes[4..8], "{name}: at the version it was stamped with");
+
+        // Everything comes back but the disc's path, which named a file on the machine that took it.
+        let file = StateFile { bytes: &rebuilt.bytes, name: &rebuilt.name, screenshot: None };
+        let again = state::read(Emulator::DuckStation, &file, &StateOptions::default()).unwrap();
+        assert_eq!(again.parts, bundle.parts, "{name}: the data and the picture");
+        let mut header = bundle.header.clone();
+        if let Some(game) = header.game.as_mut() {
+            game.rom_filename = None;
+        }
+        assert_eq!(again.header, header, "{name}");
+    }
+    eprintln!("checked {checked} of {} recorded DuckStation states", DUCKSTATION.len());
+}

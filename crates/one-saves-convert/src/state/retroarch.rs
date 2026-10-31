@@ -362,5 +362,145 @@ mod tests {
             assert_eq!(path_tag(&tag_path(tag)), Some(tag));
         }
         assert_eq!(tag_path(*b"MEM "), "MEM");
+        assert_eq!((path_tag("MEMORY"), path_tag(""), path_tag("0x123")), (None, None, None));
+    }
+
+    /// A `RASTATE` file holding these blocks, in this order, then `END `.
+    fn wrapped(blocks: &[([u8; 4], &[u8])]) -> Vec<u8> {
+        let mut out = b"RASTATE\x01".to_vec();
+        for (tag, data) in blocks {
+            push_block(&mut out, *tag, data);
+        }
+        push_block(&mut out, *b"END ", &[]);
+        out
+    }
+
+    /// RZIP of a version and a chunk size, each chunk compressed by `compress`.
+    fn rzip_of(version: u8, chunk: usize, plain: &[u8], compress: impl Fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
+        let mut out = vec![b'#', b'R', b'Z', b'I', b'P', b'v', version, b'#'];
+        out.extend_from_slice(&u32::try_from(chunk).unwrap().to_le_bytes());
+        out.extend_from_slice(&(plain.len() as u64).to_le_bytes());
+        for piece in plain.chunks(chunk) {
+            let compressed = compress(piece);
+            out.extend_from_slice(&u32::try_from(compressed.len()).unwrap().to_le_bytes());
+            out.extend_from_slice(&compressed);
+        }
+        out
+    }
+
+    fn thumbnail() -> Vec<u8> {
+        image::encode(4, 2, 3, &[0x40; 4 * 2 * 3]).unwrap()
+    }
+
+    #[test]
+    fn the_thumbnail_beside_a_state_is_its_screenshot_and_goes_back_beside_it() {
+        let file = rzip(&wrapped(&[(*b"MEM ", b"CORE")]));
+        let png = thumbnail();
+        let state = StateFile { bytes: &file, name: "game.state1", screenshot: Some(&png) };
+        let bundle = read(&state, &options()).unwrap();
+        assert_eq!(bundle.parts[1].kind, PartKind::Screenshot);
+        assert_eq!(bundle.parts[1].bytes().unwrap().as_ref(), png.as_slice(), "kept as RetroArch wrote it");
+
+        let rebuilt = write(&bundle, "game").unwrap();
+        assert_eq!(rebuilt.screenshot, Some(png), "written beside the state, as RetroArch keeps it");
+        assert_eq!(rebuilt.left_out, []);
+    }
+
+    #[test]
+    fn a_replay_goes_before_the_cores_data_as_retroarch_writes_it() {
+        // Read in any order, written in RetroArch's: the replay, the core's data, then the rest.
+        let file = wrapped(&[(*b"MEM ", b"CORE"), (*b"ACHV", b"cheevos"), (*b"RPLY", b"input log")]);
+        let bundle = read(&self::file(&file, "game.state"), &options()).unwrap();
+        let paths: Vec<_> = bundle.parts[1..].iter().map(|part| part.path.as_deref()).collect();
+        assert_eq!(paths, [Some("ACHV"), Some("RPLY")], "in file order");
+
+        let rebuilt = write(&bundle, "game").unwrap();
+        let expected = wrapped(&[(*b"RPLY", b"input log"), (*b"MEM ", b"CORE"), (*b"ACHV", b"cheevos")]);
+        assert_eq!(unzip(&rebuilt.bytes).unwrap().as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn an_uncompressed_file_and_a_small_chunk_size_both_read() {
+        // With `savestate_file_compression` off the file is `RASTATE` bare; a chunk size other
+        // than RetroArch's own is still the file's to choose.
+        let core: Vec<u8> = (0..10_000u32).map(|n| (n % 241) as u8).collect();
+        let plain = wrapped(&[(*b"MEM ", &core)]);
+        for file in [plain.clone(), rzip_of(1, 4096, &plain, image::deflate_zlib)] {
+            let bundle = read(&self::file(&file, "game.state"), &options()).unwrap();
+            assert_eq!(bundle.parts[0].bytes().unwrap().as_ref(), core.as_slice());
+        }
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn rzip_version_2_holds_zstandard_frames() {
+        let core: Vec<u8> = (0..300_000u32).map(|n| (n % 251) as u8).collect();
+        let plain = wrapped(&[(*b"MEM ", &core)]);
+        let file = rzip_of(2, RZIP_CHUNK, &plain, |piece| zstd::stream::encode_all(piece, 0).unwrap());
+        let bundle = read(&self::file(&file, "game.state"), &options()).unwrap();
+        assert_eq!(bundle.parts[0].bytes().unwrap().as_ref(), core.as_slice());
+    }
+
+    #[cfg(not(feature = "zstd"))]
+    #[test]
+    fn rzip_version_2_is_named_and_refused_in_a_build_without_zstandard() {
+        let file = rzip_of(2, RZIP_CHUNK, &wrapped(&[(*b"MEM ", b"CORE")]), <[u8]>::to_vec);
+        let error = read(&self::file(&file, "game.state"), &options()).unwrap_err();
+        assert!(matches!(error, Error::Unsupported { feature: "zstd", .. }), "{error}");
+    }
+
+    #[test]
+    fn a_layer_retroarch_never_wrote_is_corrupt() {
+        let plain = wrapped(&[(*b"MEM ", b"CORE")]);
+        let corrupt = |file: &[u8], what: &str| {
+            let error = read(&self::file(file, "game.state"), &options()).unwrap_err();
+            assert!(matches!(error, Error::Corrupt { .. }), "{what}: {error}");
+        };
+        corrupt(&rzip_of(3, RZIP_CHUNK, &plain, image::deflate_zlib), "RZIP version 3");
+        let mut empty = rzip(&plain);
+        empty[8..12].copy_from_slice(&0u32.to_le_bytes());
+        corrupt(&empty, "RZIP chunks of nothing");
+        corrupt(&rzip(&plain)[..19], "an RZIP header cut short");
+        let mut short = rzip(&plain);
+        short[12..20].copy_from_slice(&(plain.len() as u64 + 1).to_le_bytes());
+        corrupt(&short, "RZIP that inflates to less than it says");
+
+        corrupt(b"RASTATE\x02MEM \x04\0\0\0CORE\0\0\0\0END \0\0\0\0", "RASTATE version 2");
+        corrupt(b"RASTATE", "RASTATE and nothing after");
+        corrupt(&wrapped(&[(*b"ACHV", b"cheevos")]), "no core's data");
+    }
+
+    #[test]
+    fn what_retroarch_keeps_elsewhere_is_left_out() {
+        let file = rzip(&wrapped(&[(*b"MEM ", b"CORE")]));
+        let mut bundle = read(&self::file(&file, "game.state"), &options()).unwrap();
+        let jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F'];
+        bundle.parts.push(crate::state::screenshot_part(jpeg).unwrap());
+        bundle.parts.push(Part::new(0, *b"SRAM"));
+        bundle.parts = crate::state::number(bundle.parts);
+        bundle.validate().unwrap();
+
+        // RetroArch keeps a game's save in a file of its own, and its thumbnail is a PNG.
+        let rebuilt = write(&bundle, "game").unwrap();
+        assert_eq!((rebuilt.left_out, rebuilt.screenshot), (vec![1, 2], None));
+    }
+
+    #[test]
+    fn a_part_that_is_no_block_or_a_state_with_no_core_is_not_rebuilt() {
+        let file = wrapped(&[(*b"MEM ", b"CORE")]);
+        let bundle = read(&self::file(&file, "game.state"), &options()).unwrap();
+        for path in [Some("extdata/4"), None] {
+            let mut odd = bundle.clone();
+            let mut part = Part::new(1, *b"MORE").kind(PartKind::Aux);
+            part.path = path.map(ToOwned::to_owned);
+            odd.parts.push(part);
+            assert!(matches!(write(&odd, "game"), Err(Error::NotConvertible(_))), "{path:?}");
+        }
+
+        // The app alone is not enough: RetroArch hands the state to whichever core is loaded.
+        let mut coreless = bundle;
+        coreless.header.source.as_mut().unwrap().core = None;
+        coreless.validate().expect("RetroArch is something it loads into");
+        assert!(matches!(write(&coreless, "game"), Err(Error::NotConvertible(_))));
     }
 }

@@ -111,5 +111,49 @@ mod tests {
             read(b"BM6\0\0\0", &ScreenshotOptions::default()),
             Err(Error::NotThisFormat { .. })
         ));
+        assert_eq!(
+            (extension("image/png"), extension("image/jpeg"), extension("image/webp")),
+            (Some("png"), Some("jpg"), None)
+        );
+    }
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\0IEND\xaeB`\x82";
+
+    #[test]
+    fn what_the_caller_says_of_a_screenshot_goes_in_its_header() {
+        let mut game = Game::default();
+        game.serial = Some("SCUS-94163".into());
+        let options = ScreenshotOptions {
+            source: Some(Source::default().app(one_saves::Name::parse("duckstation").ok())),
+            system: Slug::parse("psx").ok(),
+            game: Some(game),
+            description: Some("the first save".into()),
+            bundled_at: Some(1_800_000_000),
+            taken_at: Some(1_793_380_000),
+        };
+        let header = read(PNG, &options).unwrap().header;
+        assert_eq!(header.system, options.system);
+        assert_eq!(header.game, options.game);
+        assert_eq!(header.source, options.source);
+        assert_eq!(header.description, options.description);
+        assert_eq!((header.bundled_at, header.taken_at), (Some(1_800_000_000), Some(1_793_380_000)));
+    }
+
+    #[test]
+    fn a_states_picture_comes_out_as_a_screenshots_does() {
+        let source = Source::default().core(one_saves::Name::parse("duckstation").ok());
+        let state = Bundle::new(
+            Header::new(Shape::State).source(source),
+            vec![
+                Part::new(0, *b"CORE").kind(PartKind::State),
+                Part::new(1, PNG.to_vec()).kind(PartKind::Screenshot).content_type("image/png"),
+            ],
+        );
+        state.validate().unwrap();
+        assert_eq!(write(&state).unwrap(), (PNG.to_vec(), "image/png".to_owned()));
+
+        let mut bare = state;
+        bare.parts.truncate(1);
+        assert!(matches!(write(&bare), Err(Error::NotConvertible(_))), "a state with no picture");
     }
 }
