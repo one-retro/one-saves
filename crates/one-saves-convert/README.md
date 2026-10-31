@@ -52,6 +52,11 @@ Every format round-trips: a card read into a bundle and written back out is the 
 that does not promise is byte-exact fidelity through a PS2 *rebuild*, where a writer reallocates
 the filesystem — keep a `card-image` part if you need that.
 
+A card with nothing on it is carried as a single `card-image` part, and `card::blank` makes one
+from nothing: any size the format comes in (`card::sizes`), a GameCube card for a Japanese console's
+Shift-JIS, and a Saturn volume or Neo Geo card wrapped as Yabause or a MiSTer keeps it.
+`card::blank_like` empties a card the way formatting it on a console would, keeping its size.
+
 ## Features
 
 Everything optional is a feature. `icon`, `archive`, `states` and `multithread` are off by default;

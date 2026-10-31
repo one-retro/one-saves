@@ -1,9 +1,9 @@
 //! Writing a card image out of a set of saves.
 
 use crate::{
-    BAT_BLOCK, BAT_MIRROR_BLOCK, BLOCK, CHAIN_END, DIR_BLOCK, DIR_MIRROR_BLOCK, ENTRY_LEN, Error,
-    KNOWN_SIZES, MAP_OFFSET, MAX_ENTRIES, RESERVED_BLOCKS, Result, Save, checksum, stamp_directory_checksum,
-    stamp_table_checksum,
+    BAT_BLOCK, BAT_MIRROR_BLOCK, BLOCK, CHAIN_END, DIR_BLOCK, DIR_MIRROR_BLOCK, ENCODING_OFFSET, ENTRY_LEN,
+    Error, KNOWN_SIZES, MAP_OFFSET, MAX_ENTRIES, RESERVED_BLOCKS, Result, Save, checksum,
+    stamp_directory_checksum, stamp_table_checksum,
 };
 
 /// Builds a card image from saves.
@@ -16,6 +16,7 @@ pub struct CardBuilder {
     saves: Vec<Save>,
     header: Option<Vec<u8>>,
     capacity: Option<usize>,
+    shift_jis: bool,
 }
 
 impl CardBuilder {
@@ -41,6 +42,15 @@ impl CardBuilder {
     /// [`MemoryCard::capacity`]: crate::MemoryCard::capacity
     pub fn capacity(&mut self, bytes: usize) -> &mut Self {
         self.capacity = Some(bytes);
+        self
+    }
+
+    /// Formats the card for Shift-JIS names, as a Japanese console does, rather than ASCII.
+    ///
+    /// Only a card that brings no [`header_block`](Self::header_block) of its own is formatted, so
+    /// this says nothing about one that does: its header already names its character set.
+    pub fn shift_jis(&mut self, shift_jis: bool) -> &mut Self {
+        self.shift_jis = shift_jis;
         self
     }
 
@@ -112,7 +122,7 @@ impl CardBuilder {
 
         let header = match &self.header {
             Some(area) if area.len() == BLOCK => area.clone(),
-            _ => default_header(blocks),
+            _ => default_header(blocks, self.shift_jis),
         };
         card[..BLOCK].copy_from_slice(&header);
         card[DIR_BLOCK * BLOCK..(DIR_BLOCK + 1) * BLOCK].copy_from_slice(&directory);
@@ -145,7 +155,7 @@ fn directory_entry(save: &Save) -> Vec<u8> {
 }
 
 /// A freshly formatted header block.
-pub(crate) fn default_header(blocks: usize) -> Vec<u8> {
+pub(crate) fn default_header(blocks: usize, shift_jis: bool) -> Vec<u8> {
     let mut header = vec![0xFFu8; BLOCK];
     // The slot it was formatted in, 0 for A. The console's card library refuses any other value
     // as a broken card, and the size after it is what Dolphin checks the file's length against.
@@ -153,8 +163,7 @@ pub(crate) fn default_header(blocks: usize) -> Vec<u8> {
     // The size the console reports, in megabits.
     let megabits = u16::try_from(blocks * BLOCK / (1024 * 1024 / 8)).unwrap_or(4);
     header[0x22..0x24].copy_from_slice(&megabits.to_be_bytes());
-    // Encoding 0 is ASCII; 1 would be Shift-JIS.
-    header[0x24..0x26].copy_from_slice(&0u16.to_be_bytes());
+    header[ENCODING_OFFSET..ENCODING_OFFSET + 2].copy_from_slice(&u16::from(shift_jis).to_be_bytes());
     let (sum, inverse) = checksum(&header[..0x1FC]);
     header[0x1FC..0x1FE].copy_from_slice(&sum.to_be_bytes());
     header[0x1FE..0x200].copy_from_slice(&inverse.to_be_bytes());
@@ -253,6 +262,22 @@ mod tests {
             assert_eq!(field(0x24), 0, "ASCII");
             assert!(header[0x26..0x1FC].iter().all(|&byte| byte == 0xFF), "unused, as Dolphin checks");
             assert_eq!(checksum(&header[..0x1FC]), (field(0x1FC), field(0x1FE)));
+            assert!(!crate::is_shift_jis(header));
         }
+
+        // A Japanese console's card differs in the one field, and its checksum.
+        let card = CardBuilder::new().shift_jis(true).build().expect("writes");
+        let header = &card[..BLOCK];
+        assert_eq!(&header[0x24..0x26], &[0, 1]);
+        assert!(crate::is_shift_jis(header));
+        let stored = (
+            u16::from_be_bytes([header[0x1FC], header[0x1FD]]),
+            u16::from_be_bytes([header[0x1FE], header[0x1FF]]),
+        );
+        assert_eq!(checksum(&header[..0x1FC]), stored);
+
+        // A card that brings its own header keeps it, whatever it is asked to format as.
+        let kept = CardBuilder::new().header_block(header.to_vec()).shift_jis(false).build().expect("writes");
+        assert!(crate::is_shift_jis(&kept[..BLOCK]));
     }
 }

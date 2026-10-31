@@ -48,6 +48,9 @@ pub enum Error {
     },
     /// The bundle does not hold what this format needs to be rebuilt from.
     NotConvertible(String),
+    /// An empty card was asked for in a size, character set or layout its format does not come
+    /// in, or of a format that is not a card. The message is the whole sentence.
+    NoSuchCard(String),
     /// The bundle itself is malformed.
     Bundle(one_saves::Error),
     /// An archive held nothing this could read, or more than one thing it could.
@@ -77,6 +80,7 @@ impl fmt::Display for Error {
                  name the format and not read or write it"
             ),
             Error::NotConvertible(why) => write!(f, "cannot convert this bundle: {why}"),
+            Error::NoSuchCard(why) => f.write_str(why),
             Error::Bundle(source) => write!(f, "{source}"),
             Error::Io(source) => write!(f, "{source}"),
         }

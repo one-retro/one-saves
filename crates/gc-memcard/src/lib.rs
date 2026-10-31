@@ -70,6 +70,18 @@ pub const MAP_OFFSET: usize = 0x0A;
 /// The card sizes the console formats, in blocks.
 pub const KNOWN_SIZES: [usize; 6] = [64, 128, 256, 512, 1024, 2048];
 
+/// Where the header block says which character set the card's names are in.
+///
+/// 0 is ASCII, which is what every console outside Japan formats with, and 1 is Shift-JIS. A game
+/// compares it with the console's own and refuses a card that disagrees, offering to format it.
+pub const ENCODING_OFFSET: usize = 0x24;
+
+/// Whether a header block says the card was formatted for Shift-JIS, as a Japanese console does.
+#[must_use]
+pub fn is_shift_jis(header_block: &[u8]) -> bool {
+    header_block.get(ENCODING_OFFSET..ENCODING_OFFSET + 2) == Some(&[0, 1])
+}
+
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
 }
@@ -389,7 +401,7 @@ mod tests {
         stamp_directory_checksum(&mut directory);
         stamp_table_checksum(&mut table);
 
-        card[..BLOCK].copy_from_slice(&build::default_header(blocks));
+        card[..BLOCK].copy_from_slice(&build::default_header(blocks, false));
         card[DIR_BLOCK * BLOCK..(DIR_BLOCK + 1) * BLOCK].copy_from_slice(&directory);
         card[DIR_MIRROR_BLOCK * BLOCK..(DIR_MIRROR_BLOCK + 1) * BLOCK].copy_from_slice(&directory);
         card[BAT_BLOCK * BLOCK..(BAT_BLOCK + 1) * BLOCK].copy_from_slice(&table);
