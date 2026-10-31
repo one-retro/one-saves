@@ -154,9 +154,18 @@ fn directory_entry(save: &Save) -> Vec<u8> {
     entry
 }
 
-/// A freshly formatted header block.
+/// A freshly formatted header block, as Dolphin formats one.
+///
+/// The first 32 bytes say where and when the card was formatted: a serial worked out from the
+/// console's flash ID and the moment, the moment itself, and the console's clock bias, language
+/// and video mode. A card made here knows none of those, so it says what a console would with
+/// all of them zero, serial included: worked out the console's way, so the two still agree.
 pub(crate) fn default_header(blocks: usize, shift_jis: bool) -> Vec<u8> {
     let mut header = vec![0xFFu8; BLOCK];
+    let format_time = 0u64;
+    header[..12].copy_from_slice(&serial(format_time, [0; 12]));
+    header[0x0C..0x14].copy_from_slice(&format_time.to_be_bytes());
+    header[0x14..0x20].fill(0);
     // The slot it was formatted in, 0 for A. The console's card library refuses any other value
     // as a broken card, and the size after it is what Dolphin checks the file's length against.
     header[0x20..0x22].copy_from_slice(&0u16.to_be_bytes());
@@ -168,6 +177,22 @@ pub(crate) fn default_header(blocks: usize, shift_jis: bool) -> Vec<u8> {
     header[0x1FC..0x1FE].copy_from_slice(&sum.to_be_bytes());
     header[0x1FE..0x200].copy_from_slice(&inverse.to_be_bytes());
     header
+}
+
+/// The serial a console writes when it formats a card, from its flash ID and the moment.
+///
+/// Each byte is the flash ID's plus the next step of a linear congruential generator seeded with
+/// the format time, as Dolphin and the console's own library both work it out.
+fn serial(format_time: u64, flash_id: [u8; 12]) -> [u8; 12] {
+    let step = |rand: u64| rand.wrapping_mul(0x41C6_4E6D).wrapping_add(0x3039) >> 16;
+    let mut rand = format_time;
+    let mut serial = [0u8; 12];
+    for (byte, id) in serial.iter_mut().zip(flash_id) {
+        rand = step(rand);
+        *byte = id.wrapping_add(rand.to_le_bytes()[0]);
+        rand = step(rand) & 0x7FFF;
+    }
+    serial
 }
 
 #[cfg(test)]
@@ -240,6 +265,16 @@ mod tests {
             data: vec![0u8; 100 * BLOCK],
         });
         assert!(matches!(builder.build(), Err(Error::Full { needed: 100, available: 59 })));
+    }
+
+    /// The serial is Dolphin's working: a card it formatted in slot A at 0x3277D33F carries this
+    /// one, and the flash ID it formats slot A with is the text `DOLPHINSLOTA`.
+    #[test]
+    fn a_serial_is_worked_out_as_dolphin_works_it_out() {
+        assert_eq!(
+            serial(0x3277_D33F, *b"DOLPHINSLOTA"),
+            [0x60, 0x4D, 0x8E, 0x20, 0x32, 0x9D, 0x43, 0xCE, 0x5D, 0xBA, 0x33, 0xEA]
+        );
     }
 
     /// A card that brings no header of its own gets the one Dolphin writes when it formats.
