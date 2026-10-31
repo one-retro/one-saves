@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use one_saves::extension::{CheatsMgba, Rtc, RtcMbc3};
-use one_saves::{Bundle, HashAlgorithm, HashValue, PartKind};
+use one_saves::{Bundle, HashAlgorithm, HashValue, Name, PartKind, Source};
 use one_saves_convert::state::{self, Emulator, StateFile, StateOptions};
 
 const VARIABLE: &str = "ONE_SAVES_STATES";
@@ -355,4 +355,96 @@ fn duckstation_states_read_as_what_duckstation_was_told_to_take_and_rebuild() {
         assert_eq!(again.header, header, "{name}");
     }
     eprintln!("checked {checked} of {} recorded DuckStation states", DUCKSTATION.len());
+}
+
+/// What a RetroArch state should read as.
+struct RetroArch {
+    file: &'static str,
+    /// The core whose folder RetroArch sorted it into, which is all that says which took it.
+    core: &'static str,
+    slot: u64,
+    /// How long the core's own data is, once RetroArch's wrapping is off it.
+    data: usize,
+}
+
+/// Found in the folder RetroArch sorts Genesis Plus GX Wide's states into, RZIP-compressed as
+/// RetroArch keeps a state by default, and with no thumbnail beside it, since it was set to take
+/// none.
+const RETROARCH: &[RetroArch] =
+    &[RetroArch { file: "Sonic CD (USA).state", core: "genesis-plus-gx-wide", slot: 0, data: 1_036_288 }];
+
+fn check_retroarch(expected: &RetroArch, bundle: &Bundle) {
+    let file = expected.file;
+    let source = bundle.header.source.as_ref().expect("a state names what took it");
+    assert_eq!(source.app.as_ref().map(Name::as_str), Some("retroarch"), "{file}");
+    assert_eq!(source.core.as_ref().map(Name::as_str), Some(expected.core), "{file}");
+    let state = bundle.parts.iter().find(|part| part.kind == PartKind::State).expect("{file}: a state part");
+    assert_eq!(state.slot, Some(expected.slot), "{file}");
+    assert_eq!(state.bytes().unwrap().len(), expected.data, "{file}");
+}
+
+/// What RetroArch inflates an RZIP version 1 file to, or `None` for one it does not keep that way.
+fn inflate_rzip(file: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+
+    if !file.starts_with(b"#RZIPv\x01#") {
+        return None;
+    }
+    let total = usize::try_from(u64::from_le_bytes(file[12..20].try_into().ok()?)).ok()?;
+    let (mut at, mut plain) = (20, Vec::with_capacity(total));
+    while plain.len() < total {
+        let size = usize::try_from(u32::from_le_bytes(file.get(at..at + 4)?.try_into().ok()?)).ok()?;
+        flate2::read::ZlibDecoder::new(file.get(at + 4..at + 4 + size)?).read_to_end(&mut plain).ok()?;
+        at += 4 + size;
+    }
+    Some(plain)
+}
+
+#[test]
+fn retroarch_states_read_as_the_core_they_were_filed_under_and_rebuild() {
+    let (mut read, mut checked) = (0, 0);
+    for path in files() {
+        let name = file_name(&path);
+        let Some(at) = name.to_ascii_lowercase().rfind(".state") else { continue };
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        if state::detect(&bytes, &name) != Some(Emulator::RetroArch) {
+            continue;
+        }
+        // RetroArch's file does not say which core took it. The folder it sorts states into does,
+        // where it was set to sort them, and a state found anywhere else is one nothing names.
+        let folder = path.parent().and_then(Path::file_name).and_then(|folder| folder.to_str());
+        let Some(core) = folder.and_then(one_saves_registry::core_by_any_name) else {
+            eprintln!("{name}: skipped, since no folder says which core took it");
+            continue;
+        };
+        let thumbnail = std::fs::read(path.with_file_name(format!("{name}.png"))).ok();
+        let options = StateOptions::default().source(Source::default().core(Name::parse(core.slug).ok()));
+        let file = StateFile { bytes: &bytes, name: &name, screenshot: thumbnail.as_deref() };
+        let bundle = state::read(Emulator::RetroArch, &file, &options)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        read += 1;
+        if let Some(expected) = RETROARCH.iter().find(|expected| expected.file == name) {
+            check_retroarch(expected, &bundle);
+            checked += 1;
+        }
+
+        let rebuilt = state::write(Emulator::RetroArch, &bundle, &name[..at]).unwrap();
+        assert_eq!(rebuilt.name, name, "the slot is in the name");
+        assert!(rebuilt.left_out.is_empty(), "{name}: RetroArch has a place for everything it wrote");
+        assert_eq!(rebuilt.screenshot, thumbnail, "{name}: and the thumbnail goes back beside it");
+        // What RetroArch inflates is what it wrote: the same blocks, in the same order. The
+        // compressed bytes differ, being another zlib's.
+        if let Some(plain) = inflate_rzip(&bytes) {
+            assert!(inflate_rzip(&rebuilt.bytes) == Some(plain), "{name}: inflates to what RetroArch wrote");
+        }
+
+        let file = StateFile {
+            bytes: &rebuilt.bytes,
+            name: &rebuilt.name,
+            screenshot: rebuilt.screenshot.as_deref(),
+        };
+        let again = state::read(Emulator::RetroArch, &file, &options).unwrap();
+        assert_eq!(again, bundle, "{name}");
+    }
+    eprintln!("read and rebuilt {read} RetroArch states, {checked} of the {} recorded", RETROARCH.len());
 }
