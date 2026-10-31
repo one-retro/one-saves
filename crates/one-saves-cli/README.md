@@ -24,6 +24,19 @@ $ 1saves extract card.1saves --part 1   # pull one save out as its own bundle
 $ 1saves profiles                # what --from accepts
 ```
 
+`new` makes an empty, formatted card, written as the file an emulator or a flash cart loads:
+
+```console
+$ 1saves new gc MemoryCardA.USA.raw --size 1019
+empty GameCube memory card -> MemoryCardA.USA.raw (1019 blocks, 64 Mbit, 8388608 bytes)
+
+$ 1saves new ps2 Mcd002.ps2              # Sony's 8 MB card, spare areas and all
+$ 1saves new gc MemoryCardA.JAP.raw --shift-jis   # for a Japanese console
+$ 1saves new saturn cart.bcr --size 512K --layout wide   # as Yabause keeps a cart
+$ 1saves new neogeo game.sav --layout mister   # as the MiSTer core keeps a card
+$ 1saves new vmu blank.1saves            # a bundle holding the card, rather than the card
+```
+
 `--from` names either a producer (`mgba`, `duckstation`, `pcsx2`, or any of the apps and 200 cores
 in the registry) or an input format (`ps1`, `raw`). A producer says who wrote the bytes; the format
 is still detected from the bytes themselves.

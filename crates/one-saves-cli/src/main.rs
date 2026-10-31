@@ -31,6 +31,11 @@ enum Command {
     /// Write a bundle back out in the format it came from: a save, a card, an emulator's state
     /// file, or a screenshot's image.
     Extract(Extract),
+    /// Make an empty, formatted memory card.
+    ///
+    /// Written as the card's own file, which is what an emulator or a flash cart loads and what
+    /// `extract` writes for a card. Name the output .1saves for a bundle holding it instead.
+    New(New),
     /// Show what a bundle is and what it holds.
     Inspect(FileArg),
     /// Check a bundle's structure and every part's digest.
@@ -181,6 +186,36 @@ struct Extract {
     force: bool,
 }
 
+#[derive(Args)]
+struct New {
+    /// The kind of card: ps1, ps2, gc, n64, vmu, saturn or neogeo.
+    kind: String,
+    /// Where to write it.
+    output: PathBuf,
+    /// How big a card, for a kind that comes in more than one size. Defaults to the kind's
+    /// standard one.
+    ///
+    /// PS2: 8M, Sony's own, or 16M, 32M or 64M. GameCube: 59, 123, 251, 507, 1019 or 2043 blocks,
+    /// 251 unless told. Saturn: 32K, the console's own memory, or a 512K, 1M, 2M or 4M cart. Neo
+    /// Geo: 2K, SNK's own, up to 16K in steps of 2K.
+    #[arg(long)]
+    size: Option<String>,
+    /// For a GameCube card, format it as a Japanese console does: for Shift-JIS names.
+    ///
+    /// A game compares a card's character set with the console's and offers to format a card
+    /// that disagrees, so a card for a Japanese console needs this and any other refuses it.
+    #[arg(long)]
+    shift_jis: bool,
+    /// How the card sits in its file, where an emulator wraps it: `wide` for a Saturn volume as
+    /// Yabause keeps it, `mister` for a Neo Geo card as the MiSTer core's save. Defaults to
+    /// `bare`, the card and nothing else.
+    #[arg(long)]
+    layout: Option<String>,
+    /// Overwrite the output if it exists.
+    #[arg(long)]
+    force: bool,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
@@ -205,6 +240,7 @@ fn run(cli: Cli) -> Fallible {
     match cli.command {
         Command::Convert(args) => convert(*args),
         Command::Extract(args) => extract(args),
+        Command::New(args) => new_card(&args),
         Command::Inspect(args) => inspect(&args.file),
         Command::Verify(args) => verify(&args.file),
         Command::Hash(args) => hash(&args.file),
@@ -665,6 +701,48 @@ fn extract(args: Extract) -> Fallible {
         if target == Format::Raw && is_backup_ram { "Sega CD backup RAM" } else { target.label() },
         payload.len()
     );
+    Ok(())
+}
+
+fn new_card(args: &New) -> Fallible {
+    let format =
+        Format::from_name(&args.kind).filter(|format| !card::sizes(*format).is_empty()).ok_or_else(|| {
+            format!("{:?} is not a kind of memory card: ps1, ps2, gc, n64, vmu, saturn or neogeo", args.kind)
+        })?;
+    let size = match &args.size {
+        Some(name) => card::size(format, name).ok_or_else(|| {
+            let sizes: Vec<String> =
+                card::sizes(format).iter().map(|size| format!("{} ({})", size.name, size.label)).collect();
+            let (last, rest) = sizes.split_last().expect("every card has a size");
+            let listed =
+                if rest.is_empty() { last.clone() } else { format!("{} or {last}", rest.join(", ")) };
+            format!("a {} comes in {listed}", format.label())
+        })?,
+        None => {
+            card::sizes(format).iter().find(|size| size.standard).expect("every card has a standard size")
+        }
+    };
+    let layout = match args.layout.as_deref() {
+        Some(name) => card::Layout::from_name(name)
+            .ok_or_else(|| format!("{name:?} is not a layout: bare, wide or mister"))?,
+        None => card::Layout::Bare,
+    };
+
+    // A bundle records the card rather than the file an emulator keeps it in, so a wrapping asked
+    // for here would be dropped on the way in. Better said than done quietly.
+    let as_bundle = extension_of(&args.output) == one_saves::EXTENSION;
+    if as_bundle && layout != card::Layout::Bare {
+        return Err(
+            "--layout is how an emulator's file wraps a card, and a bundle holds the card itself".into()
+        );
+    }
+
+    let options = card::BlankOptions { capacity: Some(size.capacity), shift_jis: args.shift_jis, layout };
+    let bytes = card::blank(format, &options)?;
+    let bytes =
+        if as_bundle { card::read(format, &bytes, &card::CardOptions::default())?.to_vec()? } else { bytes };
+    write_out(&args.output, &bytes, args.force)?;
+    println!("empty {} -> {} ({}, {} bytes)", format.label(), args.output.display(), size.label, bytes.len());
     Ok(())
 }
 
