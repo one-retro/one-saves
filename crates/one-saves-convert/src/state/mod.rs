@@ -178,7 +178,9 @@ pub(crate) fn mgba_slot(name: &str) -> Option<Slot> {
 ///
 /// A reader fills in what the file records — mGBA names itself and keeps when it took the state,
 /// DuckStation keeps the game's title and serial — and takes the rest from here. Where both say
-/// something, the file wins: it is the emulator's own record of the state.
+/// something, the file wins on what the emulator did: what took the state, when, and the version
+/// of its format. Everything else is the caller's: a system, a game or firmware given here is
+/// taken over the file's, since a caller that names one is saying the file has it wrong.
 #[derive(Debug, Clone, Default)]
 pub struct StateOptions {
     /// What the state loads into: the core that took it, or the app where nothing runs one.
@@ -406,7 +408,8 @@ pub(crate) fn require_core(bundle: &Bundle, core: &str, emulator: &str) -> Resul
 pub(crate) fn header(options: &StateOptions, found: Found) -> one_saves::Header {
     use one_saves::{Header, Shape};
 
-    // The file is the emulator's own record, so what it says wins; the options fill the gaps.
+    // The file is the emulator's own record of what it did, so on that it wins and the options
+    // fill the gaps. On the game, the system and the firmware it is the other way round.
     let mut source = options.source.clone().unwrap_or_default();
     if let Some(app) = found.app {
         source.app = Some(one_saves::Name::parse(app).expect("an app slug is a name"));
