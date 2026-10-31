@@ -833,6 +833,87 @@ mod tests {
     }
 
     #[test]
+    fn a_card_a_device_and_a_collection_were_never_taken() {
+        // Each is read whole from storage at whatever moment, and a collection's entries keep
+        // their own, so none of the three has a moment of one machine to name.
+        let card = Bundle {
+            header: Header::new(Shape::Card).card(crate::Card::new(Slug::parse("ps1-mc").unwrap(), 122_880)),
+            parts: vec![nested_save(0)],
+        };
+        let mut device = Bundle {
+            header: Header::new(Shape::Device).system(Slug::parse("n64").unwrap()),
+            parts: vec![nested_save(0)],
+        };
+        device.parts[0].role = Some(Slug::parse("cartridge").unwrap());
+        for bundle in [card, device, collection_of(vec![nested_save(0)])] {
+            let shape = shape_name(&bundle.header.shape);
+            bundle.validate().unwrap_or_else(|e| panic!("a {shape} with nothing taken: {e}"));
+            let refused = |header: Header, field: &'static str| {
+                assert_eq!(
+                    Bundle { header, ..bundle.clone() }.validate().unwrap_err().kind(),
+                    &ErrorKind::KeyNotInShape { shape, field },
+                    "{field} on a {shape}"
+                );
+            };
+            refused(bundle.header.clone().taken_at(1), "taken_at");
+            refused(bundle.header.clone().taken_with(TakenWith::default().language("ja")), "taken_with");
+            refused(bundle.header.clone().origin(crate::Origin::Auto), "origin");
+        }
+    }
+
+    #[test]
+    fn each_firmware_file_names_its_hashes_once_each_in_tag_order() {
+        use crate::hash::HashAlgorithm;
+        let with = |firmware: std::collections::BTreeMap<String, Vec<HashValue>>| {
+            let mut state = state_of(vec![state_part(0)]);
+            state.header.taken_with = Some(TakenWith::default().firmware(firmware));
+            state.validate()
+        };
+        let bios =
+            |hashes: Vec<HashValue>| std::collections::BTreeMap::from([("scph5501.bin".to_owned(), hashes)]);
+        // sha256 is tag 18540 and sha1 18542, so this is their order.
+        let sha256 = HashValue::new(HashAlgorithm::Sha256, vec![1; 32]).unwrap();
+        let sha1 = HashValue::new(HashAlgorithm::Sha1, vec![2; 20]).unwrap();
+        with(bios(vec![sha256.clone(), sha1.clone()])).expect("two algorithms in tag order");
+
+        // The rules a game's `rom_hashes` keeps, and for the reason it keeps them: two digests of
+        // one algorithm name two files, and nothing says which one the machine booted.
+        let error = with(bios(vec![sha1.clone(), sha256.clone()])).unwrap_err();
+        assert_eq!(error.kind(), &ErrorKind::RomHashesOutOfOrder);
+        assert_eq!(error.path(), r#"header.taken_with.firmware["scph5501.bin"]"#, "names the file");
+        assert_eq!(
+            with(bios(vec![sha256.clone(), HashValue::new(HashAlgorithm::Sha256, vec![3; 32]).unwrap()]))
+                .unwrap_err()
+                .kind(),
+            &ErrorKind::RomHashesDuplicateAlgorithm(HashAlgorithm::Sha256)
+        );
+
+        // A file with no hash says nothing a null would not, and no file at all is what absence says.
+        assert_eq!(with(bios(vec![])).unwrap_err().kind(), &ErrorKind::EmptyContainer);
+        let error = with(std::collections::BTreeMap::new()).unwrap_err();
+        assert_eq!((error.kind(), error.path()), (&ErrorKind::EmptyContainer, "header.taken_with.firmware"));
+    }
+
+    #[test]
+    fn taken_with_carries_anyones_key_but_a_clock_reading() {
+        // An extension key there describes the machine, which a clock reading of one cartridge
+        // does not: it is a save's, or the state's own header's.
+        let with = |key: &str| {
+            let mut taken_with = TakenWith::default();
+            taken_with
+                .extensions
+                .insert_cbor(crate::ReverseDnsName::parse(key).unwrap(), dcbor::CBOR::from(1u64));
+            let mut state = state_of(vec![state_part(0)]);
+            state.header.taken_with = Some(taken_with);
+            state.validate()
+        };
+        with("org.duckstation.renderer").expect("a key of the emulator's own is enough on its own");
+        let error = with("x.1sav.rtc").unwrap_err();
+        assert!(matches!(error.kind(), ErrorKind::KeyOutOfPlace { .. }), "{error}");
+        assert!(error.path().starts_with("header.taken_with"), "{error}");
+    }
+
+    #[test]
     fn taken_with_holds_one_spelling_of_each_setting() {
         use crate::{Recorded, TakenWith};
         let with = |taken_with: TakenWith| {

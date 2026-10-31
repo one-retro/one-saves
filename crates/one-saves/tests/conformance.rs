@@ -438,6 +438,105 @@ fn a_state_says_when_and_with_what_it_was_taken() {
     }
 }
 
+/// The smallest state, with this header on it: the core it loads into, and the core's data.
+fn state_with(header: impl FnOnce(one_saves::Header) -> one_saves::Header) -> Bundle {
+    use one_saves::{Header, Part, PartKind, Source};
+    let source = Source::default().core(Name::parse("duckstation").unwrap());
+    Bundle::new(
+        header(Header::new(Shape::State).source(source)),
+        vec![Part::new(0, *b"CORE").kind(PartKind::State)],
+    )
+}
+
+/// An origin a later minor version assigned is kept and written back as it came.
+///
+/// The schema leaves `origin` a slug, so unlike a later shape this is valid 0.6 and the corpus
+/// could hold it; it holds only the two 0.6 defines, so the case is built here.
+#[test]
+fn an_origin_a_later_version_assigned_round_trips() {
+    use one_saves::{Origin, Slug};
+
+    let rewind = Slug::parse("rewind").unwrap();
+    let bytes =
+        state_with(|header| header.origin(Origin::from_slug(rewind.clone()))).to_vec().expect("encodes");
+    let read =
+        Bundle::from_slice_with(&bytes, Strictness::Schema).expect("an origin is any slug to the schema");
+    assert_eq!(
+        read.header.origin,
+        Some(Origin::Unknown(rewind)),
+        "neither auto nor undo, and not the player"
+    );
+    assert_eq!(read.to_vec().expect("re-encode"), bytes, "an unknown origin must round-trip");
+}
+
+/// What a state was taken with keeps a later version's keys and anyone's extension keys.
+///
+/// It is a map like any other in the format, so the asymmetry the corpus's two unknown-key cases
+/// show holds inside it too: the schema refuses an integer key it does not define, and a shipped
+/// decoder keeps it.
+#[test]
+fn taken_with_keeps_keys_a_later_version_or_a_third_party_wrote() {
+    use dcbor::CBOR;
+    use one_saves::{ReverseDnsName, TakenWith};
+
+    let mut with = TakenWith::default().format_version(93);
+    with.extensions
+        .insert_cbor(ReverseDnsName::parse("org.duckstation.renderer").unwrap(), CBOR::from("vulkan"));
+    let bytes = state_with(|header| header.taken_with(with.clone())).to_vec().expect("encodes");
+    let read =
+        Bundle::from_slice_with(&bytes, Strictness::Schema).expect("an extension key is valid anywhere");
+    assert_eq!(read.header.taken_with.as_ref(), Some(&with));
+    assert_eq!(read.to_vec().expect("re-encode"), bytes);
+
+    with.unknown.insert(6, CBOR::from(true));
+    let bytes = state_with(|header| header.taken_with(with.clone())).to_vec().expect("encodes");
+    let error = Bundle::from_slice_with(&bytes, Strictness::Schema).expect_err("key 6 is not 0.6's");
+    assert_eq!(error.path(), "header.taken_with", "{error}");
+    let read = Bundle::from_slice(&bytes).expect("a decoder keeps a later version's key");
+    assert_eq!(read.header.taken_with.as_ref().map(|with| &with.unknown), Some(&with.unknown));
+    assert_eq!(read.to_vec().expect("re-encode"), bytes, "and writes it back unchanged");
+}
+
+/// A `taken_with` built in code reads back as it was built, every entry known and every entry
+/// null.
+///
+/// The corpus has one of each spelling between its cases, read off the wire; this is the encoder's
+/// half, entry by entry, since a value written under the wrong key or a null written as absence
+/// would read back as something else.
+#[test]
+fn a_taken_with_built_in_code_reads_back_as_built() {
+    use std::collections::BTreeMap;
+
+    use one_saves::{ByteOrder, HashAlgorithm, HashValue, Recorded, TakenWith, WordSize};
+
+    let bios = vec![
+        HashValue::sha256_of(b"SCPH-5501"),
+        HashValue::new(HashAlgorithm::Sha1, vec![0x5A; 20]).unwrap(),
+    ];
+    let known = TakenWith::default()
+        .byte_order(ByteOrder::Big)
+        .word_size(WordSize::Bits32)
+        .firmware(BTreeMap::from([("bios/scph5501.bin".to_owned(), bios)]))
+        .language("pt-BR")
+        .options(BTreeMap::from([("duckstation.gpu".to_owned(), "software".to_owned())]))
+        .format_version(93);
+    let unknown = TakenWith::default()
+        .byte_order(Recorded::Unknown)
+        .word_size(Recorded::Unknown)
+        .firmware(Recorded::Unknown)
+        .language(Recorded::Unknown)
+        .options(Recorded::Unknown)
+        .format_version(Recorded::Unknown);
+
+    for with in [known, unknown] {
+        let bytes = state_with(|header| header.taken_with(with.clone())).to_vec().expect("encodes");
+        let read =
+            Bundle::from_slice_with(&bytes, Strictness::Schema).unwrap_or_else(|e| panic!("{with:?}: {e}"));
+        assert_eq!(read.header.taken_with, Some(with));
+        assert_eq!(read.to_vec().expect("re-encode"), bytes);
+    }
+}
+
 /// A malformed bundle fails the file it sits in, however deep, and a decoder keeps none of it.
 ///
 /// The corpus runs at [`Strictness::Schema`]. The rule is a decoder's, so it is held to it in its
