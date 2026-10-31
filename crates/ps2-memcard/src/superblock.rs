@@ -2,6 +2,10 @@
 
 use crate::{Error, MAGIC, Result};
 
+/// Where the superblock's last field ends. A console's formatter leaves the rest of the page
+/// erased.
+const FIELDS_END: usize = 0x17C;
+
 /// The card's geometry and the whereabouts of its allocation table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SuperBlock {
@@ -104,6 +108,9 @@ impl SuperBlock {
 
     /// Writes the superblock into the front of a card image.
     pub(crate) fn write_into(&self, data: &mut [u8]) {
+        // Everything up to the end of the last field reads zero where nothing is written, and the
+        // rest of the page is left erased, as a console's formatter leaves it.
+        data[..FIELDS_END].fill(0);
         data[..MAGIC.len()].copy_from_slice(MAGIC);
         let version = self.version.as_bytes();
         let len = version.len().min(12);
@@ -150,6 +157,18 @@ impl SuperBlock {
         put32(data, 0x15C, u32::try_from(self.pages_per_block / self.pages_per_cluster).expect("fits"));
         // -1 means formatted. Anything else does not.
         put32(data, 0x160, 0xFFFF_FFFF);
+        put32(data, 0x170, self.max_allocatable_clusters());
+    }
+
+    /// How many clusters from `alloc_offset` the console may allocate, as its formatter counts.
+    ///
+    /// The card's own capacity rounded down to a thousand clusters, plus one, and never past the
+    /// end of the card. A console recomputes this when it mounts a card, so nothing reads it back,
+    /// but it is what a card a console formatted says.
+    fn max_allocatable_clusters(&self) -> u32 {
+        let allocatable = self.clusters_per_card / 1000 * 1000 + 1;
+        let room = self.clusters_per_card.saturating_sub(self.alloc_offset);
+        u32::try_from(allocatable.min(room)).expect("a cluster count fits in 32 bits")
     }
 }
 

@@ -125,3 +125,61 @@ fn a_rebuilt_superblock_matches_the_one_a_console_wrote() {
         assert_eq!(&rebuilt[..0x60], &original[..0x60], "{name}: magic and geometry");
     }
 }
+
+/// The `.` and `..` opening every directory on a card, as mode, length, cluster and entry index.
+///
+/// Root first, then each save's. Those four fields are how a console gets from a directory to
+/// the entry naming it, so they are what a card rebuilt here has to agree with a real one on.
+fn dot_entries(image: &[u8]) -> Vec<[u32; 4]> {
+    let card = ps2_memcard::MemoryCard::parse(image).expect("parses");
+    // The pages without their spare areas, which is what a cluster number counts through.
+    let data: Vec<u8> = if card.had_spare() {
+        image.chunks(528).flat_map(|page| page[..512].to_vec()).collect()
+    } else {
+        image.to_vec()
+    };
+    let alloc = card.superblock().alloc_offset;
+    let word = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().expect("four bytes"));
+    let entry = |cluster: usize, index: usize| {
+        let at = (alloc + cluster) * 1024 + index * 512;
+        [
+            u32::from(u16::from_le_bytes([data[at], data[at + 1]])),
+            word(at + 4),
+            word(at + 0x10),
+            word(at + 0x14),
+        ]
+    };
+
+    let root = card.superblock().rootdir_cluster;
+    let mut entries = vec![entry(root, 0), entry(root, 1)];
+    for save in card.saves().expect("reads the directory") {
+        let cluster =
+            usize::try_from(u32::from_le_bytes(save.dirent[0x10..0x14].try_into().expect("four bytes")))
+                .expect("a cluster fits");
+        entries.extend([entry(cluster, 0), entry(cluster, 1)]);
+    }
+    entries
+}
+
+/// A card rebuilt from its saves opens every directory the way the console did.
+///
+/// A save directory's `.` points back at the root and the slot there naming it, with no length of
+/// its own, and the root's `..` is hidden and unreadable. This crate once wrote a save's `.` as
+/// pointing at itself with the entry count on it, which reads back fine here and leaves a console
+/// that follows it to the parent somewhere else.
+#[test]
+fn a_rebuilt_card_opens_each_directory_as_the_console_did() {
+    let bytes = std::fs::read(card("macos/pcsx2/Mcd001.ps2")).expect("the vendored card");
+    let real = ps2_memcard::MemoryCard::parse(&bytes).expect("parses");
+
+    let mut builder = ps2_memcard::CardBuilder::new(ps2_memcard::Capacity::Mb8);
+    for save in real.saves().expect("reads the directory") {
+        builder.add(save);
+    }
+    let rebuilt = builder.build_with_spare().expect("builds");
+
+    let expected = dot_entries(&bytes);
+    assert_eq!(expected[..2], [[0x8427, 5, 0, 0], [0xA426, 0, 0, 0]], "the root, as PCSX2's BIOS wrote it");
+    assert_eq!(expected[2], [0x8427, 0, 0, 2], "a save's `.`, pointing at its slot in the root");
+    assert_eq!(dot_entries(&rebuilt), expected);
+}

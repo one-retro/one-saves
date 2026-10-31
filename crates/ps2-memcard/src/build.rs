@@ -75,7 +75,7 @@ impl CardBuilder {
     /// This is the `.ps2` form most emulators use.
     pub fn build(&self) -> Result<Vec<u8>> {
         let geometry = Geometry::for_capacity(self.capacity);
-        let mut card = vec![0u8; geometry.clusters_per_card * CLUSTER];
+        let mut card = vec![0xFFu8; geometry.clusters_per_card * CLUSTER];
 
         // Every FAT entry starts free, and every unallocated cluster is erased to 0xFF the way a
         // formatter leaves it.
@@ -88,20 +88,25 @@ impl CardBuilder {
         let root_start = allocator.take(root_clusters)?;
         debug_assert_eq!(root_start, 0, "the root directory is the first thing allocated");
 
+        // The root is the one directory with no parent, so its `.` holds its own length and its
+        // `..` points nowhere, hidden and unreadable, as the console's formatter writes it.
         let mut root = Vec::with_capacity(root_entries * ENTRY);
-        root.extend_from_slice(&dot_entry(".", root_entries, root_start));
-        root.extend_from_slice(&dot_entry("..", 0, root_start));
+        root.extend_from_slice(&dot_entry(".", mode::NEW_DIRECTORY, root_entries, root_start, 0));
+        root.extend_from_slice(&dot_entry("..", mode::ROOT_PARENT, 0, root_start, 0));
 
         // Each save is a directory of its own, laid down after the root.
         let mut written: Vec<(usize, Vec<u8>)> = Vec::new();
-        for save in &self.saves {
+        for (index, save) in self.saves.iter().enumerate() {
             let entries = 2 + save.files.len();
             let dir_clusters = clusters_for(entries * ENTRY);
             let dir_start = allocator.take(dir_clusters)?;
 
+            // A directory's `.` is how the console finds the entry naming it, so it points at the
+            // parent and the slot there rather than at itself, and its length lives in that
+            // entry instead. `..` points where the parent's own `.` does.
             let mut directory = Vec::with_capacity(entries * ENTRY);
-            directory.extend_from_slice(&dot_entry(".", entries, dir_start));
-            directory.extend_from_slice(&dot_entry("..", 0, root_start));
+            directory.extend_from_slice(&dot_entry(".", mode::NEW_DIRECTORY, 0, root_start, 2 + index));
+            directory.extend_from_slice(&dot_entry("..", mode::NEW_DIRECTORY, 0, root_start, 0));
 
             for file in &save.files {
                 let file_clusters = clusters_for(file.data.len());
@@ -146,7 +151,13 @@ impl CardBuilder {
             }
         }
 
-        geometry.superblock().write_into(&mut card);
+        let superblock = geometry.superblock();
+        superblock.write_into(&mut card);
+        // The formatter leaves a copy of the superblock at the head of the first backup block,
+        // which is where a console looks when the one in block 0 does not read.
+        let backup =
+            usize::try_from(superblock.backup_block1).expect("a block index fits") * PAGES_PER_BLOCK * PAGE;
+        card.copy_within(..PAGE, backup);
         write_fat(&mut card, &geometry, &fat);
         Ok(card)
     }
@@ -162,14 +173,26 @@ impl CardBuilder {
 }
 
 /// Interleaves spare areas into a plain image, computing each page's ECC.
+///
+/// Flash is written an erase block at a time, so every page of a block that holds anything
+/// carries its ECC, even a page holding nothing. A block holding nothing at all is left erased,
+/// spare areas and all, which is how a console's formatter leaves every block it does not use:
+/// an ECC there would describe a write that never happened.
 #[must_use]
 pub fn add_spare(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() / PAGE * (PAGE + SPARE));
-    for page in data.as_chunks::<PAGE>().0 {
-        out.extend_from_slice(page);
-        let mut spare = [0u8; SPARE];
-        ecc::fill_spare(page, &mut spare);
-        out.extend_from_slice(&spare);
+    for block in data.chunks(PAGE * PAGES_PER_BLOCK) {
+        let erased = block.iter().all(|&byte| byte == 0xFF);
+        for page in block.as_chunks::<PAGE>().0 {
+            out.extend_from_slice(page);
+            if erased {
+                out.extend_from_slice(&[0xFF; SPARE]);
+                continue;
+            }
+            let mut spare = [0u8; SPARE];
+            ecc::fill_spare(page, &mut spare);
+            out.extend_from_slice(&spare);
+        }
     }
     out
 }
@@ -274,11 +297,12 @@ fn clusters_for(bytes: usize) -> usize {
 }
 
 /// Builds a `.` or `..` entry, which every directory opens with.
-fn dot_entry(name: &str, length: usize, cluster: usize) -> Vec<u8> {
+fn dot_entry(name: &str, mode: u16, length: usize, cluster: usize, dir_entry: usize) -> Vec<u8> {
     let mut entry = vec![0u8; ENTRY];
-    entry[..2].copy_from_slice(&mode::NEW_DIRECTORY.to_le_bytes());
+    entry[..2].copy_from_slice(&mode.to_le_bytes());
     entry[4..8].copy_from_slice(&u32::try_from(length).expect("a length on this card fits").to_le_bytes());
     entry[16..20].copy_from_slice(&u32::try_from(cluster).expect("cluster index fits").to_le_bytes());
+    entry[20..24].copy_from_slice(&u32::try_from(dir_entry).expect("an entry index fits").to_le_bytes());
     let name = name.as_bytes();
     entry[0x40..0x40 + name.len()].copy_from_slice(name);
     entry

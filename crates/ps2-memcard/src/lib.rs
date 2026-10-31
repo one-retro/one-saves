@@ -82,6 +82,9 @@ pub mod mode {
     pub const NEW_DIRECTORY: u16 = 0x8427;
     /// What this crate writes for a file.
     pub const NEW_FILE: u16 = 0x8497;
+    /// What the root directory's `..` is: a directory that exists, writable and executable but
+    /// not readable, and hidden, since the root has no parent to read.
+    pub const ROOT_PARENT: u16 = 0xA426;
 }
 
 /// One file inside a save.
