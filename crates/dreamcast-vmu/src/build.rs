@@ -123,12 +123,14 @@ fn directory_entry(save: &Save) -> Vec<u8> {
 pub(crate) fn default_root_block() -> Vec<u8> {
     let mut root = vec![0u8; BLOCK];
     root[..16].fill(0x55);
-    // Where the table and the directory live, which the console reads rather than assumes.
-    root[0x40..0x42].copy_from_slice(&u16::try_from(FAT_BLOCK).expect("fits").to_le_bytes());
-    root[0x42..0x44].copy_from_slice(&1u16.to_le_bytes());
-    root[0x44..0x46].copy_from_slice(&u16::try_from(DIR_FIRST_BLOCK).expect("fits").to_le_bytes());
-    root[0x46..0x48].copy_from_slice(&u16::try_from(DIR_BLOCKS).expect("fits").to_le_bytes());
-    root[0x4A..0x4C].copy_from_slice(&u16::try_from(USER_BLOCKS).expect("fits").to_le_bytes());
+    // Where the table and the directory live, which the console reads rather than assumes. They
+    // start at 0x46, after six bytes nobody has documented, which stay zero. The icon shape at
+    // 0x4E stays zero too: the first shape.
+    root[0x46..0x48].copy_from_slice(&u16::try_from(FAT_BLOCK).expect("fits").to_le_bytes());
+    root[0x48..0x4A].copy_from_slice(&1u16.to_le_bytes());
+    root[0x4A..0x4C].copy_from_slice(&u16::try_from(DIR_FIRST_BLOCK).expect("fits").to_le_bytes());
+    root[0x4C..0x4E].copy_from_slice(&u16::try_from(DIR_BLOCKS).expect("fits").to_le_bytes());
+    root[0x50..0x52].copy_from_slice(&u16::try_from(USER_BLOCKS).expect("fits").to_le_bytes());
     root
 }
 
@@ -212,5 +214,26 @@ mod tests {
             data: Vec::new(),
         });
         assert!(matches!(builder.build(), Err(Error::EmptySave(_))));
+    }
+
+    /// A VMU that brings no root block of its own gets one that says where everything is, at the
+    /// offsets the console reads them from.
+    ///
+    /// Marcus Comstedt's notes and KallistiOS's `vmu_root_t` agree on the layout. This block once
+    /// had every field six bytes early, which this crate read back without complaint since it
+    /// takes the layout as fixed rather than reading it from here.
+    #[test]
+    fn a_root_block_made_up_for_a_vmu_says_where_everything_is() {
+        let image = VmuBuilder::new().build().expect("an empty VMU writes");
+        let root = &image[ROOT_BLOCK * BLOCK..];
+        let field = |at: usize| u16::from_le_bytes([root[at], root[at + 1]]);
+        assert!(root[..16].iter().all(|&byte| byte == 0x55), "formatted");
+        assert!(
+            root[0x10..0x46].iter().all(|&byte| byte == 0),
+            "no custom colour, no stamp, nothing unknown"
+        );
+        assert_eq!((field(0x46), field(0x48)), (254, 1), "the table: where, and how many blocks");
+        assert_eq!((field(0x4A), field(0x4C)), (253, 13), "the directory: where, and how many blocks");
+        assert_eq!((field(0x4E), field(0x50)), (0, 200), "the icon shape, and the blocks a game may use");
     }
 }

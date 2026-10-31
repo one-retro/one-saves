@@ -147,11 +147,14 @@ fn directory_entry(save: &Save) -> Vec<u8> {
 /// A freshly formatted header block.
 pub(crate) fn default_header(blocks: usize) -> Vec<u8> {
     let mut header = vec![0xFFu8; BLOCK];
+    // The slot it was formatted in, 0 for A. The console's card library refuses any other value
+    // as a broken card, and the size after it is what Dolphin checks the file's length against.
+    header[0x20..0x22].copy_from_slice(&0u16.to_be_bytes());
     // The size the console reports, in megabits.
     let megabits = u16::try_from(blocks * BLOCK / (1024 * 1024 / 8)).unwrap_or(4);
-    header[0x20..0x22].copy_from_slice(&megabits.to_be_bytes());
+    header[0x22..0x24].copy_from_slice(&megabits.to_be_bytes());
     // Encoding 0 is ASCII; 1 would be Shift-JIS.
-    header[0x22..0x24].copy_from_slice(&0u16.to_be_bytes());
+    header[0x24..0x26].copy_from_slice(&0u16.to_be_bytes());
     let (sum, inverse) = checksum(&header[..0x1FC]);
     header[0x1FC..0x1FE].copy_from_slice(&sum.to_be_bytes());
     header[0x1FE..0x200].copy_from_slice(&inverse.to_be_bytes());
@@ -228,5 +231,28 @@ mod tests {
             data: vec![0u8; 100 * BLOCK],
         });
         assert!(matches!(builder.build(), Err(Error::Full { needed: 100, available: 59 })));
+    }
+
+    /// A card that brings no header of its own gets the one Dolphin writes when it formats.
+    ///
+    /// Dolphin lays the fields out as slot at 0x20, size in megabits at 0x22 and encoding at 0x24,
+    /// and refuses a card whose size field does not match its length. This header once had each
+    /// field one place early, which this crate read back without complaint since it never looks.
+    #[test]
+    fn a_header_made_up_for_a_card_says_what_dolphin_checks_where_it_looks() {
+        for (blocks, megabits) in [(59usize, 4u16), (2043, 128)] {
+            let mut builder = CardBuilder::new();
+            builder.capacity(blocks * BLOCK);
+            let card = builder.build().expect("an empty card writes");
+            assert_eq!(card.len(), (blocks + RESERVED_BLOCKS) * BLOCK);
+
+            let header = &card[..BLOCK];
+            let field = |at: usize| u16::from_be_bytes([header[at], header[at + 1]]);
+            assert_eq!(field(0x20), 0, "formatted in slot A");
+            assert_eq!(field(0x22), megabits, "the size, in megabits");
+            assert_eq!(field(0x24), 0, "ASCII");
+            assert!(header[0x26..0x1FC].iter().all(|&byte| byte == 0xFF), "unused, as Dolphin checks");
+            assert_eq!(checksum(&header[..0x1FC]), (field(0x1FC), field(0x1FE)));
+        }
     }
 }
