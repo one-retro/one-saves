@@ -577,3 +577,54 @@ fn an_archived_card_is_marked_read_only() {
     let drawn = screen(&mut app, 100, 24);
     assert!(drawn.contains("[ro]"), "{drawn}");
 }
+
+/// Formatting asks first, and says how much goes with it.
+#[test]
+fn formatting_asks_first_and_says_what_it_would_erase() {
+    let mut app = App::new(vec![card()], picker());
+    assert!(screen(&mut app, 100, 24).contains("f format"), "the key is listed");
+    app.on_key(KeyCode::Char('f'));
+    match &app.mode {
+        Mode::Confirming(confirm) => {
+            assert_eq!(confirm.question, "Format Mcd001.ps2?");
+            let warning = confirm.warning.as_deref().unwrap_or_default();
+            assert!(warning.contains("All 3 saves"), "{warning}");
+            assert!(warning.contains("press w"), "and that nothing is written yet: {warning}");
+            assert_eq!(confirm.pending, Pending::Format);
+        }
+        Mode::Browsing => panic!("it should have asked"),
+    }
+    assert_eq!(app.cards[0].entries().len(), 3, "asking is not doing");
+
+    // Answered, it empties the card in memory; the vendored file is never written.
+    app.answer();
+    assert_eq!(app.cards[0].entries().len(), 0);
+    assert!(app.cards[0].dirty());
+    assert_eq!(app.status.as_deref(), Some("formatted; press w to write it"));
+}
+
+/// A card started here says so, and writing it is creating it rather than replacing anything.
+#[test]
+fn a_card_started_here_is_marked_new_and_is_created_rather_than_written_over() {
+    let path = std::env::temp_dir().join("1cards-render-new.mcr");
+    let _ = std::fs::remove_file(&path);
+    let mut app = App::new(vec![Card::create(&path, None).expect("starts")], picker());
+
+    let drawn = screen(&mut app, 100, 24);
+    assert!(drawn.contains("[new]"), "{drawn}");
+    assert!(drawn.contains('●'), "with something to write");
+
+    app.ask_write();
+    match &app.mode {
+        Mode::Confirming(confirm) => {
+            assert!(confirm.question.starts_with("Create "), "{}", confirm.question);
+            let warning = confirm.warning.as_deref().unwrap_or_default();
+            assert!(warning.contains("PS1 memory card"), "{warning}");
+        }
+        Mode::Browsing => panic!("it should have asked"),
+    }
+    app.answer();
+    assert_eq!(app.status.as_deref(), Some("written"));
+    assert!(path.exists());
+    assert!(!screen(&mut app, 100, 24).contains("[new]"), "and is no longer new");
+}

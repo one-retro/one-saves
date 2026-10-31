@@ -1,8 +1,9 @@
 //! `1cards` — a terminal explorer for memory cards.
 //!
-//! Open one card to look through it, or two to move saves between them. Reading is safe; the two
-//! things that are not — deleting a save and writing a card back — ask first, and a write goes to
-//! a temporary file that replaces the original only once the rebuilt card has been read back.
+//! Open one card to look through it, or two to move saves between them. A card that is not there
+//! yet is started empty, to copy saves onto. Reading is safe; the things that are not — deleting
+//! a save, formatting a card, writing one back — ask first, and a write goes to a temporary file
+//! that replaces the original only once the rebuilt card has been read back.
 
 use std::io::stdout;
 use std::process::ExitCode;
@@ -26,6 +27,11 @@ one-saves-convert reads: PS1, PS2, GameCube, Nintendo 64, Neo Geo, Dreamcast.
 A card may be inside a .zip, and so may loose PlayStation saves — a card is
 built to hold those. Either way the archive is read-only, marked [ro]: copy
 the saves onto a card of your own and write that.
+
+A card that does not exist yet is started empty, marked [new], and written
+when you press w. Its name says what kind: .mcr, .ps2, .raw, .mpk or .neo.
+Opened beside a card, it is that card's kind and size unless its name says
+otherwise, so `1cards card.ps2 copy.ps2` makes an empty card to copy onto.
 ";
 
 fn main() -> ExitCode {
@@ -39,16 +45,34 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let mut cards = Vec::new();
+    // The cards that are there first, so one that is not can be started like one that is.
+    let mut opened = Vec::new();
     for path in &paths {
+        if !std::path::Path::new(path).exists() {
+            opened.push(None);
+            continue;
+        }
         match Card::open(path) {
-            Ok(card) => cards.push(card),
+            Ok(card) => opened.push(Some(card)),
             Err(error) => {
                 eprintln!("1cards: {path}: {error}");
                 return ExitCode::FAILURE;
             }
         }
     }
+    for at in 0..opened.len() {
+        if opened[at].is_some() {
+            continue;
+        }
+        match Card::create(&paths[at], opened.iter().flatten().next()) {
+            Ok(card) => opened[at] = Some(card),
+            Err(error) => {
+                eprintln!("1cards: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let cards = opened.into_iter().flatten().collect();
 
     match run(cards) {
         Ok(()) => ExitCode::SUCCESS,

@@ -225,3 +225,77 @@ fn a_card_out_of_an_archive_is_not_written_back_into_it() {
     assert!(error.contains("archive is not written back into"), "{error}");
     assert_eq!(std::fs::read(&card.path).expect("the archive"), before, "and left it alone");
 }
+
+/// A path in the temporary directory with nothing at it, for a card to be started at.
+fn nowhere(name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(name);
+    // A run that failed part-way leaves its card behind, and a card already there is opened
+    // rather than started, which is not what these tests are asking about.
+    let _ = std::fs::remove_file(&path);
+    path
+}
+
+/// A card that is not there yet starts out empty and in memory, and comes into existence when it
+/// is written, holding whatever was copied onto it.
+#[test]
+fn a_card_that_is_not_there_yet_starts_empty_and_is_written_on_save() {
+    let path = nowhere("1cards-started.mcr");
+    let mut card = Card::create(&path, None).expect("starts");
+    assert!(card.is_new() && card.dirty(), "a started card has something to write");
+    assert_eq!(card.entries().len(), 0);
+    assert_eq!(card.used_blocks(), 0);
+    assert!(!path.exists(), "and nothing is written until asked");
+
+    let source = Card::open(fixture("macos/duckstation/shared_card_1.mcd")).expect("opens");
+    card.copy_from(&source, 0).expect("a PS1 save goes on a PS1 card");
+    card.save().expect("writes");
+    assert!(!card.is_new() && !card.dirty());
+
+    let again = Card::open(&path).expect("reopens what it wrote");
+    assert_eq!(again.entries().len(), 1);
+    assert_eq!(again.entries()[0].title, source.entries()[0].title);
+}
+
+/// Started beside a card of its own kind, a card is made like that one, since that is the card
+/// whose saves are about to go onto it. A name that says nothing takes the kind from beside it,
+/// and a name that says something else is that kind's standard card.
+#[test]
+fn a_card_started_beside_another_is_made_like_it_unless_its_name_says_otherwise() {
+    use one_saves_convert::Format;
+    use one_saves_convert::card::{BlankOptions, blank};
+
+    // A 16 MB card, which is not the size a PS2 card is started in on its own.
+    let large = std::env::temp_dir().join("1cards-large.ps2");
+    let options = BlankOptions { capacity: Some(16 << 20), ..BlankOptions::default() };
+    std::fs::write(&large, blank(Format::Ps2Card, &options).expect("builds")).expect("writes");
+    let beside = Card::open(&large).expect("opens");
+
+    let like = Card::create(nowhere("1cards-like.ps2"), Some(&beside)).expect("starts");
+    assert_eq!(like.capacity(), 16 << 20, "the size of the card beside it");
+    let unnamed = Card::create(nowhere("1cards-unnamed.bin"), Some(&beside)).expect("starts");
+    assert_eq!((unnamed.format, unnamed.capacity()), (Format::Ps2Card, 16 << 20), "and its kind");
+    let other = Card::create(nowhere("1cards-other.mcr"), Some(&beside)).expect("starts");
+    assert_eq!(other.format, Format::Ps1Card, "the name wins where it says");
+    assert_eq!(Card::create(nowhere("1cards-alone.ps2"), None).expect("starts").capacity(), 8 << 20);
+
+    let refused = Card::create(nowhere("1cards-unknown.bin"), None).err().expect("refuses").to_string();
+    assert!(refused.contains(".mcr, .ps2"), "says what would have worked: {refused}");
+}
+
+/// Formatting a card empties it, and like every other edit it is nothing until it is written.
+#[test]
+fn formatting_a_card_empties_it_and_writing_makes_it_so() {
+    let mut card = open_copy(PS2, "1cards-format.ps2");
+    let capacity = card.capacity();
+    let before = std::fs::read(&card.path).expect("the copy");
+
+    card.format().expect("formats");
+    assert!(card.dirty());
+    assert_eq!((card.entries().len(), card.used_blocks()), (0, 0));
+    assert_eq!(std::fs::read(&card.path).expect("the copy"), before, "nothing written yet");
+
+    card.save().expect("writes");
+    let again = Card::open(&card.path).expect("reopens");
+    assert_eq!(again.entries().len(), 0);
+    assert_eq!(again.capacity(), capacity, "the same card, empty");
+}

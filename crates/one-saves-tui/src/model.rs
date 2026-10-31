@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use one_saves::extension::{Icon, Label};
 use one_saves::{Bundle, PartKind};
+use one_saves_convert::card::BlankOptions;
 use one_saves_convert::{CardOptions, Format, card, detect};
 
 /// What went wrong, in terms a person reading a status line can act on.
@@ -89,6 +90,8 @@ pub struct Card {
     bundle: Bundle,
     /// Whether it has been edited since it was opened or last written.
     dirty: bool,
+    /// Whether it was started here and has not been written yet, so there is no file behind it.
+    new: bool,
 }
 
 impl Card {
@@ -116,7 +119,42 @@ impl Card {
 
         let format = detect(&bytes, &extension).map_err(|_| Error::NotACard(path.display().to_string()))?;
         let bundle = card::read(format, &bytes, &CardOptions::default()).map_err(Error::Convert)?;
-        Ok(Self { path, archived, format, bundle, dirty: false })
+        Ok(Self { path, archived, format, bundle, dirty: false, new: false })
+    }
+
+    /// Starts an empty card that does not exist yet, to be written where `path` says.
+    ///
+    /// The kind of card is what the name says — `.mcr`, `.ps2`, `.raw`, `.mpk`, `.neo` —
+    /// or, for a name that says nothing, as a VMU's `.bin` does not, the kind it is opened beside.
+    /// Beside a card of its own kind it is made like that one, the same size and on a GameCube
+    /// the same character set, since that is the card whose saves are about to be copied onto
+    /// it. Otherwise it is the kind's standard card.
+    ///
+    /// Nothing is written until [`save`](Self::save), so it starts out with something to write.
+    pub fn create(path: impl AsRef<Path>, beside: Option<&Card>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+        let named = detect(&[], extension).ok().filter(|format| format.card_format().is_some());
+        let format = named.or(beside.map(|card| card.format)).ok_or_else(|| {
+            Error::Refused(format!(
+                "{} is not there, and its name does not say what kind of card to start: name it \
+                 .mcr, .ps2, .raw, .mpk or .neo, or open it beside a card of the kind you want",
+                path.display()
+            ))
+        })?;
+        let bytes = match beside {
+            Some(card) if card.format == format => card::blank_like(&card.bundle),
+            _ => card::blank(format, &BlankOptions::default()),
+        }
+        .map_err(Error::Convert)?;
+        let bundle = card::read(format, &bytes, &CardOptions::default()).map_err(Error::Convert)?;
+        Ok(Self { path, archived: None, format, bundle, dirty: true, new: true })
+    }
+
+    /// Whether the card was started here and has no file yet.
+    #[must_use]
+    pub fn is_new(&self) -> bool {
+        self.new
     }
 
     /// Whether the card has been edited since it was opened or last written.
@@ -215,6 +253,18 @@ impl Card {
         self.dirty = true;
     }
 
+    /// Empties the card, as formatting it on a console does.
+    ///
+    /// Every save goes, and so does whatever the card said about itself — a pak's label, a VMU's
+    /// colour — which a console writes afresh too. Its size stays, and on a GameCube its character
+    /// set, which a console formats with its own. Nothing is written until [`save`](Self::save).
+    pub fn format(&mut self) -> Result<()> {
+        let bytes = card::blank_like(&self.bundle).map_err(Error::Convert)?;
+        self.bundle = card::read(self.format, &bytes, &CardOptions::default()).map_err(Error::Convert)?;
+        self.dirty = true;
+        Ok(())
+    }
+
     /// Copies a save from another card onto this one.
     ///
     /// Refused where it would not fit, and where the two cards are not for the same system: a
@@ -268,6 +318,7 @@ impl Card {
         std::fs::write(&temporary, &bytes).map_err(Error::Io)?;
         std::fs::rename(&temporary, &self.path).map_err(Error::Io)?;
         self.dirty = false;
+        self.new = false;
         Ok(())
     }
 

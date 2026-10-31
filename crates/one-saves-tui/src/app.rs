@@ -63,6 +63,8 @@ pub enum Pending {
     Write,
     /// Copy the selected save onto the other card, over one already there.
     CopyOver,
+    /// Empty the focused card, as formatting it on a console does.
+    Format,
     /// Leave, abandoning whatever has not been written.
     Quit,
 }
@@ -210,6 +212,22 @@ impl App {
         ));
     }
 
+    /// Asks before formatting, which takes every save on the card with it.
+    pub fn ask_format(&mut self) {
+        let card = self.card();
+        let name = card.path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let erased = match card.entries().len() {
+            0 => "There is nothing on it to lose.".to_owned(),
+            1 => "The one save on it is erased.".to_owned(),
+            saves => format!("All {saves} saves on it are erased."),
+        };
+        self.mode = Mode::Confirming(Confirm::new(
+            format!("Format {name}?"),
+            Some(format!("{erased} Nothing is written until you press w.")),
+            Pending::Format,
+        ));
+    }
+
     /// Asks before writing, since writing is what makes an edit real.
     pub fn ask_write(&mut self) {
         if !self.card().dirty() {
@@ -227,11 +245,20 @@ impl App {
             });
             return;
         }
-        self.mode = Mode::Confirming(Confirm::new(
-            format!("Write over {}?", self.card().path.display()),
-            Some("The file is replaced by what is listed here.".into()),
-            Pending::Write,
-        ));
+        // A card started here has no file to replace, and saying it does would be wrong in the
+        // other direction: it would read as though something were about to be lost.
+        let (question, warning) = if self.card().is_new() {
+            (
+                format!("Create {}?", self.card().path.display()),
+                format!("A new {} is written there.", self.card().format.label()),
+            )
+        } else {
+            (
+                format!("Write over {}?", self.card().path.display()),
+                "The file is replaced by what is listed here.".to_owned(),
+            )
+        };
+        self.mode = Mode::Confirming(Confirm::new(question, Some(warning), Pending::Write));
     }
 
     /// Asks before leaving with work in hand.
@@ -333,6 +360,7 @@ impl App {
             KeyCode::Tab | KeyCode::BackTab => self.switch(),
             KeyCode::Char('c') => self.copy(),
             KeyCode::Char('d') => self.ask_delete(),
+            KeyCode::Char('f') => self.ask_format(),
             KeyCode::Char('w') => self.ask_write(),
             _ => {}
         }
@@ -391,6 +419,16 @@ impl App {
                 });
             }
             Pending::CopyOver => self.do_copy(),
+            Pending::Format => {
+                self.status = Some(match self.cards[self.focus].format() {
+                    Ok(()) => {
+                        self.rewind();
+                        self.step(0);
+                        "formatted; press w to write it".into()
+                    }
+                    Err(error) => error.to_string(),
+                });
+            }
             Pending::Quit => self.done = true,
         }
     }
@@ -432,10 +470,12 @@ impl App {
             // A card out of an archive cannot be written back, and finding that out at the point
             // of writing is finding out too late, so it is said in the header from the start.
             let title = format!(
-                " {}{}{}{} · {}/{} free ",
+                " {}{}{}{}{} · {}/{} free ",
                 if focused { "▶ " } else { "  " },
                 if card.dirty() { "● " } else { "" },
                 if card.archived.is_some() { "[ro] " } else { "" },
+                // Nor is a card started here on disk yet, which is worth knowing before quitting.
+                if card.is_new() { "[new] " } else { "" },
                 card.path.file_name().unwrap_or_default().to_string_lossy(),
                 card.free_blocks(),
                 card.blocks(),
@@ -611,7 +651,7 @@ impl App {
     }
 
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
-        let keys = "↑↓ select   ⇥ card   c copy   d delete   w write   q quit";
+        let keys = "↑↓ select   ⇥ card   c copy   d delete   f format   w write   q quit";
         let (text, style) = match &self.status {
             Some(said) => (said.clone(), Style::default().fg(Color::Cyan)),
             None => (keys.to_owned(), Style::default().fg(Color::DarkGray)),
