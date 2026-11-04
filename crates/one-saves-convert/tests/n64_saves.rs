@@ -14,11 +14,12 @@
 #![cfg(feature = "n64")]
 
 use one_saves::extension::{Label, N64Save};
-use one_saves::{Bundle, Part, Shape};
+use one_saves::{Bundle, Part, Shape, Slug};
 use one_saves_convert::n64::{
     N64Options, WordOrder, cartridge, game_save, read_paks, read_srm, unwrap, wrap, write_pak, write_paks,
     write_srm,
 };
+use one_saves_convert::{CardOptions, Format, card};
 
 fn fixture(path: &str) -> Vec<u8> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/saves");
@@ -220,4 +221,59 @@ fn one_game_s_save_cut_out_of_a_device_goes_back_where_it_was() {
     assert_eq!(save.header.shape, Shape::Save);
     assert_eq!(save.parts.len(), 2, "the cartridge and its note");
     assert!(write_srm(&save, Some(&file)).expect("writes") == file, "the file it came out of");
+
+    // With no ROM to name it, the save is named by the serial its note carries, and listed as the
+    // pak lists the note.
+    let game = save.header.game.as_ref().expect("a game");
+    assert_eq!(game.serial.as_deref(), Some("NUS-NPDE"));
+    assert_eq!(save.header.extensions.get::<Label>().expect("a label").title, "PERFECT DARK");
+}
+
+/// The pak in port 1 of a file of four, which is the whole file a producer keeping one per pak
+/// writes: Project64's `_Cont_1.mpk`, an EverDrive's `.mpk`, the MiSTer core's `_1.cpk`.
+const PAK: usize = 32 * 1024;
+
+#[test]
+fn one_game_s_notes_cut_out_of_a_lone_pak_are_those_cut_out_of_all_four() {
+    let file = mupen64plus("Tony Hawk's Pro Skater (U) (V1.1-AFF424A1.mpk");
+    let pak = &file[..PAK];
+    let card = card::read(Format::N64Pak, pak, &CardOptions::default()).expect("reads");
+    assert_eq!(
+        card.parts[0].role.as_ref().map(Slug::as_str),
+        Some("controller-pak-1"),
+        "a controller's port"
+    );
+
+    let from_pak = game_save(&card, "NUS-NTFE").expect("cuts");
+    from_pak.validate().expect("valid");
+    let from_paks =
+        game_save(&read_paks(&file, &N64Options::default()).expect("reads"), "NTFE").expect("cuts");
+    assert_eq!(from_pak.to_vec().unwrap(), from_paks.to_vec().unwrap());
+    assert_eq!(from_pak.header.game.as_ref().and_then(|game| game.serial.as_deref()), Some("NUS-NTFE"));
+    assert_eq!(from_pak.header.extensions.get::<Label>().expect("a label").title, "TH-AA");
+    let written = write_pak(&from_pak, 1, Some(pak)).expect("writes").expect("a pak in port 1");
+    assert!(written == pak, "the pak it came out of");
+
+    // The role is the port the notes go back to, so one naming none is refused at the cut rather
+    // than at the restore.
+    let options = CardOptions { role: Some(Slug::parse("memcard-1").unwrap()), ..CardOptions::default() };
+    let card = card::read(Format::N64Pak, pak, &options).expect("reads");
+    assert!(game_save(&card, "NTFE").is_err());
+}
+
+/// The ID block a console knows a pak by is no bundle's to carry. Only the file being written over
+/// has it, which ParaLLEl fills with a serial of its own.
+#[test]
+fn a_lone_pak_written_onto_its_own_file_is_that_file() {
+    let srm = libretro("parallel-n64", "Perfect Dark (USA) (Rev 1)");
+    let pak = &srm[0x800..0x800 + PAK];
+    let card = card::read(Format::N64Pak, pak, &CardOptions::default()).expect("reads");
+
+    assert!(card::write_onto(Format::N64Pak, &card, pak).expect("writes") == pak, "the same pak");
+    let fresh = card::write(Format::N64Pak, &card).expect("writes");
+    assert!(fresh != pak, "formatted afresh, with an ID block of its own");
+    let again = card::read(Format::N64Pak, &fresh, &CardOptions::default()).expect("reads");
+    assert_eq!(again.to_vec().unwrap(), card.to_vec().unwrap(), "the same notes on another pak");
+
+    assert!(card::write_onto(Format::GcCard, &card, pak).is_err(), "no other card keeps anything");
 }

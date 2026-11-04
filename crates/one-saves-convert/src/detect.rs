@@ -102,6 +102,10 @@ impl Format {
     pub const fn default_role(self) -> &'static str {
         match self {
             Format::NeoGeoCard => "neogeo-card",
+            // A Controller Pak sits in a controller rather than a card slot, and the registry
+            // numbers its sockets by controller port. The role is also where a pak's notes go
+            // back to when one game's are cut out of it, so it has to be one that names a port.
+            Format::N64Pak => "controller-pak-1",
             // A Saturn keeps its saves in the console itself, and a Backup RAM Cart extends that
             // rather than replacing it. Neither is a numbered card slot, and a cartridge dumped
             // by itself says nothing about which it was, so `ram-cart` stays the caller's to
@@ -388,6 +392,22 @@ mod tests {
         for format in [Format::Bundle, Format::Raw] {
             assert_eq!(format.card_format(), None);
             assert!(format.is_supported(), "{format:?} is not behind a feature");
+        }
+    }
+
+    #[test]
+    fn every_card_format_is_read_from_a_socket_its_system_has() {
+        // Which systems a role is listed under is a browsing aid rather than a rule, so nothing
+        // else notices a format defaulting to another system's socket. A pak in `memcard-1` did,
+        // where the spec and its conformance cases put it in `controller-pak-1`.
+        for format in CARD_FORMATS {
+            let system = format.system().expect("a card format names its system");
+            let systems = match one_saves_registry::role(format.default_role()) {
+                one_saves_registry::RoleMatch::Registered(role) => role.systems,
+                one_saves_registry::RoleMatch::Numbered(prefix, _) => prefix.systems,
+                one_saves_registry::RoleMatch::Unknown => panic!("{format:?}'s role is not registered"),
+            };
+            assert!(systems.contains(&system), "{format:?} is read from {}", format.default_role());
         }
     }
 

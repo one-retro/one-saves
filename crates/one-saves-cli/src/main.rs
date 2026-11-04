@@ -137,6 +137,8 @@ struct Convert {
     /// four-character code its ROM header and its notes carry, such as `NKTE`, or the serial its
     /// saves name, `NUS-NKTE`.
     ///
+    /// The file may be a libretro `.srm`, mupen64plus's `.mpk` of four paks, or one pak alone,
+    /// whose notes go back to the port `--role` names: `controller-pak-1` unless told otherwise.
     /// Without it the paks are kept whole, other games' notes and all.
     #[arg(long, value_name = "CODE")]
     n64_game: Option<String>,
@@ -173,9 +175,10 @@ struct Extract {
     #[arg(long, value_name = "TARGET")]
     n64: Option<n64::Target>,
     /// For an N64 save, the file to write it onto: a `.srm` for RetroArch, an `.mpk` otherwise.
+    /// For a Controller Pak, the pak's own file.
     ///
     /// What the bundle says nothing about is kept from it, so one game's notes go onto a pak without
-    /// taking the others off.
+    /// taking the others off, and a pak keeps the ID block a console knows it by.
     #[arg(long, value_name = "FILE")]
     onto: Option<PathBuf>,
     /// Write the clock to a sidecar file instead of appending it: Gambatte's for a Game Boy clock,
@@ -370,7 +373,7 @@ fn convert(args: Convert) -> Fallible {
     let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at.unwrap_or_default()));
 
     let source = source_of(&args, profile.as_ref())?;
-    let system = system_of(&args, rom_system, profile.as_ref(), source.as_ref());
+    let system = system_of(&args, rom_system, profile.as_ref(), source.as_ref(), &extension);
 
     let mut label = format.label().to_owned();
     let mut bundle = if n64::is_n64(system.as_deref(), &extension, &bytes) {
@@ -399,15 +402,20 @@ fn convert(args: Convert) -> Fallible {
         };
         card::read(format, &bytes, &options)?
     };
-    if let Some(description) = args.description {
-        bundle.header.description = Some(description);
-    }
     // On a card, a header `game` would claim the whole card is that game, which is only true when
     // every save on it is. Naming one is the caller's doing, so it is honoured rather than guessed.
     if bundle.header.card.is_some()
         && let Some(game) = game.take()
     {
         bundle.header.game = Some(game);
+    }
+    // One game's notes come out of whatever held them, a whole console's paks or a lone pak read
+    // as a card. The pak is cut after it is named, so a save cut out of one is named by the ROM.
+    if let Some(code) = args.n64_game.as_deref() {
+        (bundle, label) = n64::cut(&bundle, &label, code)?;
+    }
+    if let Some(description) = args.description {
+        bundle.header.description = Some(description);
     }
 
     let output = args.output.unwrap_or_else(|| args.input.with_extension(one_saves::EXTENSION));
@@ -471,12 +479,18 @@ fn report_clock(sidecar: Option<&(PathBuf, bool)>, instant_given: bool, bundle: 
 /// header and a misspelt name changes the content hash as surely as a different one.
 /// A flag's value as a slug, or an error naming the flag.
 /// The system the bytes are for: what the user said, else what the ROM's header names, else the one
-/// system a profile or a core covers, when it covers exactly one.
+/// system a profile or a core covers, when it covers exactly one, else the one system the file's
+/// extension belongs to.
+///
+/// The extension comes last because a name is the weakest thing here. It is still worth asking:
+/// a MiSTer runs every system, so `--from mister` says nothing about which, and an N64 chip's
+/// file read as nobody's would keep its words swapped rather than in the order the console reads.
 fn system_of(
     args: &Convert,
     rom_system: Option<&str>,
     profile: Option<&Profile>,
     source: Option<&Source>,
+    extension: &str,
 ) -> Option<String> {
     let core_system = source
         .and_then(|source| source.core.as_ref())
@@ -490,6 +504,7 @@ fn system_of(
         .or_else(|| rom_system.map(ToOwned::to_owned))
         .or_else(|| profile.and_then(Profile::only_system).map(ToOwned::to_owned))
         .or_else(|| core_system.map(ToOwned::to_owned))
+        .or_else(|| n64::system_of_extension(extension).map(ToOwned::to_owned))
 }
 
 fn slug_flag(flag: &str, text: &str) -> Result<one_saves::Slug, String> {
@@ -656,10 +671,6 @@ fn extract(args: Extract) -> Fallible {
                     mupen64plus, project64 or everdrive"
             .into());
     }
-    if args.onto.is_some() {
-        return Err("--onto is for an N64 save, with --n64".into());
-    }
-
     // Otherwise the bundle says what it is: a card writes back as that card, a device holding one
     // card as that card in the container they came out of together, and anything else is a flat
     // save.
@@ -677,12 +688,20 @@ fn extract(args: Extract) -> Fallible {
         },
     };
 
+    // A Controller Pak is the one card with something of its own no bundle carries, the ID block a
+    // console knows it by, so it is the one a card can be written onto.
+    if args.onto.is_some() && target != Format::N64Pak {
+        return Err("--onto is for an N64 save, with --n64, or a Controller Pak".into());
+    }
     let payload = match target {
         Format::Raw => raw::unwrap(&bundle)?,
         Format::Bundle => return Err("extracting a bundle as a bundle is a copy".into()),
-        // A PS2 dump's spare area is regenerated rather than stored, so writing one back is a
-        // choice the caller makes rather than something the bundle records.
-        card => card::write(card, &bundle)?,
+        card => match args.onto.as_deref() {
+            Some(onto) => card::write_onto(card, &bundle, &std::fs::read(onto)?)?,
+            // A PS2 dump's spare area is regenerated rather than stored, so writing one back is a
+            // choice the caller makes rather than something the bundle records.
+            None => card::write(card, &bundle)?,
+        },
     };
     // `Format::Raw` covers every flat save and names the commonest of them, so a backup RAM would
     // otherwise go back out as `.srm`. The bundle knows better.
@@ -1265,5 +1284,27 @@ mod tests {
         assert_eq!(printable("ＴＥＫＫＥＮ　４"), "ＴＥＫＫＥＮ　４");
         assert_eq!(printable("\u{1b}]0;owned\u{7}\u{1b}[2J"), r"\u{1b}]0;owned\u{7}\u{1b}[2J");
         assert_eq!(printable("two\nlines\u{9b}"), r"two\nlines\u{9b}");
+    }
+
+    fn convert_args(line: &[&str]) -> Convert {
+        let Command::Convert(args) = Cli::try_parse_from(line).expect("parses").command else {
+            panic!("not a convert");
+        };
+        *args
+    }
+
+    #[test]
+    fn a_chip_s_file_names_its_system_only_when_nothing_else_does() {
+        // A MiSTer runs every system, so `--from mister` leaves it to the file's own name.
+        let args = convert_args(&["1saves", "convert", "--from", "mister", "Paper Mario (USA).fla"]);
+        assert_eq!(system_of(&args, None, None, None, "fla").as_deref(), Some("n64"));
+        assert_eq!(system_of(&args, None, None, None, "sav"), None);
+
+        // Anything that does say comes first, down to a profile covering one system.
+        let args = convert_args(&["1saves", "convert", "--system", "gba", "save.fla"]);
+        assert_eq!(system_of(&args, None, None, None, "fla").as_deref(), Some("gba"));
+        let args = convert_args(&["1saves", "convert", "save.fla"]);
+        let duckstation = one_saves_convert::profile("duckstation");
+        assert_eq!(system_of(&args, None, duckstation.as_ref(), None, "fla").as_deref(), Some("psx"));
     }
 }

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use one_saves::extension::N64Save;
 use one_saves::{Bundle, Game, Shape, Source};
+use one_saves_convert::Format;
 use one_saves_convert::n64::{self, N64Options, WordOrder};
 
 use crate::{Convert, Fallible, write_out};
@@ -65,6 +66,15 @@ fn parse_order(text: &str) -> Result<WordOrder, String> {
     }
 }
 
+/// The system a file's extension names on its own: `.eep`, `.sra` and `.fla` are the N64's three
+/// chips, as mupen64plus, Project64 and the MiSTer core all name them.
+///
+/// SRAM is the one an EverDrive names otherwise, `.srm`, which every libretro core uses for every
+/// system, so that name settles nothing.
+pub fn system_of_extension(extension: &str) -> Option<&'static str> {
+    matches!(extension, "eep" | "sra" | "fla").then_some(n64::SYSTEM)
+}
+
 /// Whether a file is one of the N64 saves this module reads rather than a flat save or a card.
 ///
 /// A 32 KiB `.mpk` is a single pak, which the card reader already handles, so only the four-pak
@@ -87,8 +97,8 @@ pub fn convert(
     let stated = args.n64_save.as_deref().map(parse_chip).transpose()?.or(rom_save);
     let options = N64Options { source, game, description: args.description.clone(), bundled_at: None };
 
-    let (bundle, label) = if let Some(read) = read_whole_console(bytes, extension, stated, &options)? {
-        read
+    if let Some(read) = read_whole_console(bytes, extension, stated, &options)? {
+        Ok(read)
     } else {
         let save = match stated {
             Some(save) => save,
@@ -108,19 +118,34 @@ pub fn convert(
                  everdrive, --from mupen64plus or --from mister says the same)",
             )?,
         };
-        (n64::wrap(bytes, save, order, &options)?, format!("N64 {save} cartridge save"))
-    };
+        Ok((n64::wrap(bytes, save, order, &options)?, format!("N64 {save} cartridge save")))
+    }
+}
 
-    let Some(code) = args.n64_game.as_deref() else {
-        return Ok((bundle, label));
-    };
-    if bundle.header.shape != Shape::Device {
-        return Err(
-            "--n64-game cuts one game out of a file holding paks, and this holds one game already".into()
-        );
+/// One game's save cut out of a bundle holding Controller Paks, as `--n64-game` asks: a device
+/// read from a libretro `.srm` or mupen64plus's file of four, or a lone pak, which reads as a card.
+///
+/// `read_as` is what the bundle was read as, which the message names it by.
+pub fn cut(
+    bundle: &Bundle,
+    read_as: &str,
+    code: &str,
+) -> Result<(Bundle, String), Box<dyn std::error::Error>> {
+    let is_n64 = bundle.header.system.as_ref().is_some_and(|system| system.as_str() == n64::SYSTEM);
+    let is_pak = bundle
+        .header
+        .card
+        .as_ref()
+        .is_some_and(|card| Some(card.format.as_str()) == Format::N64Pak.card_format());
+    if !is_n64 || !(is_pak || bundle.header.shape == Shape::Device) {
+        let what = if is_n64 { "holds one game already".to_owned() } else { format!("is a {read_as}") };
+        return Err(format!(
+            "--n64-game cuts one game out of a file holding Controller Paks, and this {what}"
+        )
+        .into());
     }
     #[cfg(feature = "n64")]
-    return Ok((n64::game_save(&bundle, code)?, format!("{code}'s save out of a {label}")));
+    return Ok((n64::game_save(bundle, code)?, format!("{code}'s save out of the {read_as}")));
     #[cfg(not(feature = "n64"))]
     Err(format!("--n64-game {code} needs Controller Pak support, which this build was compiled without")
         .into())
@@ -360,5 +385,39 @@ mod tests {
         assert!(writes_whole_chips(Some("mupen64plus"), Some("mupen64plus")));
         assert!(!writes_whole_chips(Some("project64"), None));
         assert!(!writes_whole_chips(Some("retroarch"), Some("mupen64plus-next")));
+    }
+
+    #[test]
+    fn the_n64_s_chip_files_name_their_system_and_nothing_else_does() {
+        for extension in ["eep", "sra", "fla"] {
+            assert_eq!(system_of_extension(extension), Some("n64"), "{extension}");
+        }
+        // `.srm` is every libretro core's, for every system, and a pak's file is told by its bytes.
+        for extension in ["srm", "sav", "mpk", "cpk", ""] {
+            assert_eq!(system_of_extension(extension), None, "{extension}");
+        }
+    }
+
+    #[cfg(feature = "n64")]
+    #[test]
+    fn n64_game_cuts_a_lone_pak_and_refuses_what_holds_none() {
+        use one_saves_convert::card::{self, BlankOptions};
+
+        // An empty pak is still a pak, so the cut gets as far as finding nothing of the game's on it
+        // rather than passing the whole pak through.
+        let pak = card::blank(Format::N64Pak, &BlankOptions::default()).unwrap();
+        let pak = card::read(Format::N64Pak, &pak, &card::CardOptions::default()).unwrap();
+        let error = cut(&pak, "N64 Controller Pak", "NTFE").unwrap_err().to_string();
+        assert!(error.contains("holds nothing of NTFE's"), "{error}");
+
+        let chip =
+            n64::wrap(&[0; 512], N64Save::Eeprom4k, WordOrder::Console, &N64Options::default()).unwrap();
+        let error = cut(&chip, "N64 eeprom-4k cartridge save", "NTFE").unwrap_err().to_string();
+        assert!(error.ends_with("holds one game already"), "{error}");
+
+        let flat =
+            one_saves_convert::raw::wrap(&[0; 8192], &one_saves_convert::RawOptions::default()).unwrap();
+        let error = cut(&flat, "flat cartridge save", "NTFE").unwrap_err().to_string();
+        assert!(error.ends_with("is a flat cartridge save"), "{error}");
     }
 }

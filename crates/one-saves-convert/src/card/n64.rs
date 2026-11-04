@@ -104,8 +104,8 @@ pub fn write(bundle: &Bundle) -> Result<Vec<u8>> {
 ///
 /// A bundle carries a pak's label and its notes, but not the ID block a console knows the pak by,
 /// so the one on the pak being written over is kept. What is there being no pak, the pak is
-/// formatted afresh, as [`write`] does.
-pub(crate) fn write_onto(bundle: &Bundle, there: &[u8]) -> Result<Vec<u8>> {
+/// formatted afresh, as [`write`](fn@write) does.
+pub fn write_onto(bundle: &Bundle, there: &[u8]) -> Result<Vec<u8>> {
     let id_area = ControllerPak::parse(there).ok().map(|pak| pak.id_area().to_vec());
     build(bundle, id_area)
 }

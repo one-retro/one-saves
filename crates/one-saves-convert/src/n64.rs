@@ -213,10 +213,12 @@ pub use srm::{
 #[cfg(feature = "n64")]
 mod srm {
     use n64_cpak::{ControllerPak, Note, PakBuilder};
-    use one_saves::extension::N64Save;
+    use one_saves::extension::{Label, N64Save};
     use one_saves::{Bundle, Game, Header, Part, PartKind, Shape, Slug};
 
-    use super::{CARTRIDGE, ERASED, N64Options, SYSTEM, WordOrder, cartridge_of, cartridge_part, slug};
+    use super::{
+        CARTRIDGE, ERASED, N64Options, SYSTEM, WordOrder, cartridge_of, cartridge_part, serial_of, slug,
+    };
     use crate::card::{CardOptions, nested_saves};
     use crate::error::{Error, Result};
 
@@ -596,58 +598,121 @@ mod srm {
         })
     }
 
-    /// One game's save out of a device: its cartridge, and only its own notes beside it.
+    /// One game's save out of a device or a lone pak: its cartridge, and only its own notes beside
+    /// it.
     ///
     /// `game_code` is the four characters a ROM's header and a note's entry both carry, such as
     /// `NKTE`, or the serial a note's save names, `NUS-NKTE`. The result is a plain save with
     /// ordinary parts: the cartridge, and each note on the pak's role with the pak's entry for it,
     /// which is everything [`write_srm`] needs to put the note back on a pak that also holds other
-    /// games'.
-    pub fn game_save(device: &Bundle, game_code: &str) -> Result<Bundle> {
-        if device.header.shape != Shape::Device {
-            return Err(Error::NotConvertible(format!("a {} bundle is not a device", device.header.shape)));
-        }
+    /// games'. A lone pak has no cartridge, and its notes keep the role it was read with, which is
+    /// the port they go back to.
+    ///
+    /// The save is that game's, so its header names it: as the cartridge or the pak was named
+    /// when it was read, and by the serial every note carries where that names none. Its label is
+    /// the one its notes are listed under, where they agree on one.
+    pub fn game_save(bundle: &Bundle, game_code: &str) -> Result<Bundle> {
         let game_code = super::game_code_of(game_code);
 
         let mut parts = Vec::new();
+        let mut labels = Vec::new();
         let mut game: Option<Game> = None;
         let mut description = None;
-        for component in &device.parts {
-            let role = component.role.as_ref().map(Slug::as_str).unwrap_or_default();
-            let inner = Bundle::from_slice(&component.bytes()?)?;
-            if role == CARTRIDGE {
-                if let Some((save, normal)) = cartridge_of(&inner)? {
-                    game.clone_from(&inner.header.game);
-                    description.clone_from(&inner.header.description);
-                    parts.push(cartridge_part(0, normal, save));
+        let what = match &bundle.header.shape {
+            Shape::Device => {
+                for component in &bundle.parts {
+                    let role = component.role.as_ref().map(Slug::as_str).unwrap_or_default();
+                    let inner = Bundle::from_slice(&component.bytes()?)?;
+                    if role == CARTRIDGE {
+                        if let Some((save, normal)) = cartridge_of(&inner)? {
+                            game.clone_from(&inner.header.game);
+                            description.clone_from(&inner.header.description);
+                            parts.push(cartridge_part(0, normal, save));
+                        }
+                        continue;
+                    }
+                    notes_into(&mut parts, &mut labels, &inner, component.role.as_ref(), game_code)?;
                 }
-                continue;
+                "device"
             }
-            for note in nested_saves(&inner)? {
-                let code = note.dirent.as_deref().and_then(|entry| entry.get(..4));
-                if code != Some(game_code.as_bytes()) {
-                    continue;
-                }
-                let mut part = Part::new(0, note.bytes).role(component.role.clone()).slot(note.slot);
-                part.path = note.path;
-                part.dirent = note.dirent;
-                parts.push(part);
+            Shape::Card if is_pak(bundle) => {
+                game.clone_from(&bundle.header.game);
+                description.clone_from(&bundle.header.description);
+                notes_into(&mut parts, &mut labels, bundle, None, game_code)?;
+                "pak"
             }
-        }
+            shape => {
+                return Err(Error::NotConvertible(format!(
+                    "a {shape} bundle is not a device or a Controller Pak"
+                )));
+            }
+        };
         if parts.is_empty() {
-            return Err(Error::NotConvertible(format!("this device holds nothing of {game_code}'s")));
+            return Err(Error::NotConvertible(format!("this {what} holds nothing of {game_code}'s")));
         }
         for (id, part) in parts.iter_mut().enumerate() {
             part.id = u64::try_from(id).expect("part count fits");
         }
 
+        let mut game = game.unwrap_or_default();
+        if game.serial.is_none() {
+            game = game.serial(serial_of(game_code));
+        }
         let mut header = Header::new(Shape::Save)
-            .bundled_at(device.header.bundled_at)
+            .bundled_at(bundle.header.bundled_at)
             .system(slug(SYSTEM))
             .game(game)
-            .source(device.header.source.clone());
+            .source(bundle.header.source.clone());
         header.description = description;
+        if let [label] = labels.as_slice() {
+            header = header.extension(label.clone());
+        }
         Ok(Bundle::new(header, parts))
+    }
+
+    /// Whether a card is a Controller Pak, the one card whose notes [`game_save`] cuts.
+    fn is_pak(bundle: &Bundle) -> bool {
+        bundle.header.card.as_ref().is_some_and(|card| card.format.as_str() == crate::card::n64::CARD_FORMAT)
+    }
+
+    /// Adds a pak's notes for one game, each on the role it goes back to: `role` where the pak is
+    /// a device's component, and otherwise the one its own part was read with. `labels` gathers
+    /// the names they are listed under, each once.
+    fn notes_into(
+        parts: &mut Vec<Part>,
+        labels: &mut Vec<Label>,
+        pak: &Bundle,
+        role: Option<&Slug>,
+        game_code: &str,
+    ) -> Result<()> {
+        // `nested_saves` takes a card's `bundle` parts in order, so these line up with its saves.
+        let roles =
+            pak.parts.iter().filter(|part| part.kind == PartKind::Bundle).map(|part| part.role.as_ref());
+        for (note, own) in nested_saves(pak)?.into_iter().zip(roles) {
+            let code = note.dirent.as_deref().and_then(|entry| entry.get(..4));
+            if code != Some(game_code.as_bytes()) {
+                continue;
+            }
+            // A role naming no port would be a save nothing can write back, so it is refused here
+            // rather than at the restore.
+            let role = role.or(own).cloned();
+            let name = role.as_ref().map(Slug::as_str).unwrap_or_default();
+            if port_of(name).is_none() {
+                return Err(Error::NotConvertible(format!(
+                    "a note on {name:?} has no controller port to go back to"
+                )));
+            }
+            if let Some(label) = note.inner.header.extensions.get::<Label>()
+                && !labels.contains(label)
+            {
+                labels.push(label.clone());
+            }
+            let mut part = Part::new(0, note.bytes).role(role).slot(note.slot);
+            part.path = note.path;
+            part.dirent = note.dirent;
+            parts.push(part);
+        }
+        Ok(())
     }
 }
 

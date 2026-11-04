@@ -137,15 +137,7 @@ pub fn read(format: Format, bytes: &[u8], options: &CardOptions) -> Result<Bundl
     allow(unused_variables)
 )]
 pub fn write(format: Format, bundle: &Bundle) -> Result<Vec<u8>> {
-    // A device is several components, and only a MiSTer NeoGeo save is one file holding more than
-    // a card. Anything else handed one would read its components as saves.
-    if *bundle.shape() == one_saves::Shape::Device && format != Format::NeoGeoCard {
-        return Err(Error::NotConvertible(format!(
-            "this bundle is a device, several components rather than one {}; take the card out \
-             with --part",
-            format.label()
-        )));
-    }
+    refuse_a_device(format, bundle)?;
     match format {
         #[cfg(feature = "ps1")]
         Format::Ps1Card => ps1::write(bundle),
@@ -182,6 +174,41 @@ pub fn write(format: Format, bundle: &Bundle) -> Result<Vec<u8>> {
         )]
         other => Err(other.unsupported()),
     }
+}
+
+/// Writes a bundle as a card in place of the one already there, keeping what of that card the
+/// bundle does not carry.
+///
+/// Only a Controller Pak has any: the ID block a console knows the pak by, which no bundle holds,
+/// so a pak written over its own file is still the same pak. Every other format's card is all its
+/// bundle says, so writing one onto a file would be writing it afresh, and is refused rather than
+/// pretended.
+#[cfg_attr(not(feature = "n64"), allow(unused_variables))]
+pub fn write_onto(format: Format, bundle: &Bundle, there: &[u8]) -> Result<Vec<u8>> {
+    refuse_a_device(format, bundle)?;
+    match format {
+        #[cfg(feature = "n64")]
+        Format::N64Pak => n64::write_onto(bundle, there),
+        #[cfg(not(feature = "n64"))]
+        Format::N64Pak => Err(format.unsupported()),
+        other => Err(Error::NotConvertible(format!(
+            "a {} keeps nothing of the card it is written over, so there is nothing to write it onto",
+            other.label()
+        ))),
+    }
+}
+
+/// A device is several components, and only a MiSTer NeoGeo save is one file holding more than a
+/// card. Any other format handed one would read its components as saves.
+fn refuse_a_device(format: Format, bundle: &Bundle) -> Result<()> {
+    if *bundle.shape() == one_saves::Shape::Device && format != Format::NeoGeoCard {
+        return Err(Error::NotConvertible(format!(
+            "this bundle is a device, several components rather than one {}; take the card out \
+             with --part",
+            format.label()
+        )));
+    }
+    Ok(())
 }
 
 // What the adapters share. A build with no card format has no adapter to use any of it.
