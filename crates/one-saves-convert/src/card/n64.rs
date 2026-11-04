@@ -97,6 +97,20 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 /// The index table, its backup and the note table are all regenerated; the pak's label is kept
 /// from `system_area` when the bundle carries one.
 pub fn write(bundle: &Bundle) -> Result<Vec<u8>> {
+    build(bundle, None)
+}
+
+/// Writes a bundle as a pak in place of the one already there, which stays the same pak.
+///
+/// A bundle carries a pak's label and its notes, but not the ID block a console knows the pak by,
+/// so the one on the pak being written over is kept. What is there being no pak, the pak is
+/// formatted afresh, as [`write`] does.
+pub(crate) fn write_onto(bundle: &Bundle, there: &[u8]) -> Result<Vec<u8>> {
+    let id_area = ControllerPak::parse(there).ok().map(|pak| pak.id_area().to_vec());
+    build(bundle, id_area)
+}
+
+fn build(bundle: &Bundle, id_area: Option<Vec<u8>>) -> Result<Vec<u8>> {
     // A card with nothing on it carries a whole-card image rather than nested saves, and writing
     // it back is a byte copy.
     if let Some(image) = image_only(bundle)? {
@@ -104,6 +118,9 @@ pub fn write(bundle: &Bundle) -> Result<Vec<u8>> {
     }
 
     let mut builder = PakBuilder::new();
+    if let Some(area) = id_area {
+        builder.id_area(area);
+    }
     if let Some(area) = bundle.header.card.as_ref().and_then(|card| card.system_area.as_ref()) {
         builder.label(area.clone());
     }
@@ -143,7 +160,7 @@ fn a_path_may_be(spelling: &str) -> bool {
 /// A dot is in the table, so a name can hold one, and a path does not say which dot, if any, comes
 /// before an extension. The last one does when what follows it fits in an extension's four
 /// characters and what precedes it in a name's sixteen; otherwise the path is all name.
-fn name_and_extension(path: &str) -> (&str, &str) {
+pub(crate) fn name_and_extension(path: &str) -> (&str, &str) {
     match path.rsplit_once('.') {
         Some((name, extension))
             if name.chars().count() <= 16 && (1..=4).contains(&extension.chars().count()) =>

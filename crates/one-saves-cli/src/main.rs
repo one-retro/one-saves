@@ -127,10 +127,10 @@ struct Convert {
     #[arg(long, value_name = "CHIP")]
     n64_save: Option<String>,
     /// For an N64 SRAM or FlashRAM save, the order the file keeps the chip's words in: `console`,
-    /// as an EverDrive writes it, or `swapped`, as mupen64plus and Project64 do.
+    /// as an EverDrive writes it, or `swapped`, as mupen64plus, Project64 and the MiSTer core do.
     ///
-    /// `--from everdrive` and `--from mupen64plus` say the same, so this is for a file that came
-    /// from somewhere else.
+    /// `--from everdrive`, `--from mupen64plus` and `--from mister` say the same, so this is for a
+    /// file that came from somewhere else.
     #[arg(long, value_name = "ORDER")]
     n64_order: Option<String>,
     /// For a file holding Controller Paks, keep only this game's notes beside its cartridge, by the

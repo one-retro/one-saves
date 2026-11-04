@@ -92,7 +92,11 @@ pub fn convert(
     } else {
         let save = match stated {
             Some(save) => save,
-            None => chip_of_file(extension, bytes)?,
+            None => chip_of_file(
+                extension,
+                bytes,
+                writes_whole_chips(args.from.as_deref(), core_name.as_deref()),
+            )?,
         };
         let order = match args.n64_order.as_deref() {
             Some(text) => parse_order(text)?,
@@ -100,8 +104,8 @@ pub fn convert(
             None if save.is_eeprom() => WordOrder::Console,
             None => order_of_producer(args.from.as_deref(), core_name.as_deref()).ok_or(
                 "this file's SRAM or FlashRAM words could be either way round; pass --n64-order console \
-                 for an EverDrive's, or swapped for mupen64plus's or Project64's (--from everdrive or \
-                 --from mupen64plus says the same)",
+                 for an EverDrive's, or swapped for mupen64plus's, Project64's or a MiSTer's (--from \
+                 everdrive, --from mupen64plus or --from mister says the same)",
             )?,
         };
         (n64::wrap(bytes, save, order, &options)?, format!("N64 {save} cartridge save"))
@@ -161,24 +165,36 @@ fn read_whole_console(
 /// The chip a file is, where its name and length settle it.
 ///
 /// They settle it for SRAM and FlashRAM, which come in sizes nothing else does. They settle an
-/// EEPROM only once something past the first 512 bytes has been written, which no 4 Kbit chip
-/// reaches: Project64 writes each chip only as far as the game has, so a 16 Kbit game's file can
-/// be 512 bytes long.
-fn chip_of_file(extension: &str, bytes: &[u8]) -> Result<N64Save, String> {
+/// EEPROM once something past the first 512 bytes has been written, which no 4 Kbit chip reaches,
+/// and a 512-byte one where `whole_chips` says its producer writes every chip at the chip's own
+/// size. Otherwise a 512-byte file is either: Project64 writes each chip only as far as the game
+/// has, so a 16 Kbit game's file can be 512 bytes long.
+fn chip_of_file(extension: &str, bytes: &[u8], whole_chips: bool) -> Result<N64Save, String> {
     let hint = || format!("pass --n64-save with one of {}, or --rom with the game's ROM", chip_names());
     match extension {
         "fla" => Ok(N64Save::Flash1m),
         "sra" | "srm" if bytes.len() <= N64Save::Sram256k.size() => Ok(N64Save::Sram256k),
         "sra" | "srm" if bytes.len() == N64Save::Sram768k.size() => Ok(N64Save::Sram768k),
         "eep" if bytes.iter().skip(N64Save::Eeprom4k.size()).any(|&b| b != 0xFF) => Ok(N64Save::Eeprom16k),
+        "eep" if whole_chips && bytes.len() == N64Save::Eeprom4k.size() => Ok(N64Save::Eeprom4k),
         "eep" => Err(format!("this EEPROM save fits a 4 Kbit chip and a 16 Kbit one alike; {}", hint())),
         _ => Err(format!("nothing about this file says which chip the cartridge has; {}", hint())),
     }
 }
 
+/// Whether a producer writes a chip's file at the chip's own size, which makes a 512-byte EEPROM
+/// file a 4 Kbit chip's: mupen64plus has since 2017, sizing it by the chip its database names,
+/// and the MiSTer core does by its own.
+fn writes_whole_chips(from: Option<&str>, core: Option<&str>) -> bool {
+    let whole = ["mupen64plus", "n64-mister", "mister"];
+    core.is_some_and(|core| whole.contains(&core))
+        || from.is_some_and(|from| whole.contains(&from.to_ascii_lowercase().as_str()))
+}
+
 /// The word order a producer keeps SRAM and FlashRAM in, where `--from` or `--core` names one.
 fn order_of_producer(from: Option<&str>, core: Option<&str>) -> Option<WordOrder> {
-    let swapped = ["retroarch", "mupen64plus", "mupen64plus-next", "parallel-n64", "project64"];
+    let swapped =
+        ["retroarch", "mupen64plus", "mupen64plus-next", "parallel-n64", "project64", "n64-mister", "mister"];
     match (from, core) {
         (Some("everdrive"), _) => Some(WordOrder::Console),
         (_, Some(core)) if swapped.contains(&core) => Some(WordOrder::Swapped),
@@ -315,4 +331,34 @@ fn write(path: &Path, bytes: &[u8], force: bool, what: &str) -> Fallible {
     write_out(path, bytes, force)?;
     println!("-> {} ({what}, {} bytes)", path.display(), bytes.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_producer_writing_whole_chips_settles_a_4_kbit_eeprom_by_its_length() {
+        // Super Mario 64's file as mupen64plus 2.6 and the MiSTer core write it.
+        let file = vec![0u8; N64Save::Eeprom4k.size()];
+        assert_eq!(chip_of_file("eep", &file, true), Ok(N64Save::Eeprom4k));
+        assert!(chip_of_file("eep", &file, false).is_err(), "Project64's could be a 16 Kbit chip's");
+
+        // 2 KiB with nothing past the first 512 bytes is mupen64plus's padding of old or a 16 Kbit
+        // chip the game has not written far into, whoever wrote it.
+        let mut padded = vec![0xFFu8; N64Save::Eeprom16k.size()];
+        padded[..N64Save::Eeprom4k.size()].fill(0);
+        assert!(chip_of_file("eep", &padded, true).is_err());
+    }
+
+    #[test]
+    fn the_mister_core_is_a_producer_with_an_order_and_whole_chips() {
+        for (from, core) in [(Some("N64_MiSTer"), Some("n64-mister")), (Some("mister"), None)] {
+            assert_eq!(order_of_producer(from, core), Some(WordOrder::Swapped), "{from:?}");
+            assert!(writes_whole_chips(from, core), "{from:?}");
+        }
+        assert!(writes_whole_chips(Some("mupen64plus"), Some("mupen64plus")));
+        assert!(!writes_whole_chips(Some("project64"), None));
+        assert!(!writes_whole_chips(Some("retroarch"), Some("mupen64plus-next")));
+    }
 }

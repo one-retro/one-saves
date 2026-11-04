@@ -6,9 +6,10 @@
 //! reader produce exactly that. Emulators differ from it in two ways, and both are undone here:
 //!
 //! - **Word order.** mupen64plus and Project64 keep SRAM and FlashRAM as host-order 32-bit words,
-//!   which on every host they run on reverses the four bytes of each word. EEPROM is never
-//!   affected: the console reaches it over the Joybus a byte at a time, so it is a byte stream to
-//!   everyone. [`WordOrder`] says which a file is in.
+//!   which on every host they run on reverses the four bytes of each word, and the MiSTer core
+//!   writes its files the same way round. EEPROM is never affected: the console reaches it over
+//!   the Joybus a byte at a time, so it is a byte stream to everyone. [`WordOrder`] says which a
+//!   file is in.
 //! - **Length.** mupen64plus writes a 4 Kbit EEPROM as 512 bytes and wrote it as 2 KiB before
 //!   2017, and Project64 writes each chip only as far as the game has written it. So a file can be
 //!   shorter or longer than its chip, and [`normalize`] pads with the erased value and trims only
@@ -75,8 +76,8 @@ const ERASED: u8 = 0xFF;
 pub enum WordOrder {
     /// The console's own, big-endian. Normal form, and what a flash cartridge writes.
     Console,
-    /// Each word's bytes reversed, as mupen64plus, Project64 and the libretro cores keep SRAM and
-    /// FlashRAM. Ignored for EEPROM, which nothing reverses.
+    /// Each word's bytes reversed, as mupen64plus, Project64, the libretro cores and the MiSTer
+    /// core keep SRAM and FlashRAM. Ignored for EEPROM, which nothing reverses.
     Swapped,
 }
 
@@ -277,8 +278,8 @@ mod srm {
     /// part has. Anything less is refused rather than guessed at, because the guess decides which
     /// file a restore writes and a wrong one leaves the game looking somewhere else.
     ///
-    /// A pak with no notes is left out. Each core formats all four with a random serial, so one
-    /// nobody saved to holds nothing the next format would not.
+    /// A pak with no notes is left out: each core formats all four, so one nobody saved to holds
+    /// nothing but the serial its core gave it.
     pub fn read_srm(bytes: &[u8], save: Option<N64Save>, options: &N64Options) -> Result<Bundle> {
         if bytes.len() != SRM_LEN {
             return Err(Error::WrongLength { format: FORMAT, expected: "296960 bytes", found: bytes.len() });
@@ -409,11 +410,12 @@ mod srm {
 
     /// Writes a libretro save, onto the one already there where there is one.
     ///
-    /// A device puts each of its components back whole. A save is one game's: its cartridge goes in
-    /// its chip's region, and each of its notes replaces that game's notes on the pak in the port
-    /// its role names, leaving every other game's notes where they were. Whatever the bundle says
-    /// nothing about — another chip's region, a pak it holds no note for — is kept from `onto`, or
-    /// written as a core formats it.
+    /// A device puts each of its components back whole, a pak keeping the ID block of the one it
+    /// replaces, so that it is still the pak the core gave that port. A save is one game's: its
+    /// cartridge goes in its chip's region, and each of its notes replaces that game's notes on the
+    /// pak in the port its role names, leaving every other game's notes where they were. Whatever
+    /// the bundle says nothing about — another chip's region, a pak it holds no note for — is kept
+    /// from `onto`, or written as a core formats it.
     pub fn write_srm(bundle: &Bundle, onto: Option<&[u8]>) -> Result<Vec<u8>> {
         let mut file = match onto {
             Some(bytes) if bytes.len() == SRM_LEN => bytes.to_vec(),
@@ -526,7 +528,7 @@ mod srm {
                     parts.len()
                 )));
             };
-            return crate::card::n64::write(&Bundle::from_slice(&component.bytes()?)?);
+            return crate::card::n64::write_onto(&Bundle::from_slice(&component.bytes()?)?, there);
         }
         merge_notes(there, &parts)
     }
@@ -583,7 +585,7 @@ mod srm {
             )));
         }
         let path = part.path.clone().unwrap_or_default();
-        let (name, extension) = path.split_once('.').unwrap_or((path.as_str(), ""));
+        let (name, extension) = crate::card::n64::name_and_extension(&path);
         Ok(Note {
             slot: 0,
             game_code: String::from_utf8_lossy(&dirent[..4]).into_owned(),
