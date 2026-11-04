@@ -119,6 +119,15 @@ impl Card {
 
         let format = detect(&bytes, &extension).map_err(|_| Error::NotACard(path.display().to_string()))?;
         let bundle = card::read(format, &bytes, &CardOptions::default()).map_err(Error::Convert)?;
+        // A MiSTer NeoGeo save whose cabinet RAM holds anything is that RAM and a card, and editing
+        // the card here would write it back without the RAM.
+        if *bundle.shape() == one_saves::Shape::Device {
+            return Err(Error::Refused(format!(
+                "{} holds a cabinet's backup RAM beside its card, two things rather than one card; \
+                 this edits a card on its own",
+                path.display()
+            )));
+        }
         Ok(Self { path, archived, format, bundle, dirty: false, new: false })
     }
 

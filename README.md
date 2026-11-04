@@ -160,7 +160,9 @@ still a real card, and an image is the only part it can have when there is no sa
 
 Not everything on a card is a save. A PS2 keeps its browser history, its network settings and any
 system update in folders of its own, and those ride beside the saves as `system` parts, so every
-save on a card names the game it belongs to.
+save on a card names the game it belongs to. A MiSTer NeoGeo save whose cabinet RAM holds anything
+converts as a `device` of the RAM and whatever sits beside it, the card or a cartridge's own RAM,
+and extracts back to the MiSTer save.
 
 ## Save states and screenshots
 

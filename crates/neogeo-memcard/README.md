@@ -31,7 +31,9 @@ word rather than being fixed. One directory entry per block, one table byte per 
 | save data | block 5 onward | block 13 onward |
 
 The header holds the size, both table checksums, the username, the `NEO-GEO` signature and the
-region byte. Both layouts are confirmed against real dumps.
+region byte. Both layouts are confirmed against real dumps. `system_area()` is that header, and
+`CardBuilder` keeps it but rewrites the size, the checksums and the signature for the card it
+builds, so a header copied off a larger card never promises room the new one lacks.
 
 A directory entry is `[sub-number][NGH number, big-endian BCD][first block]`, and `$FF` in the
 first byte means the slot is free. The NGH number is the game's — Fatal Fury 2 is `0x0047`,
@@ -78,16 +80,20 @@ RTL is where this was checked rather than guessed:
 | `0x10000`–`0x11FFF` | the memory card, 8 KiB | `memcard_wr = bk_lba[7]`, `rtl/mem/memcard.v` |
 
 The transfer runs to `bk_lba >= 'h8F` — 144 sectors of 512 bytes, which is the 73728 a save comes
-to. The card half is written as 16-bit words whose high byte is the card's even address and whose
-low byte is its odd one, so swapping the two bytes of every word turns the file back into the
-address space the 68000 sees.
+to. The core keeps the whole file as 16-bit words with the low byte first, where the 68000 reads
+the high byte first, so swapping the two bytes of every word turns each half back into the address
+space the 68000 sees. Everything here hands out and takes in that order.
 
 `Container` tells the two apart, `parse` accepts either, and the backup RAM comes back from
 `backup_ram()` rather than being dropped — it is the cabinet's own saves, which is a different
-thing from the card's.
+thing from the card's. `cabinet::games` reads which game an MVS BIOS recorded in it.
 
-For carts with extra RAM the core puts *that* in the card's region instead, so a save for one holds
-no card. `detect` wants the signature and says no, which is the right answer rather than a near
-miss.
+In cart mode the core addresses the first 2 KiB of the card's region and wraps everything past it,
+whatever the card's header claims. `MemoryCard::parse_within` reads a card off a medium that size.
+
+For the two carts with RAM of their own, Jockey Grand Prix and V-Liner, the core puts *that* in the
+card's region instead, all 8 KiB of it, so a save for one holds no card. `parse` wants the signature and says no;
+`split_mister` and `join_mister` take the container apart and put it back whatever the region
+holds.
 
 No dependencies. Written for [one-saves](https://github.com/one-retro/one-saves), useful on its own.

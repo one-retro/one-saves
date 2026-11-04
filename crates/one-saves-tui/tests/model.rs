@@ -158,16 +158,16 @@ fn a_written_ps2_card_keeps_the_spare_areas_a_console_reads() {
 /// The file is named for Fatal Fury 2 and holds two saves, because every game played on that
 /// console writes into the same 8 KiB. The one the filename promises is the *second* of them, and
 /// it carries no title at all: Fatal Fury 2 writes a binary header where a title would go. Naming
-/// it by its NGH number is what keeps it identifiable, where falling through to its position on
-/// the card would not be.
+/// it by its path, which spells its NGH number and which of the game's saves it is, is what keeps
+/// it identifiable, where falling through to its position on the card would not be.
 #[test]
-fn a_save_with_no_title_is_named_by_its_serial() {
+fn a_save_with_no_title_is_named_by_its_numbers() {
     const CARD: &str = "retroarch/neocd/Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).srm";
     let card = Card::open(fixture(CARD)).expect("opens");
 
     let entries = card.entries();
     let titles: Vec<&str> = entries.iter().map(|e| e.title.as_str()).collect();
-    assert_eq!(titles, vec!["METAL SLUG", "NGH-0047"]);
+    assert_eq!(titles, vec!["METAL SLUG", "0047-0"]);
 }
 
 /// An archive of the given members, uncompressed so the test needs no encoder.

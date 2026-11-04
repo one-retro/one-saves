@@ -8,19 +8,23 @@
 
 use neogeo_memcard::{
     BLOCK, CHECKSUM_OFFSET, CardBuilder, Container, Error, Geometry, MISTER_BACKUP_RAM, MemoryCard, Region,
-    detect, fat, fat_checksum,
+    cabinet, detect, fat, fat_checksum,
 };
 
 /// The real cards this crate was written against, as MiSTer wrote them.
 ///
 /// `set` is `NEOGEO` for the 2 KiB card a cartridge system takes, `NEOGEO-CD` for the 8 KiB one
-/// a Neo Geo CD keeps inside itself.
-///
+/// a Neo Geo CD keeps inside itself, and `MVS` for a cartridge system run as a cabinet, whose
+/// BIOS set up the backup RAM in front of the card — or, for the two carts with RAM of their own,
+/// in front of that.
 fn fixture_in(set: &str, name: &str) -> Vec<u8> {
     // The core keeps both sets in one folder, so the set and the game together pick out the file.
     let file = match (set, name) {
         ("NEOGEO", "Fatal Fury 2") => "Fatal Fury 2 (fatfury2).sav",
         ("NEOGEO", "Metal Slug X") => "Metal Slug X (mslugx).sav",
+        ("MVS", "Metal Slug X") => "Metal Slug X (mslugx) (MVS).sav",
+        ("MVS", "Jockey Grand Prix") => "Jockey Grand Prix (set 1) (jockeygp).sav",
+        ("MVS", "V-Liner") => "V-Liner (set 1) (vliner).sav",
         ("NEOGEO-CD", "Fatal Fury 2") => "Garou Densetsu 2 ~ Fatal Fury 2 (Japan) (En,Ja).sav",
         ("NEOGEO-CD", "King of Fighters '96") => "King of Fighters '96, The (Japan, USA) (En,Ja).sav",
         ("NEOGEO-CD", "Metal Slug") => "Metal Slug (Japan) (En,Ja).sav",
@@ -189,6 +193,59 @@ fn two_emulators_agree_on_the_format() {
     assert_ne!(mister.container(), neocd.container());
 }
 
+/// Metal Slug X run as a cabinet: the BIOS set up all 64 KiB of the RAM, and its table names the
+/// game in the one slot the core's board has, by NGH number and by name.
+#[test]
+fn reads_what_a_cabinet_s_bios_recorded() {
+    let card = MemoryCard::parse(&fixture_in("MVS", "Metal Slug X")).expect("reads");
+    let ram = card.backup_ram().expect("a MiSTer save carries the RAM");
+    assert_eq!(ram.len(), MISTER_BACKUP_RAM);
+    // In the 68000's order, which is what makes the signature legible.
+    assert_eq!(&ram[0x10..0x20], b"BACKUP RAM OK !\x80");
+    assert!(cabinet::is_set_up(ram));
+    assert_eq!(cabinet::games(ram), [cabinet::Game { slot: 0, ngh: 0x0250, name: "METAL SLUG X".into() }]);
+
+    // And the card beside it, which the game saved its stages to.
+    assert_eq!(card.capacity(), 2048);
+    assert_eq!(card.saves().len(), 1);
+    assert_eq!((card.saves()[0].ngh, card.saves()[0].sub), (0x0250, 0));
+    assert_eq!(card.saves()[0].title(), "METAL SLUG X");
+}
+
+/// Jockey Grand Prix and V-Liner keep RAM of their own on the cartridge, and the core puts it in the
+/// card's place: the BIOS recorded the game as it does any other, and beside it is no card but
+/// the game's own bytes, swapped like the rest, so they read in the 68000's order.
+#[test]
+fn reads_what_a_cartridge_keeps_in_ram_of_its_own() {
+    for (name, ngh, title, at, text) in [
+        (
+            "Jockey Grand Prix",
+            0x0008,
+            "JOCKEY GRANDPRIX",
+            0x14,
+            b"JOCKEY GRANDPRIX INIT KEY DATA04".as_slice(),
+        ),
+        // The BIOS copies the name with the space the cartridge pads it with.
+        ("V-Liner", 0x03E7, "DYNA VLINER", 0x00, b"DYNA V-L V0.6E".as_slice()),
+    ] {
+        let raw = fixture_in("MVS", name);
+        assert!(detect(&raw), "{name}: the BIOS set the RAM up");
+        assert!(MemoryCard::parse(&raw).is_err(), "{name}: but there is no card to read");
+
+        let (ram, region) = neogeo_memcard::split_mister(&raw).expect("a MiSTer save");
+        assert_eq!(&ram[0x10..0x20], b"BACKUP RAM OK !\x80");
+        assert_eq!(cabinet::games(&ram), [cabinet::Game { slot: 0, ngh, name: title.into() }], "{name}");
+        assert_eq!(&region[at..at + text.len()], text, "{name}");
+        assert_eq!(neogeo_memcard::join_mister(&ram, &region).expect("fits"), raw, "{name}");
+    }
+
+    // And the cartridge's RAM is the whole region, not the 2 KiB a card is in cart mode: Jockey
+    // Grand Prix wrote to its last bytes.
+    let (_, region) =
+        neogeo_memcard::split_mister(&fixture_in("MVS", "Jockey Grand Prix")).expect("a MiSTer save");
+    assert!(region[0x1FF0..].iter().any(|&b| b != 0xFF));
+}
+
 /// King of Fighters '96 was run and quit without saving, so its card was never formatted.
 #[test]
 fn a_card_nothing_was_ever_saved_to_is_not_a_card() {
@@ -206,6 +263,7 @@ fn a_card_a_console_wrote_is_rebuilt_byte_for_byte() {
         ("NEOGEO", "Fatal Fury 2"),
         ("NEOGEO-CD", "Metal Slug"),
         ("NEOGEO-CD", "Fatal Fury 2"),
+        ("MVS", "Metal Slug X"),
     ] {
         let original = fixture_in(set, name);
         let card = MemoryCard::parse(&original).expect("reads");

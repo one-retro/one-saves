@@ -99,17 +99,16 @@ const SATURN: &[Size] = &[
     Size::new("4M", "4 MiB cart", 4_192_256),
 ];
 
-// The capacity is what saves can occupy: the card less its header, directory and two tables,
-// which grow with it.
+// The capacity is the whole card, its header, directory and two tables included.
 const NEOGEO: &[Size] = &[
-    Size::new("2K", "2 KiB, SNK's own card", 1_728).standard(),
-    Size::new("4K", "4 KiB", 3_648),
-    Size::new("6K", "6 KiB", 5_440),
-    Size::new("8K", "8 KiB, what a Neo Geo CD keeps inside", 7_360),
-    Size::new("10K", "10 KiB", 9_152),
-    Size::new("12K", "12 KiB", 11_072),
-    Size::new("14K", "14 KiB", 12_864),
-    Size::new("16K", "16 KiB", 14_784),
+    Size::new("2K", "2 KiB, SNK's own card", 2_048).standard(),
+    Size::new("4K", "4 KiB", 4_096),
+    Size::new("6K", "6 KiB", 6_144),
+    Size::new("8K", "8 KiB, what a Neo Geo CD keeps inside", 8_192),
+    Size::new("10K", "10 KiB", 10_240),
+    Size::new("12K", "12 KiB", 12_288),
+    Size::new("14K", "14 KiB", 14_336),
+    Size::new("16K", "16 KiB", 16_384),
 ];
 
 /// How a card sits in its file.
@@ -231,7 +230,12 @@ pub fn blank_like(card: &Bundle) -> Result<Vec<u8>> {
         format == Format::GcCard && map.system_area.as_deref().is_some_and(gc_memcard::is_shift_jis);
     #[cfg(not(feature = "gc"))]
     let shift_jis = false;
-    blank(format, &BlankOptions { capacity: Some(map.capacity), shift_jis, layout: Layout::Bare })
+    #[cfg(feature = "neogeo")]
+    let capacity =
+        if format == Format::NeoGeoCard { super::neogeo::card_capacity(map.capacity) } else { map.capacity };
+    #[cfg(not(feature = "neogeo"))]
+    let capacity = map.capacity;
+    blank(format, &BlankOptions { capacity: Some(capacity), shift_jis, layout: Layout::Bare })
 }
 
 /// The sizes a format comes in, by name, for a message.
@@ -298,13 +302,10 @@ fn build(format: Format, capacity: u64, options: &BlankOptions) -> Result<Vec<u8
         }
         #[cfg(feature = "neogeo")]
         Format::NeoGeoCard => {
-            use neogeo_memcard::{CardBuilder, Container, Geometry};
-            let size = Geometry::for_data_capacity(capacity)
-                .ok_or_else(|| Error::NoSuchCard(format!("no Neo Geo card holds {capacity} bytes")))?
-                .size;
+            use neogeo_memcard::{CardBuilder, Container};
             let container =
                 if options.layout == Layout::MiSter { Container::MiSter } else { Container::Bare };
-            CardBuilder::new(size)
+            CardBuilder::new(capacity)
                 .and_then(|mut builder| builder.container(container).build())
                 .map_err(|e| Error::NoSuchCard(e.to_string()))
         }

@@ -51,22 +51,27 @@
 //! | `0x10000`–`0x11FFF` | the memory card, 8 KiB | `memcard_wr = bk_lba[7]`, `rtl/mem/memcard.v` |
 //!
 //! The transfer runs to `bk_lba >= 'h8F` — 144 sectors of 512 bytes, which is the 73728 a save
-//! comes to. The card half is written as 16-bit words whose high byte is the card's **even**
-//! address and whose low byte is its **odd** one, so swapping the two bytes of every word turns the
-//! file back into the address space the 68000 sees. That is what [`MemoryCard::parse`] does.
+//! comes to. The core keeps the whole file as 16-bit words with the low byte first, where the
+//! 68000 reads the high byte first, so the two bytes of every word are swapped: in the RAM as much
+//! as on the card. Swapping them back turns each half into the address space the 68000 sees, and
+//! that is the order everything here hands out and takes in. [`split_mister`] and
+//! [`join_mister`] are the container and nothing more.
 //!
-//! Two things about that region are worth knowing. The core emulates a 2 KiB card in cart mode and
-//! an 8 KiB one in CD mode, both inside the same 8 KiB buffer, so a cart save's card stops well
-//! short of the buffer. And for carts with extra RAM the core puts *that* in the same region
-//! instead of a card, so a save for one holds no card at all — [`detect`] wants the signature and
-//! says no, which is the right answer rather than a near miss.
+//! Two things about the card region are worth knowing. The core emulates a 2 KiB card in cart
+//! mode and an 8 KiB one in CD mode, both inside the same 8 KiB buffer, and in cart mode it
+//! addresses the first 2 KiB and nothing past it, whatever the card's header claims — which is
+//! what [`MemoryCard::parse_within`] is for. And for the two carts with RAM of their own, Jockey
+//! Grand Prix and V-Liner, the core puts *that* in the region instead of a card, all 8 KiB of it
+//! and swapped the same way, so a save for one holds no card at all. [`MemoryCard::parse`] wants the signature and says no, which is the right
+//! answer rather than a near miss; [`split_mister`] still hands the region over.
 
 #![forbid(unsafe_code)]
 
 mod build;
+pub mod cabinet;
 mod error;
 
-pub use build::CardBuilder;
+pub use build::{CardBuilder, join_mister};
 pub use error::{Error, Result};
 
 /// One block: the unit the allocation table counts and a save occupies.
@@ -74,6 +79,13 @@ pub const BLOCK: usize = 64;
 
 /// A directory entry's length.
 pub const ENTRY_LEN: usize = 4;
+
+/// The header's length: block 0, which is what a card says about itself.
+///
+/// It carries the card's size, the two table checksums, the holder's username, the signature and
+/// the region of the console that formatted it. The rest of the reserved blocks, the directory
+/// and both tables, follow from the saves.
+pub const HEADER_LEN: usize = BLOCK;
 
 /// A directory entry's sub-number when the slot holds nothing.
 pub const FREE_ENTRY: u8 = 0xFF;
@@ -118,6 +130,13 @@ pub const MISTER_BACKUP_RAM: usize = 0x10000;
 /// The core sizes the buffer for CD mode's 8 KiB card; a cartridge system's 2 KiB one sits at the
 /// front of it and the rest is left as it was loaded.
 pub const MISTER_CARD_REGION: usize = 0x2000;
+
+/// How long a MiSTer save is: the cabinet's RAM, then the card region.
+pub const MISTER_SAVE: usize = MISTER_BACKUP_RAM + MISTER_CARD_REGION;
+
+/// How much of the card region the core addresses in cart mode: the 2 KiB card a cartridge system
+/// takes, whatever size the card's own header claims.
+pub const MISTER_CART_CARD: usize = 2048;
 
 /// What an allocation table entry says about a block.
 ///
@@ -175,8 +194,8 @@ impl Region {
 pub enum Container {
     /// The card and nothing else, in the byte order the 68000 sees.
     Bare,
-    /// A MiSTer NeoGeo core save: 64 KiB of cabinet backup RAM, then the card with the two bytes
-    /// of every 16-bit word swapped.
+    /// A MiSTer NeoGeo core save: 64 KiB of cabinet backup RAM, then the card, with the two bytes
+    /// of every 16-bit word swapped in both.
     MiSter,
 }
 
@@ -288,8 +307,8 @@ pub struct Save {
     pub dirent: Vec<u8>,
     /// The save's bytes: every block it occupies.
     ///
-    /// Blocks are contiguous, which the format leaves no alternative to — see the module
-    /// documentation. This is the *allocated* run, which is as much as the card knows: a game
+    /// In the order the save's chain runs, wherever on the card the blocks sit — see the module
+    /// documentation. This is every block allocated, which is as much as the card knows: a game
     /// tells the BIOS how many bytes it wants and the card does not record the answer, so a save
     /// whose data stops short of its last block gives back the whole block regardless.
     pub data: Vec<u8>,
@@ -303,14 +322,19 @@ impl Save {
     /// `METAL SLUG X`; Fatal Fury 2 writes a binary header and no title at all.
     #[must_use]
     pub fn title(&self) -> String {
-        let field = &self.data[..self.data.len().min(20)];
-        let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
-        let text = &field[..end];
-        if text.is_empty() || !text.iter().all(|b| b.is_ascii_graphic() || *b == b' ') {
-            return String::new();
-        }
-        String::from_utf8_lossy(text).trim_end().to_owned()
+        legible(&self.data[..self.data.len().min(20)])
     }
+}
+
+/// The text a fixed-width field holds up to its first NUL, the spaces padding it either side
+/// trimmed, or nothing when any of it is not printable ASCII.
+pub(crate) fn legible(field: &[u8]) -> String {
+    let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+    let text = &field[..end];
+    if text.is_empty() || !text.iter().all(|b| b.is_ascii_graphic() || *b == b' ') {
+        return String::new();
+    }
+    String::from_utf8_lossy(text).trim().to_owned()
 }
 
 /// A parsed memory card image.
@@ -324,8 +348,28 @@ pub struct MemoryCard {
 }
 
 impl MemoryCard {
-    /// Reads a card image, bare or in a MiSTer save.
+    /// Reads a card image, bare or in a MiSTer save, as large as its header says it is.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
+        Self::read(bytes, None)
+    }
+
+    /// Reads a card off a medium that holds `medium` bytes of it, whatever its header claims.
+    ///
+    /// A MiSTer save in cart mode is the case: the core addresses the first
+    /// [`MISTER_CART_CARD`] bytes of its card region, and a card whose header promises more
+    /// wraps every address past that back to the start. The header still lays out the directory
+    /// and the tables, so they are read where it puts them, but the card is the medium:
+    /// [`capacity`](Self::capacity) and [`image`](Self::image) are that long, and a save whose
+    /// chain runs past the end of it is refused as broken, since the console would have written
+    /// it over the start of the card.
+    pub fn parse_within(bytes: &[u8], medium: usize) -> Result<Self> {
+        if Geometry::of(medium).is_none() {
+            return Err(Error::UnknownSize(medium));
+        }
+        Self::read(bytes, Some(medium))
+    }
+
+    fn read(bytes: &[u8], medium: Option<usize>) -> Result<Self> {
         let (container, card, backup_ram) = strip_container(bytes).ok_or(Error::WrongLength(bytes.len()))?;
         if !has_magic(&card) {
             return Err(Error::NotAMemoryCard);
@@ -333,14 +377,21 @@ impl MemoryCard {
 
         let word = u16::from_be_bytes([card[SIZE_OFFSET], card[SIZE_OFFSET + 1]]);
         let geometry = Geometry::from_size_word(word).ok_or(Error::UnknownSize(word as usize))?;
-        if card.len() < geometry.size {
+        let medium = medium.unwrap_or(geometry.size);
+        if card.len() < medium {
             return Err(Error::Corrupt(format!(
-                "the card states {} bytes and the image holds {}",
-                geometry.size,
+                "the card is {medium} bytes and the image holds {}",
                 card.len()
             )));
         }
-        let card = card[..geometry.size].to_vec();
+        if geometry.first_data_block * BLOCK > medium {
+            return Err(Error::Corrupt(format!(
+                "the card's header claims {} bytes, and its directory and tables alone run past the {medium} \
+                 the medium holds",
+                geometry.size
+            )));
+        }
+        let card = card[..medium].to_vec();
 
         // The table's reserved marks and the computed layout are two statements about the same
         // thing. Trusting the offsets when they disagree would read a directory that is not there.
@@ -367,6 +418,8 @@ impl MemoryCard {
     }
 
     /// The card itself, in the byte order the 68000 sees, with any container taken off.
+    ///
+    /// As long as the medium it was read off: see [`capacity`](Self::capacity).
     #[must_use]
     pub fn image(&self) -> &[u8] {
         &self.card
@@ -378,34 +431,39 @@ impl MemoryCard {
         self.container
     }
 
-    /// The cabinet's backup RAM, when the container carried one.
+    /// The cabinet's backup RAM, when the container carried one, in the byte order the 68000 sees.
     ///
     /// This is a *different* save from the card — an MVS cabinet keeps its own — and it is here so
-    /// that reading a MiSTer file does not quietly drop half of it.
+    /// that reading a MiSTer file does not quietly drop half of it. [`cabinet`] reads what the
+    /// BIOS keeps in it.
     #[must_use]
     pub fn backup_ram(&self) -> Option<&[u8]> {
         self.backup_ram.as_deref()
     }
 
-    /// Where the card's regions sit.
+    /// Where the card's regions sit, as its header lays them out.
     #[must_use]
     pub fn geometry(&self) -> Geometry {
         self.geometry
     }
 
-    /// The card's capacity in bytes, structure included, as the card itself states it.
+    /// The card's capacity in bytes, structure included.
+    ///
+    /// What the header states, unless the card was read off a smaller medium with
+    /// [`parse_within`](Self::parse_within), in which case it is the medium's.
     #[must_use]
     pub fn capacity(&self) -> usize {
-        self.geometry.size
+        self.card.len()
     }
 
-    /// Everything before the first data block: the header, the directory and both tables.
+    /// The header block: what the card says about itself.
     ///
-    /// A builder regenerates the entries and the tables and passes the rest through, so keeping
-    /// this is what carries a card's username, region and free-slot bytes across a round trip.
+    /// A builder keeps it and rewrites only the fields that follow from the card it builds, the
+    /// size, both checksums and the signature, so keeping this is what carries a card's username
+    /// and region across a round trip. See [`HEADER_LEN`].
     #[must_use]
     pub fn system_area(&self) -> &[u8] {
-        &self.card[..self.geometry.first_data_block * BLOCK]
+        &self.card[..HEADER_LEN]
     }
 
     /// The card holder's username, as the card stores it.
@@ -434,23 +492,27 @@ fn has_magic(card: &[u8]) -> bool {
 }
 
 /// Whether these bytes look like a card, in any of the containers one ships in.
+///
+/// A MiSTer save counts as well when an MVS BIOS set up its cabinet RAM, card or no card: the
+/// RAM is half of what the file holds, and the region beside it may be a cart's own RAM or a card
+/// nothing has formatted yet.
 #[must_use]
 pub fn detect(bytes: &[u8]) -> bool {
     matches!(strip_container(bytes), Some((_, card, _)) if has_magic(&card))
+        || split_mister(bytes).is_some_and(|(ram, _)| cabinet::is_set_up(&ram))
 }
 
 /// Finds the card inside whatever container it arrived in, and the backup RAM beside it.
 ///
-/// The card comes back in the byte order the 68000 sees, whatever the container did to it.
+/// Both come back in the byte order the 68000 sees, whatever the container did to them.
 #[must_use]
 pub fn strip_container(bytes: &[u8]) -> Option<(Container, Vec<u8>, Option<Vec<u8>>)> {
     // A MiSTer save is the cabinet's backup RAM and then the card, word-swapped. It is checked
     // first because its card region is a plausible bare card length on its own.
     if bytes.len() > MISTER_BACKUP_RAM {
-        let region = &bytes[MISTER_BACKUP_RAM..];
-        let swapped: Vec<u8> = (0..region.len() & !1).map(|i| region[i ^ 1]).collect();
-        if has_magic(&swapped) {
-            return Some((Container::MiSter, swapped, Some(bytes[..MISTER_BACKUP_RAM].to_vec())));
+        let card = swap_pairs(&bytes[MISTER_BACKUP_RAM..]);
+        if has_magic(&card) {
+            return Some((Container::MiSter, card, Some(swap_pairs(&bytes[..MISTER_BACKUP_RAM]))));
         }
     }
     if has_magic(bytes) {
@@ -459,10 +521,30 @@ pub fn strip_container(bytes: &[u8]) -> Option<(Container, Vec<u8>, Option<Vec<u
     None
 }
 
+/// A MiSTer save's two halves, the cabinet's backup RAM and the card region, each in the byte
+/// order the 68000 sees. `None` for bytes that are not [`MISTER_SAVE`] long.
+///
+/// Nothing is asked of what either half holds. This is the container and only the container, for
+/// a caller after a region that is not a card, as a Jockey Grand Prix save's is.
+#[must_use]
+pub fn split_mister(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    (bytes.len() == MISTER_SAVE)
+        .then(|| (swap_pairs(&bytes[..MISTER_BACKUP_RAM]), swap_pairs(&bytes[MISTER_BACKUP_RAM..])))
+}
+
+/// The two bytes of every 16-bit word swapped, which turns the MiSTer core's order into the
+/// 68000's and back.
+pub(crate) fn swap_pairs(bytes: &[u8]) -> Vec<u8> {
+    (0..bytes.len() & !1).map(|i| bytes[i ^ 1]).collect()
+}
+
 /// Walks the directory, following each used entry's chain.
 fn read_directory(card: &[u8], geometry: Geometry) -> Result<Vec<Save>> {
     let directory = &card[geometry.directory_block * BLOCK..][..geometry.entries * ENTRY_LEN];
     let fat = &card[geometry.fat1_block * BLOCK..][..geometry.fat_len()];
+    // The header lays the card out, but the medium is what there is: a block past its end is one
+    // the console would have found back at the start.
+    let blocks = geometry.blocks.min(card.len() / BLOCK);
 
     let mut saves = Vec::new();
     for index in 0..geometry.entries {
@@ -471,7 +553,7 @@ fn read_directory(card: &[u8], geometry: Geometry) -> Result<Vec<Save>> {
             continue;
         }
         let mut data = Vec::new();
-        for block in follow_chain(fat, entry[3] as usize, geometry, index)? {
+        for block in follow_chain(fat, entry[3] as usize, geometry.first_data_block, blocks, index)? {
             data.extend_from_slice(&card[block * BLOCK..(block + 1) * BLOCK]);
         }
         saves.push(Save {
@@ -486,11 +568,19 @@ fn read_directory(card: &[u8], geometry: Geometry) -> Result<Vec<Save>> {
 }
 
 /// Every block a save occupies, from the one its entry names to the end of its chain.
-fn follow_chain(fat: &[u8], first: usize, geometry: Geometry, index: usize) -> Result<Vec<usize>> {
+///
+/// Every block has to lie in `first_data_block..blocks`.
+fn follow_chain(
+    fat: &[u8],
+    first: usize,
+    first_data_block: usize,
+    blocks: usize,
+    index: usize,
+) -> Result<Vec<usize>> {
     let mut chain = Vec::new();
     let mut current = first;
     loop {
-        if current < geometry.first_data_block || current >= geometry.blocks {
+        if current < first_data_block || current >= blocks {
             return Err(Error::Corrupt(format!("entry {index} reaches block {current}")));
         }
         // A cycle would otherwise be an unbounded read, and a card with one is broken whatever it

@@ -56,6 +56,11 @@ file. It is not the same bytes. A writer allocates its own blocks, where a conso
 depends on everything ever written to the card, and leaves free blocks erased rather than holding
 whatever a deleted save left — keep a `card-image` part if you need those.
 
+A MiSTer NeoGeo save holds a cabinet's backup RAM as well as its card. Where the RAM holds anything,
+the save reads as a `device`: the RAM, naming the game the BIOS recorded in it, and the card, or
+for the two cartridges with RAM of their own that RAM instead. It writes back as the MiSTer save.
+The card in it is 2 KiB, which is all the core addresses in cart mode, whatever its header claims.
+
 A card with nothing on it is carried as a single `card-image` part, and `card::blank` makes one
 from nothing: any size the format comes in (`card::sizes`), a GameCube card for a Japanese console's
 Shift-JIS, and a Saturn volume or Neo Geo card wrapped as Yabause or a MiSTer keeps it.

@@ -137,6 +137,15 @@ pub fn read(format: Format, bytes: &[u8], options: &CardOptions) -> Result<Bundl
     allow(unused_variables)
 )]
 pub fn write(format: Format, bundle: &Bundle) -> Result<Vec<u8>> {
+    // A device is several components, and only a MiSTer NeoGeo save is one file holding more than
+    // a card. Anything else handed one would read its components as saves.
+    if *bundle.shape() == one_saves::Shape::Device && format != Format::NeoGeoCard {
+        return Err(Error::NotConvertible(format!(
+            "this bundle is a device, several components rather than one {}; take the card out \
+             with --part",
+            format.label()
+        )));
+    }
     match format {
         #[cfg(feature = "ps1")]
         Format::Ps1Card => ps1::write(bundle),
@@ -354,6 +363,34 @@ pub struct NestedSave {
     /// `saturn-bup` it is the only way back: that format keeps its entry *inside* the save's
     /// first block, so what the reader lifted out of it has nowhere else to have been kept.
     pub extensions: one_saves::Extensions,
+}
+
+/// The card format a bundle writes back as: its own, or the one card a device holds.
+///
+/// A device is several components, and a file holding one is usually one component's. A MiSTer
+/// NeoGeo save is the exception, a cabinet's backup RAM and the card in its slot, and writing that
+/// device back is writing its card in the container both came out of. A Neo Geo device holding no
+/// card, only the RAM or a cartridge's RAM beside it, is still that file. Any other device holding
+/// no card, or more than one, writes back as none.
+pub fn card_format_of(bundle: &Bundle) -> Result<Option<Slug>> {
+    if let Some(card) = &bundle.header.card {
+        return Ok(Some(card.format.clone()));
+    }
+    if *bundle.shape() != one_saves::Shape::Device {
+        return Ok(None);
+    }
+    let mut formats = Vec::new();
+    for part in bundle.parts.iter().filter(|part| part.kind == PartKind::Bundle) {
+        if let Some(card) = Bundle::from_slice(&part.bytes()?)?.header.card {
+            formats.push(card.format);
+        }
+    }
+    let neogeo = bundle.header.system.as_ref().map(Slug::as_str) == Format::NeoGeoCard.system();
+    Ok(match formats.as_slice() {
+        [format] => Some(format.clone()),
+        [] if neogeo => Format::NeoGeoCard.card_format().map(slug),
+        _ => None,
+    })
 }
 
 /// Pulls the saves out of a card bundle, in part order.

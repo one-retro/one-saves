@@ -429,8 +429,15 @@ fn convert(args: Convert) -> Fallible {
         eprintln!("      --role internal or --role ram-cart to say which socket this came out of");
     }
 
+    // A device's parts are components rather than saves: a cabinet's RAM and what is in its slot.
     let saves = bundle.parts.iter().filter(|p| p.kind == PartKind::Bundle).count();
-    let what = if saves > 0 { format!("{saves} save(s)") } else { format!("{} part(s)", bundle.parts.len()) };
+    let what = if *bundle.shape() == one_saves::Shape::Device {
+        format!("{} component(s)", bundle.parts.len())
+    } else if saves > 0 {
+        format!("{saves} save(s)")
+    } else {
+        format!("{} part(s)", bundle.parts.len())
+    };
     println!(
         "{} -> {} ({}, {what}, {} bytes)",
         args.input.display(),
@@ -652,9 +659,11 @@ fn extract(args: Extract) -> Fallible {
         return Err("--onto is for an N64 save, with --n64".into());
     }
 
-    // Otherwise the bundle says what it is: a card writes back as that card, and anything else
-    // is a flat save.
-    let card_format = bundle.header.card.as_ref().map(|c| c.format.as_str().to_owned());
+    // Otherwise the bundle says what it is: a card writes back as that card, a device holding one
+    // card as that card in the container they came out of together, and anything else is a flat
+    // save.
+    let card_format = card::card_format_of(&bundle)?.map(|format| format.as_str().to_owned());
+    let device = *bundle.shape() == one_saves::Shape::Device;
     let target = match args.to.as_deref() {
         Some(name) => Format::from_name(name).ok_or_else(|| format!("unknown format {name:?}"))?,
         None => match card_format.as_deref() {
@@ -677,7 +686,12 @@ fn extract(args: Extract) -> Fallible {
     // `Format::Raw` covers every flat save and names the commonest of them, so a backup RAM would
     // otherwise go back out as `.srm`. The bundle knows better.
     let is_backup_ram = bundle.header.system.as_ref().is_some_and(|s| s.as_str() == "sega-cd");
-    let suffix = if target == Format::Raw && is_backup_ram { "brm" } else { target.extension() };
+    // A device written as one file is a MiSTer NeoGeo save, which the core names `.sav`.
+    let suffix = match target {
+        Format::Raw if is_backup_ram => "brm",
+        Format::NeoGeoCard if device => "sav",
+        _ => target.extension(),
+    };
 
     // A clock kept in its own file is written back to one, and left off the save: the two forms
     // are alternatives, and a save carrying both would have its clock read twice over.
@@ -698,7 +712,11 @@ fn extract(args: Extract) -> Fallible {
         "{} -> {} ({}, {} bytes)",
         args.input.display(),
         output.display(),
-        if target == Format::Raw && is_backup_ram { "Sega CD backup RAM" } else { target.label() },
+        match target {
+            Format::Raw if is_backup_ram => "Sega CD backup RAM",
+            Format::NeoGeoCard if device => "MiSTer NeoGeo save",
+            _ => target.label(),
+        },
         payload.len()
     );
     Ok(())

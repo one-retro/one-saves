@@ -130,8 +130,8 @@
       "name": "neogeo-card",
       "expect": "valid",
       "file": "valid/neogeo-card.cbor",
-      "sha256": "22a96d3fb62ec804cc5a297bea00e3a7fcf965e116db4c8552fbb57c6470d11a",
-      "note": "A Neo Geo memory card: the smallest card here, 2 KiB of 64-byte blocks behind a 4-byte directory entry. Nothing on this card has a name, because the entry holds the game's NGH number and a sub-number instead, so no entry carries a `path` and the two saves for one game are told apart by `slot` alone. That is the uniqueness rule at its limit: `role` and `path` agree, and `slot` is the only thing left that can separate them. `system_area` is the cardholder username, which belongs to the card rather than to anything saved on it."
+      "sha256": "4166db35ec359c2bdd3c0fe8f41f2ffb5925d673e223969b2aa7b141f1cc2505",
+      "note": "A Neo Geo memory card: the smallest card here, 2 KiB of 64-byte blocks behind a 4-byte directory entry. The entry holds no name, only a sub-number, the game's NGH number and the save's first block, so `path` spells the first two: `0201-0` is Metal Slug's save 0. The blocks are after the five the card reserves for itself. `system_area` is the card's 64-byte header block, which carries the cardholder username and the region of the console that formatted it, belonging to the card rather than to anything saved on it."
     },
     {
       "name": "gc-card",
