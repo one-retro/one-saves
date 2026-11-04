@@ -1,10 +1,10 @@
 {
   "corpus": "Universal Saves Format conformance cases",
-  "spec_version": "0.6",
+  "spec_version": "0.7",
   "generated_from": "test/bundles.js",
   "counts": {
-    "valid": 38,
-    "invalid": 97
+    "valid": 39,
+    "invalid": 103
   },
   "cases": [
     {
@@ -132,6 +132,13 @@
       "file": "valid/neogeo-card.cbor",
       "sha256": "4166db35ec359c2bdd3c0fe8f41f2ffb5925d673e223969b2aa7b141f1cc2505",
       "note": "A Neo Geo memory card: the smallest card here, 2 KiB of 64-byte blocks behind a 4-byte directory entry. The entry holds no name, only a sub-number, the game's NGH number and the save's first block, so `path` spells the first two: `0201-0` is Metal Slug's save 0. The blocks are after the five the card reserves for itself. `system_area` is the card's 64-byte header block, which carries the cardholder username and the region of the console that formatted it, belonging to the card rather than to anything saved on it."
+    },
+    {
+      "name": "n64-note-with-extension",
+      "expect": "valid",
+      "file": "valid/n64-note-with-extension.cbor",
+      "sha256": "d225d85bc879309c3bc96eab7cedcc65396666a659876dff573d78d6ecb8adc0",
+      "note": "An N64 note can carry an extension beside its 16-byte name. `path` joins the two with a dot, each decoded through the pak's own character table."
     },
     {
       "name": "gc-card",
@@ -279,7 +286,7 @@
       "rejected_by": "schema",
       "file": "invalid/part-unknown-integer-key.cbor",
       "sha256": "f35a7f557ea356a7f764c22b6b31626ddd8da0891fcf91824df0a1ad5df5faaa",
-      "note": "This schema describes v0.6, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+      "note": "This schema describes v0.7, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
     },
     {
       "name": "header-unknown-integer-key",
@@ -287,7 +294,7 @@
       "rejected_by": "schema",
       "file": "invalid/header-unknown-integer-key.cbor",
       "sha256": "38d3710e8cca5034c58a831bb3b81fa64f54c8c129909e229af966448c92f818",
-      "note": "This schema describes v0.6, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
+      "note": "This schema describes v0.7, so an integer key it does not list fails validation. A shipped decoder is deliberately looser: it ignores and round-trips these, because the only thing they can be is a later minor version's field. That difference is a decoder rule the schema cannot state."
     },
     {
       "name": "header-without-shape",
@@ -1048,6 +1055,54 @@
       "file": "invalid/system-file-before-its-directory.cbor",
       "sha256": "f25aea2fd3b5bce2f24aec59a135b05e43a8af0753a2d9230740b5d291d5a8eb",
       "note": "A `system` file sits in a directory that has a `system` part of its own, ahead of the file's, so a writer has made the directory before it reaches the file. Here the directory is missing, and then it comes too late."
+    },
+    {
+      "name": "neogeo-path-uppercase",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/neogeo-path-uppercase.cbor",
+      "sha256": "1c1eb14bf5b05ee17c6b34ffc0319f199d2ede9af8be62b982a10b1763d70233",
+      "note": "A Neo Geo save's `path` is its NGH number in four lowercase hex digits, a dash, then its sub-number in one more. Sub-number 10 is `a` and NGH 201 is `0201`, so neither of these is how a producer spells them."
+    },
+    {
+      "name": "neogeo-path-unpadded",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/neogeo-path-unpadded.cbor",
+      "sha256": "227666896fff1166df50cc13bedf4dd45ca7c046196592f6ec739c7008866adb",
+      "note": "A Neo Geo save's `path` is its NGH number in four lowercase hex digits, a dash, then its sub-number in one more. Sub-number 10 is `a` and NGH 201 is `0201`, so neither of these is how a producer spells them."
+    },
+    {
+      "name": "dirent-wrong-length",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/dirent-wrong-length.cbor",
+      "sha256": "749f8e0022bf4d3875abd0568ca9536cce564ae04b56e0509cb4d32a6ba5a1e8",
+      "note": "A `dirent` is as long as its card's format makes it, and a Neo Geo entry is four bytes. This one stops at three."
+    },
+    {
+      "name": "neogeo-system-area-only-the-username",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/neogeo-system-area-only-the-username.cbor",
+      "sha256": "2751204cc92a059d014808601886c470bb2d927269afd889ee1ecb4f68787c62",
+      "note": "A Neo Geo card's `system_area` is its whole 64-byte header block, which carries the cardholder username and the card's region. The username alone is 16 bytes and leaves the region behind."
+    },
+    {
+      "name": "n64-path-outside-the-table",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/n64-path-outside-the-table.cbor",
+      "sha256": "8ab3d3d72e48f67f7eb60d0db15c21976a99ab100b132cbf4a803e408b251980",
+      "note": "An N64 note's `path` is its name decoded through the pak's character table, which has no lowercase letters. So this spelling cannot have come from a note, and a producer leaves `path` out rather than invent one."
+    },
+    {
+      "name": "n64-path-longer-than-a-note-name",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/n64-path-longer-than-a-note-name.cbor",
+      "sha256": "7fa39aa70a5ff5b59e8f9f80e7b573af7f5411d2088211ca40d40ed54e61adf1",
+      "note": "A note's name is 16 bytes, so its spelling runs to 16 characters at most before any extension. This one has 17 and no extension."
     }
   ]
 }

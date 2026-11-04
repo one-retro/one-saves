@@ -14,7 +14,7 @@ card.mcr -> card.1saves (PS1 memory card, 2 save(s), 58034 bytes)
 
 $ 1saves inspect card.1saves
 card.1saves
-  58034 bytes, spec version 0.6
+  58034 bytes, spec version 0.7
   shape        card
   system       psx (PlayStation)
   card         ps1-mc, capacity 131072 bytes
@@ -330,7 +330,7 @@ is what CI checks. Nothing at build time needs either form.
 
 ## Status
 
-Tracking version 0.6 of the specification, which is **not yet stabilized**. Until the spec reaches
+Tracking version 0.7 of the specification, which is **not yet stabilized**. Until the spec reaches
 1.0, breaking changes happen in place under the same bundle tag.
 
 ## License

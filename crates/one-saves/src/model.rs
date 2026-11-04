@@ -710,7 +710,8 @@ pub struct Card {
     /// `saturn-bup`. Spec-owned; a producer may not mint one, because a consumer that does not
     /// know a format cannot rebuild the card and must not try.
     pub format: Slug,
-    /// The card's **data** capacity in bytes: what saves can occupy.
+    /// The size of the card's **data area** in bytes, the blocks its filesystem keeps for itself
+    /// included: not the room left for saves.
     ///
     /// Never the length of a dump. A PS2 card holds 8388608 bytes of data and dumps to 8650752,
     /// because every 512-byte page carries 16 further bytes of spare area; the two are supposed
@@ -718,8 +719,8 @@ pub struct Card {
     pub capacity: u64,
     /// The card-level bytes belonging to no save, verbatim and opaque.
     ///
-    /// A controller pak's label, a Neo Geo card's cardholder name, a VMU's colour and icon. None
-    /// of it belongs to any save, so splitting a card would otherwise drop it.
+    /// A controller pak's label, a Neo Geo card's 64-byte header block, a VMU's colour and icon.
+    /// None of it belongs to any save, so splitting a card would otherwise drop it.
     pub system_area: Option<Vec<u8>>,
     /// Integer keys from a later minor version.
     pub unknown: UnknownKeys,

@@ -55,6 +55,7 @@ impl Bundle {
         self.check_parts_against_shape()?;
         self.check_part_addresses()?;
         self.check_system_entries()?;
+        self.check_card_format()?;
 
         for (index, part) in self.parts.iter().enumerate() {
             let path = format!("parts[{index}]");
@@ -64,7 +65,7 @@ impl Bundle {
             }
             check_key_placement(&part.extensions, Place::Part(&part.kind), &path)?;
             if part.kind == PartKind::Bundle {
-                check_nested(part, &self.header.shape, &path)?;
+                check_nested(part, &self.header, &path)?;
             }
         }
         Ok(())
@@ -126,6 +127,36 @@ impl Bundle {
                 ));
             }
             laid_down.push(path);
+        }
+        Ok(())
+    }
+
+    /// What a card's format fixes: how long its entries are, how long its system area is, and how
+    /// a save's name is spelled where the card holds something other than text.
+    ///
+    /// A format this version does not list constrains nothing. A consumer that does not know one
+    /// must not write the card anyway, so nothing it would rebuild depends on these.
+    fn check_card_format(&self) -> Result<(), Error> {
+        let Some(card) = self.header.card.as_ref().filter(|_| self.header.shape == Shape::Card) else {
+            return Ok(());
+        };
+        let format = card.format.as_str();
+        if let (Some(expected), Some(area)) = (system_area_len(format), &card.system_area)
+            && area.len() != expected
+        {
+            return Err(Error::at(
+                "header.card.system_area",
+                ErrorKind::SystemAreaWrongLength { format: format.to_owned(), expected, found: area.len() },
+            ));
+        }
+        for (index, part) in self.parts.iter().enumerate() {
+            let path = format!("parts[{index}]");
+            check_dirent(part, format, &path)?;
+            if part.kind == PartKind::Bundle
+                && let Some(name) = part.path.as_deref()
+            {
+                check_spelling(name, format, &format!("{path}.path"))?;
+            }
         }
         Ok(())
     }
@@ -317,6 +348,95 @@ fn check_header(header: &Header) -> Result<(), Error> {
         check_taken_with(taken_with, "header.taken_with")?;
     }
     Ok(())
+}
+
+/// How long a `dirent` is on each card format this version lists, as the memory cards
+/// specification fixes it.
+fn dirent_len(format: &str) -> Option<usize> {
+    match format {
+        "ps1-mc" => Some(128),
+        "ps2-mc" => Some(512),
+        "n64-cpak" | "vmu" => Some(32),
+        "gc-mc" => Some(64),
+        "neogeo-mc" => Some(4),
+        "saturn-bup" => Some(30),
+        _ => None,
+    }
+}
+
+/// How long a card's `system_area` is, on the one format that fixes it: a Neo Geo card's is its
+/// whole header block, region and all.
+fn system_area_len(format: &str) -> Option<usize> {
+    (format == "neogeo-mc").then_some(64)
+}
+
+/// A part's entry is as long as its card's format makes one.
+fn check_dirent(part: &Part, format: &str, path: &str) -> Result<(), Error> {
+    if let (Some(expected), Some(dirent)) = (dirent_len(format), &part.dirent)
+        && dirent.len() != expected
+    {
+        return Err(Error::at(
+            format!("{path}.dirent"),
+            ErrorKind::DirentWrongLength { format: format.to_owned(), expected, found: dirent.len() },
+        ));
+    }
+    Ok(())
+}
+
+/// Every character an N64 pak's table has, from `0x0F` to `0x94`, which is all a note's name and
+/// extension can be spelled in. The table is N64brew's, as the memory cards specification gives
+/// it.
+const N64_CHARACTERS: &str = concat!(
+    " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#'*+,-./:=?@",
+    "。゛゜ァィゥェォッャュョヲン",
+    "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワ",
+    "ガギグゲゴザジズゼゾダヂヅデドバビブベボパピプペポ",
+);
+
+/// A save's name on a card that holds something other than text for one is spelled the way the
+/// specification spells it there.
+fn check_spelling(name: &str, format: &str, path: &str) -> Result<(), Error> {
+    let (spelled, spelling) = match format {
+        "neogeo-mc" => (
+            is_neogeo_save_name(name),
+            "the NGH number in four lowercase hex digits, a dash, then the sub-number in one",
+        ),
+        "n64-cpak" => (
+            is_n64_note_name(name),
+            "a name of up to 16 characters of the pak's table, then a dot and up to 4 more where the \
+             note has an extension",
+        ),
+        _ => return Ok(()),
+    };
+    if spelled {
+        Ok(())
+    } else {
+        Err(Error::at(path, ErrorKind::PathMisspelled { format: format.to_owned(), spelling }))
+    }
+}
+
+/// `0201-0`: Metal Slug's NGH number, then which of its saves this is.
+fn is_neogeo_save_name(name: &str) -> bool {
+    let hex = |byte: &u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte);
+    match name.as_bytes() {
+        [ngh @ .., b'-', sub] => ngh.len() == 4 && ngh.iter().all(hex) && hex(sub),
+        _ => false,
+    }
+}
+
+/// A note's 16-character name, then a dot and its extension of up to 4 where it has one.
+///
+/// A dot is in the table too, so a name can hold one, and a spelling with a dot in it is a note's
+/// when any one dot splits it into a name and an extension that fit.
+fn is_n64_note_name(name: &str) -> bool {
+    const NAME: usize = 16;
+    const EXTENSION: usize = 4;
+    let characters: Vec<char> = name.chars().collect();
+    characters.iter().all(|&character| N64_CHARACTERS.contains(character))
+        && (characters.len() <= NAME
+            || characters.iter().enumerate().any(|(at, &character)| {
+                character == '.' && at <= NAME && (1..=EXTENSION).contains(&(characters.len() - at - 1))
+            }))
 }
 
 /// Checks the keys a `state` or a `screenshot` part takes, wherever it sits.
@@ -544,7 +664,8 @@ fn check_hashes(hashes: &[HashValue], path: &str) -> Result<(), Error> {
 }
 
 /// Checks the rules a `bundle` part carries, all of them past what a schema can see.
-fn check_nested(part: &Part, outer: &Shape, path: &str) -> Result<(), Error> {
+fn check_nested(part: &Part, header: &Header, path: &str) -> Result<(), Error> {
+    let outer = &header.shape;
     // A compressed `bundle` part is left to whoever inflates it. Inflating here would let a file of
     // a few kilobytes make every decode allocate whatever its parts claim, and the bundle it
     // carries is checked anyway the moment it is read, since reading one validates it.
@@ -598,6 +719,14 @@ fn check_nested(part: &Part, outer: &Shape, path: &str) -> Result<(), Error> {
     };
     if !holds {
         return Err(Error::at(path, ErrorKind::PartNotInShape { shape, reason }));
+    }
+
+    // A save made of several files carries an entry on each, and those are the card's entries as
+    // much as the one on the outer part is.
+    if let Some(card) = header.card.as_ref().filter(|_| *outer == Shape::Card) {
+        for (index, inner_part) in inner.parts.iter().enumerate() {
+            check_dirent(inner_part, card.format.as_str(), &format!("{path}.payload.parts[{index}]"))?;
+        }
     }
 
     inner.validate_inner().map_err(|e| e.within(&format!("{path}.payload")))
@@ -958,6 +1087,94 @@ mod tests {
             indexed.validate().unwrap_err().kind(),
             &ErrorKind::KeyNotOnPart { kind: "system", field: "system" }
         );
+    }
+
+    /// A card of this format holding one save, addressed by this name and carrying this entry.
+    fn card_of(format: &str, name: &str, dirent: &[u8]) -> Bundle {
+        Bundle {
+            header: Header::new(Shape::Card).card(crate::Card::new(Slug::parse(format).unwrap(), 32_768)),
+            parts: vec![nested_save(0).path(name).dirent(dirent.to_vec())],
+        }
+    }
+
+    #[test]
+    fn an_entry_is_as_long_as_its_card_s_format_makes_one() {
+        card_of("n64-cpak", "MARIOKART64", &[0; 32]).validate().expect("a note's entry is 32 bytes");
+        assert_eq!(
+            card_of("n64-cpak", "MARIOKART64", &[0; 31]).validate().unwrap_err().kind(),
+            &ErrorKind::DirentWrongLength { format: "n64-cpak".into(), expected: 32, found: 31 }
+        );
+        // A format this version does not list fixes nothing.
+        card_of("x-mc", "ANYTHING", &[0; 3]).validate().expect("nothing to hold it to");
+
+        // A PS2 save's files carry entries of their own, inside the save, and they are the card's.
+        let file = |dirent: Vec<u8>| {
+            let inner = Bundle {
+                header: Header::default(),
+                parts: vec![Part::new(0, *b"DATA").path("BASLUS-20312").dirent(dirent)],
+            };
+            Bundle {
+                header: Header::new(Shape::Card)
+                    .card(crate::Card::new(Slug::parse("ps2-mc").unwrap(), 8_388_608)),
+                parts: vec![
+                    Part::new(0, inner.to_vec().unwrap())
+                        .kind(PartKind::Bundle)
+                        .path("BASLUS-20312")
+                        .dirent(vec![0; 512]),
+                ],
+            }
+        };
+        file(vec![0; 512]).validate().expect("a file's entry is 512 bytes too");
+        let error = file(vec![0; 128]).validate().unwrap_err();
+        assert_eq!(error.path(), "parts[0].payload.parts[0].dirent");
+    }
+
+    #[test]
+    fn a_neo_geo_card_keeps_its_whole_header_and_spells_each_save_by_its_numbers() {
+        let card = |name: &str, area: usize| {
+            let mut card = card_of("neogeo-mc", name, &[0, 0x02, 0x01, 5]);
+            card.header.card = card.header.card.map(|card| card.system_area(vec![0; area]));
+            card
+        };
+        card("0201-0", 64).validate().expect("Metal Slug's first save");
+        card("0250-f", 64).validate().expect("sub-number 15 is one hex digit");
+        assert_eq!(
+            card("0201-0", 16).validate().unwrap_err().kind(),
+            &ErrorKind::SystemAreaWrongLength { format: "neogeo-mc".into(), expected: 64, found: 16 }
+        );
+        for name in ["0201-A", "201-0", "0201-10", "0201_0", "METAL SLUG"] {
+            let error = card(name, 64).validate().unwrap_err();
+            assert!(matches!(error.kind(), ErrorKind::PathMisspelled { .. }), "{name}: {error}");
+            assert_eq!(error.path(), "parts[0].path");
+        }
+    }
+
+    #[test]
+    fn an_n64_note_is_spelled_through_its_pak_s_table() {
+        for name in [
+            "MARIOKART64",
+            "MARIOKART64.A",
+            "GAME.ABCD",
+            // Sixteen characters of name and four of extension, the most a note holds.
+            "ABCDEFGHIJKLMNOP.QRST",
+            // A dot of the name's own, and no extension.
+            "MR.DRILLER",
+            "GAME.ABCDE",
+            // Katakana and its marks are the table's as much as the letters are.
+            "ゼルダノデンセツ",
+            "POKEMON STADIUM'",
+        ] {
+            card_of("n64-cpak", name, &[0; 32]).validate().unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+        // No lowercase, and nothing past the name's sixteen or the extension's four. A short
+        // spelling with a dot is a name holding one, so only a long one can overrun.
+        for name in
+            ["MarioKart64", "MARIOKART64DELUXE", "ABCDEFGHIJKLMNOP.ABCDE", "ABCDEFGHIJKLMNOPQ.A", "GAME`"]
+        {
+            let error = card_of("n64-cpak", name, &[0; 32]).validate().unwrap_err();
+            assert!(matches!(error.kind(), ErrorKind::PathMisspelled { .. }), "{name}: {error}");
+        }
+        assert_eq!(N64_CHARACTERS.chars().count(), 0x94 - 0x0F + 1, "the table from 0x0F to 0x94");
     }
 
     /// A writer lays entries down in part order, so a file's directory comes ahead of it.

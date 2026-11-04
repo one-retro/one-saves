@@ -181,6 +181,34 @@ fn both_real_cards_round_trip_to_the_bare_card_they_hold() {
     }
 }
 
+/// A bundle 0.6.1 wrote recorded the room left for saves as the capacity, the whole reserved
+/// region as the system area and the title as the path. The last two are malformed under 0.7, so
+/// it does not decode; read without the rules, it still writes back the card it came off, and that
+/// card reads as a 0.7 bundle. That is the way to bring one forward.
+#[test]
+fn a_card_an_earlier_release_carried_writes_back_and_reads_as_this_version() {
+    for (set, name) in [("NEOGEO", "Metal Slug X"), ("NEOGEO-CD", "Metal Slug")] {
+        let original = MemoryCard::parse(&fixture_in(set, name)).expect("reads");
+        let mut bundle = read(&fixture_in(set, name), &CardOptions::default()).expect("reads");
+        let reserved = original.geometry().first_data_block * 64;
+        let card = bundle.header.card.as_mut().expect("a card");
+        card.capacity = (original.capacity() - reserved) as u64;
+        card.system_area = Some(original.image()[..reserved].to_vec());
+        for (part, save) in bundle.parts.iter_mut().zip(original.saves()) {
+            part.path = Some(save.title()).filter(|title| !title.is_empty());
+        }
+        let bytes = bundle.to_cbor().to_cbor_data();
+
+        assert!(Bundle::from_slice(&bytes).is_err(), "{set}/{name}: malformed under 0.7");
+        let cbor = one_saves::dcbor::CBOR::try_from_data(&bytes).expect("CBOR");
+        let unchecked = Bundle::from_cbor(&cbor, one_saves::Strictness::Decoder).expect("reads unchecked");
+        let card = write(&unchecked).expect("writes");
+        assert_eq!(card, original.image(), "{set}/{name}");
+        let forward = read(&card, &CardOptions::default()).expect("reads");
+        Bundle::from_slice(&forward.to_vec().expect("encodes")).expect("a 0.7 bundle");
+    }
+}
+
 /// The RAM an MVS BIOS leaves in a cabinet with this game in its one slot, in the 68000's order:
 /// its signature, the slot table naming the game by its NGH number, and the game's name.
 fn bios_ram(ngh: u16, name: &str) -> Vec<u8> {

@@ -102,7 +102,7 @@ Without `dat-cmpro` a ClrMamePro catalog is refused, and the error names the fea
 have read it rather than reporting the file as broken.
 
 ```toml
-one-saves-convert = { version = "0.6", default-features = false, features = ["ps1", "zstd"] }
+one-saves-convert = { version = "0.7", default-features = false, features = ["ps1", "zstd"] }
 ```
 
 [spec]: https://docs.1retro.com/specifications/universal-saves-format/

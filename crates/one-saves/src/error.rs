@@ -216,6 +216,42 @@ pub enum ErrorKind {
         directory: String,
     },
 
+    /// A `dirent` was not the length its card's format makes one.
+    ///
+    /// Every format the memory cards specification lists fixes its entry's length, and a writer
+    /// rebuilding the card takes an entry of that length and no other.
+    DirentWrongLength {
+        /// The card's format.
+        format: String,
+        /// How long that format's entry is.
+        expected: usize,
+        /// How long this one was.
+        found: usize,
+    },
+
+    /// A card's `system_area` was not the length its format makes it.
+    ///
+    /// Only a Neo Geo card fixes one, at its whole 64-byte header block.
+    SystemAreaWrongLength {
+        /// The card's format.
+        format: String,
+        /// How long that format's system area is.
+        expected: usize,
+        /// How long this one was.
+        found: usize,
+    },
+
+    /// A save's `path` on a card was not spelled the way its format spells one.
+    ///
+    /// A Neo Geo card and an N64 pak hold something other than text for a save's name, so the
+    /// specification spells it for them, and two producers name one save alike.
+    PathMisspelled {
+        /// The card's format.
+        format: String,
+        /// How that format spells a save's name.
+        spelling: &'static str,
+    },
+
     /// `rom_hashes` was not in ascending tag order.
     RomHashesOutOfOrder,
 
@@ -327,6 +363,15 @@ impl fmt::Display for ErrorKind {
                 "sits in `{directory}`, and no `system` part before it is that directory, so a writer \
                  has nowhere to put it"
             ),
+            ErrorKind::DirentWrongLength { format, expected, found } => {
+                write!(f, "runs {found} bytes, and a `{format}` card's entry is {expected}")
+            }
+            ErrorKind::SystemAreaWrongLength { format, expected, found } => {
+                write!(f, "runs {found} bytes, and a `{format}` card's system area is {expected}")
+            }
+            ErrorKind::PathMisspelled { format, spelling } => {
+                write!(f, "is not how a `{format}` card's save is spelled, which is {spelling}")
+            }
             ErrorKind::RomHashesOutOfOrder => f.write_str("is not in ascending tag order"),
             ErrorKind::RomHashesDuplicateAlgorithm(algorithm) => {
                 write!(f, "holds two {algorithm} digests, which name two different files")

@@ -47,6 +47,25 @@ pub const SYSTEM: &str = "n64";
 /// The role of the part holding a cartridge's save memory.
 pub const CARTRIDGE: &str = "cartridge";
 
+/// What a game code is prefixed with to make the serial, as N64 product codes are.
+const SERIAL_PREFIX: &str = "NUS-";
+
+/// A game code as the serial a save names: `NKTE` is `NUS-NKTE`.
+///
+/// The four characters are what a cartridge's header and a Controller Pak note's entry both carry,
+/// so a cartridge save and the game's notes name one serial.
+#[must_use]
+pub fn serial_of(game_code: &str) -> String {
+    format!("{SERIAL_PREFIX}{game_code}")
+}
+
+/// The game code a serial carries. A bare code, which is what a bundle from before 0.7 named a
+/// note's game by, comes back as it is.
+#[must_use]
+pub fn game_code_of(serial: &str) -> &str {
+    serial.strip_prefix(SERIAL_PREFIX).unwrap_or(serial)
+}
+
 /// What a chip holds where nothing has been written: an erased EEPROM or FlashRAM cell reads as
 /// all ones, and every emulator formats SRAM the same way.
 const ERASED: u8 = 0xFF;
@@ -578,13 +597,15 @@ mod srm {
     /// One game's save out of a device: its cartridge, and only its own notes beside it.
     ///
     /// `game_code` is the four characters a ROM's header and a note's entry both carry, such as
-    /// `NKTE`. The result is a plain save with ordinary parts: the cartridge, and each note on the
-    /// pak's role with the pak's entry for it, which is everything [`write_srm`] needs to put the
-    /// note back on a pak that also holds other games'.
+    /// `NKTE`, or the serial a note's save names, `NUS-NKTE`. The result is a plain save with
+    /// ordinary parts: the cartridge, and each note on the pak's role with the pak's entry for it,
+    /// which is everything [`write_srm`] needs to put the note back on a pak that also holds other
+    /// games'.
     pub fn game_save(device: &Bundle, game_code: &str) -> Result<Bundle> {
         if device.header.shape != Shape::Device {
             return Err(Error::NotConvertible(format!("a {} bundle is not a device", device.header.shape)));
         }
+        let game_code = super::game_code_of(game_code);
 
         let mut parts = Vec::new();
         let mut game: Option<Game> = None;

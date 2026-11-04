@@ -57,7 +57,7 @@ fn cases() -> Vec<Case> {
 /// The corpus is run at [`Strictness::Schema`].
 ///
 /// Two invalid cases — `header-unknown-integer-key` and `part-unknown-integer-key` — are invalid
-/// against the version 0.6 schema and *accepted* by a shipped decoder, which ignores and
+/// against the version 0.7 schema and *accepted* by a shipped decoder, which ignores and
 /// round-trips an integer key it does not know. Running the corpus in decoder mode would fail
 /// those two for being right. A shape a later version assigned is the same asymmetry; see
 /// `a_decoder_round_trips_a_shape_a_later_version_defined` for why the corpus cannot show it.
@@ -68,7 +68,7 @@ fn corpus() {
 
     // A manifest this harness failed to read would otherwise pass by testing nothing.
     let (valid, invalid): (Vec<_>, Vec<_>) = cases.iter().partition(|c| c.expect_valid);
-    assert_eq!((valid.len(), invalid.len()), (38, 97), "the corpus is not the size it should be");
+    assert_eq!((valid.len(), invalid.len()), (39, 103), "the corpus is not the size it should be");
 
     for case in cases {
         let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
@@ -165,7 +165,7 @@ fn unknown_names_and_keys_survive_a_round_trip() {
 /// A shape a later minor version assigned is round-tripped, not rejected.
 ///
 /// The corpus covers half of this — `shape-unknown` is invalid against the schema, which pins the
-/// six shapes 0.6 defines. It cannot cover the other half: the harness runs everything at
+/// six shapes 0.7 defines. It cannot cover the other half: the harness runs everything at
 /// [`Strictness::Schema`], and the manifest has no category for "invalid to the schema, fine for a
 /// decoder". So the accepting side is built here, exactly as it is for the two unknown-integer-key
 /// cases below.
@@ -200,7 +200,7 @@ fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
 
         assert!(
             Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
-            "{name} must fail against the version 0.6 schema"
+            "{name} must fail against the version 0.7 schema"
         );
 
         let bundle = Bundle::from_slice(&bytes)
@@ -450,8 +450,8 @@ fn state_with(header: impl FnOnce(one_saves::Header) -> one_saves::Header) -> Bu
 
 /// An origin a later minor version assigned is kept and written back as it came.
 ///
-/// The schema leaves `origin` a slug, so unlike a later shape this is valid 0.6 and the corpus
-/// could hold it; it holds only the two 0.6 defines, so the case is built here.
+/// The schema leaves `origin` a slug, so unlike a later shape this is valid 0.7 and the corpus
+/// could hold it; it holds only the two 0.7 defines, so the case is built here.
 #[test]
 fn an_origin_a_later_version_assigned_round_trips() {
     use one_saves::{Origin, Slug};
@@ -490,7 +490,7 @@ fn taken_with_keeps_keys_a_later_version_or_a_third_party_wrote() {
 
     with.unknown.insert(6, CBOR::from(true));
     let bytes = state_with(|header| header.taken_with(with.clone())).to_vec().expect("encodes");
-    let error = Bundle::from_slice_with(&bytes, Strictness::Schema).expect_err("key 6 is not 0.6's");
+    let error = Bundle::from_slice_with(&bytes, Strictness::Schema).expect_err("key 6 is not 0.7's");
     assert_eq!(error.path(), "header.taken_with", "{error}");
     let read = Bundle::from_slice(&bytes).expect("a decoder keeps a later version's key");
     assert_eq!(read.header.taken_with.as_ref().map(|with| &with.unknown), Some(&with.unknown));

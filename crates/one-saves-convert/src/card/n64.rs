@@ -7,6 +7,15 @@
 //! A pak permits two notes with the same game code and note name, which is why a producer must
 //! carry [`slot`](one_saves::Part::slot): without it the two would share an address and nothing
 //! could tell them apart.
+//!
+//! A note's name is bytes in the pak's own character table, so its [`path`](one_saves::Part::path)
+//! is the spelling the specification gives, [`Note::path`]: the name up to its first NUL, then a
+//! dot and the extension where there is one. A note that table cannot spell, or whose spelling is
+//! no path — empty, say — goes without one, and its entry and `slot` still say which note it is.
+//!
+//! A note names its game by the four-character game code the cartridge's header carries, and its
+//! [`serial`](one_saves::Game::serial) is that code as a product code: `NUS-` and the code, so
+//! Mario Kart 64's `NKTE` is `NUS-NKTE`, the serial a cartridge save of the game names too.
 
 use n64_cpak::{ControllerPak, Note, PakBuilder};
 use one_saves::{Bundle, Game};
@@ -16,6 +25,7 @@ use crate::card::{card_header, card_image_part, image_only, nested_saves, save_p
 use crate::detect::Format;
 use crate::error::{Error, Result};
 use crate::label::value as label;
+use crate::n64::{game_code_of, serial_of};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::N64Pak.label();
@@ -46,7 +56,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     for note in pak.notes() {
         // The game code is how a pak names the release; the note name is what the console lists
         // the note under, which is a label rather than a title and belongs under its own key.
-        let game = (!note.game_code.is_empty()).then(|| Game::default().serial(note.game_code.clone()));
+        let game = (!note.game_code.is_empty()).then(|| Game::default().serial(serial_of(&note.game_code)));
 
         // A Controller Pak is the one format that keeps its text in the note table rather than in
         // the note, so this is read off the entry and not out of the payload.
@@ -55,12 +65,14 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             inner.insert(label);
         }
 
-        let part = save_part_with(Format::N64Pak, parts.len(), note.data.clone(), game, options, inner)?
-            .path(note.path())
+        let mut part = save_part_with(Format::N64Pak, parts.len(), note.data.clone(), game, options, inner)?
             // Two notes may agree on game code and name, so the table index is what keeps them
             // apart.
             .slot(u64::try_from(note.slot).expect("slot fits"))
             .dirent(note.dirent.clone());
+        if let Some(path) = note.path().filter(|path| a_path_may_be(path)) {
+            part = part.path(path);
+        }
         parts.push(part);
     }
 
@@ -97,11 +109,17 @@ pub fn write(bundle: &Bundle) -> Result<Vec<u8>> {
     }
     for save in nested_saves(bundle)? {
         let path = save.path.unwrap_or_default();
-        let (name, extension) = path.split_once('.').unwrap_or((path.as_str(), ""));
+        let (name, extension) = name_and_extension(&path);
         // Only reached for a save that arrived without an entry; one that has an entry carries its
         // game code inside it, verbatim.
-        let game_code =
-            save.inner.header.game.as_ref().and_then(|game| game.serial.clone()).unwrap_or_default();
+        let game_code = save
+            .inner
+            .header
+            .game
+            .as_ref()
+            .and_then(|game| game.serial.as_deref())
+            .map(|serial| game_code_of(serial).to_owned())
+            .unwrap_or_default();
         builder.add(Note {
             slot: 0,
             game_code,
@@ -112,6 +130,28 @@ pub fn write(bundle: &Bundle) -> Result<Vec<u8>> {
         });
     }
     builder.build().map_err(into_error)
+}
+
+/// Whether the format lets a `path` be this: not empty, not starting with `/`, and with no `..`
+/// between slashes. A note's name can spell any of those, since `/` and `.` are in the table.
+fn a_path_may_be(spelling: &str) -> bool {
+    !spelling.is_empty() && !spelling.starts_with('/') && !spelling.split('/').any(|segment| segment == "..")
+}
+
+/// A path split back into the name and the extension a note would have been written with.
+///
+/// A dot is in the table, so a name can hold one, and a path does not say which dot, if any, comes
+/// before an extension. The last one does when what follows it fits in an extension's four
+/// characters and what precedes it in a name's sixteen; otherwise the path is all name.
+fn name_and_extension(path: &str) -> (&str, &str) {
+    match path.rsplit_once('.') {
+        Some((name, extension))
+            if name.chars().count() <= 16 && (1..=4).contains(&extension.chars().count()) =>
+        {
+            (name, extension)
+        }
+        _ => (path, ""),
+    }
 }
 
 fn into_error(source: n64_cpak::Error) -> Error {
@@ -165,7 +205,7 @@ mod tests {
 
         assert_eq!(bundle.parts[0].path.as_deref(), Some("MARIOKART"));
         assert_eq!(bundle.parts[0].dirent.as_ref().map(Vec::len), Some(32));
-        assert_eq!(bundle.parts[0].game.as_ref().unwrap().serial.as_deref(), Some("NMKJ"));
+        assert_eq!(bundle.parts[0].game.as_ref().unwrap().serial.as_deref(), Some("NUS-NMKJ"));
 
         let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap();
         assert_eq!(inner.parts[0].payload.len(), 512, "two pages");
@@ -196,6 +236,55 @@ mod tests {
         assert_eq!(bundle.parts.len(), 1);
         assert_eq!(bundle.parts[0].kind, one_saves::PartKind::CardImage);
         assert_eq!(write(&bundle).expect("writes"), pak);
+    }
+
+    /// A note's name is spelled through the pak's table, katakana included, and one the table
+    /// cannot spell goes without a path rather than with a guess at one.
+    #[test]
+    fn a_note_s_path_is_its_name_spelled_through_the_pak_s_table() {
+        let mut pak =
+            pak_with(&[("NZLJ", "ゼルダノデンセツ", 1), ("NMKJ", "MARIOKART", 1), ("NSMJ", "MARIO", 1)]);
+        let entry = |slot: usize| n64_cpak::NOTE_TABLE_PAGE * n64_cpak::PAGE + slot * n64_cpak::NOTE_ENTRY;
+        // An extension on the second, and a code the table leaves empty in the third's name.
+        pak[entry(1) + 0x0C] = n64_cpak::font::encode_char('A');
+        pak[entry(2) + 0x12] = 0x05;
+
+        let bundle = read(&pak, &CardOptions::default()).expect("reads");
+        bundle.validate().expect("every path spelled the way the specification spells it");
+        let paths: Vec<Option<&str>> = bundle.parts.iter().map(|part| part.path.as_deref()).collect();
+        assert_eq!(paths, [Some("ゼルダノデンセツ"), Some("MARIOKART.A"), None]);
+        assert_eq!(bundle.parts[2].slot, Some(2), "the slot still says which note it is");
+
+        // And the pak comes back as it was, each note from its own entry.
+        assert_eq!(write(&bundle).expect("writes"), pak);
+    }
+
+    /// A note that arrives without its entry is written from its path and its game's serial,
+    /// whether that serial is a product code or the bare code a bundle from before 0.7 carried.
+    #[test]
+    fn a_note_without_its_entry_takes_its_game_code_from_the_serial() {
+        let pak = pak_with(&[("NKTE", "MARIOKART64", 1)]);
+        for serial in ["NUS-NKTE", "NKTE"] {
+            let mut bundle = read(&pak, &CardOptions::default()).expect("reads");
+            let mut save = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap();
+            save.header.game = Some(Game::default().serial(serial));
+            bundle.parts[0] = one_saves::Part::new(0, save.to_vec().unwrap())
+                .kind(one_saves::PartKind::Bundle)
+                .path("MARIOKART64")
+                .slot(0);
+            let written = ControllerPak::parse(&write(&bundle).expect("writes")).expect("a pak");
+            assert_eq!(written.notes()[0].game_code, "NKTE", "{serial}");
+            assert_eq!(written.notes()[0].path().as_deref(), Some("MARIOKART64"));
+        }
+    }
+
+    #[test]
+    fn a_path_splits_back_at_an_extension_that_fits() {
+        assert_eq!(name_and_extension("MARIOKART64.A"), ("MARIOKART64", "A"));
+        assert_eq!(name_and_extension("MR.DRILLER"), ("MR.DRILLER", ""), "no extension is seven long");
+        assert_eq!(name_and_extension("GAME"), ("GAME", ""));
+        assert!(!a_path_may_be("") && !a_path_may_be("/A") && !a_path_may_be("A/../B"));
+        assert!(a_path_may_be(".A") && a_path_may_be("A/B"));
     }
 
     #[test]

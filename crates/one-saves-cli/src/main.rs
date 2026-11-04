@@ -134,7 +134,8 @@ struct Convert {
     #[arg(long, value_name = "ORDER")]
     n64_order: Option<String>,
     /// For a file holding Controller Paks, keep only this game's notes beside its cartridge, by the
-    /// four-character code its ROM header and its notes carry, such as `NKTE`.
+    /// four-character code its ROM header and its notes carry, such as `NKTE`, or the serial its
+    /// saves name, `NUS-NKTE`.
     ///
     /// Without it the paks are kept whole, other games' notes and all.
     #[arg(long, value_name = "CODE")]

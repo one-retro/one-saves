@@ -9,7 +9,7 @@
 //!
 //! let pak = ControllerPak::parse(&std::fs::read("pak.mpk")?)?;
 //! for note in pak.notes() {
-//!     println!("{} ({}) {} bytes", note.path(), note.game_code, note.data.len());
+//!     println!("{} ({}) {} bytes", note.name, note.game_code, note.data.len());
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -17,7 +17,9 @@
 //! # Note names are not ASCII
 //!
 //! A note's name is written in the N64 font's own code table, in which the digits start at 16 and
-//! the letters at 26. Reading one as bytes yields nonsense; [`font`] is the table.
+//! the letters at 26, and katakana follows the punctuation. Reading one as bytes yields nonsense;
+//! [`font`] is the table. [`Note::name`] is the name to show, and [`Note::path`] the exact
+//! spelling, which two readers of one note agree on.
 //!
 //! # Two notes can be the same note
 //!
@@ -66,13 +68,23 @@ pub const CHAIN_END: u16 = 1;
 pub const CHAIN_FREE: u16 = 3;
 
 /// The N64 font's code table, which is what a note name is written in.
+///
+/// It is the table [N64brew](https://n64brew.dev/wiki/Controller_Pak/Filesystem) documents: a
+/// space at `0x0F`, the digits from `0x10`, the letters from `0x1A`, fourteen marks of
+/// punctuation from `0x34`, and katakana with its marks from `0x42` to `0x94`. `0x00` is the NUL
+/// that pads a field, and no other code has a character.
 pub mod font {
-    /// The table itself: the character each code stands for, by index.
+    /// The table itself: the character each code stands for, by index, NUL where there is none.
     ///
     /// It is not ASCII and not a subset of it: the digits start at 16 and the letters at 26, so
     /// reading a note name as bytes yields nonsense.
-    pub const CHARSET: &str =
-        "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#`*+,-./:=?@";
+    pub const CHARSET: &str = concat!(
+        "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#'*+,-./:=?@",
+        "。゛゜ァィゥェォッャュョヲン",
+        "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワ",
+        "ガギグゲゴザジズゼゾダヂヅデドバビブベボパピプペポ",
+    );
 
     /// The character a code stands for, or NUL for one the table does not list.
     #[must_use]
@@ -87,10 +99,32 @@ pub mod font {
         u8::try_from(CHARSET.chars().position(|c| c == upper).unwrap_or(15)).unwrap_or(15)
     }
 
-    /// Decodes a run of codes, trimming the trailing spaces a fixed field pads with.
+    /// A field as text to show: up to its first NUL, any code the table leaves empty left out,
+    /// and trailing spaces trimmed.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> String {
-        bytes.iter().map(|&b| decode_char(b)).collect::<String>().trim_end().replace('\0', "")
+        until_nul(bytes)
+            .iter()
+            .map(|&b| decode_char(b))
+            .filter(|&c| c != '\0')
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    }
+
+    /// A field spelled exactly: up to its first NUL, every code through the table, spaces and
+    /// all. `None` when a code before the NUL has no character, since nothing then spells it.
+    ///
+    /// Where [`decode`] tidies a name up to show, this is the spelling two readers of one field
+    /// agree on.
+    #[must_use]
+    pub fn spell(bytes: &[u8]) -> Option<String> {
+        until_nul(bytes).iter().map(|&b| Some(decode_char(b)).filter(|&c| c != '\0')).collect()
+    }
+
+    /// A field up to its first NUL, which pads it.
+    fn until_nul(bytes: &[u8]) -> &[u8] {
+        &bytes[..bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len())]
     }
 
     /// Encodes text into a field of `len` codes, truncating what does not fit.
@@ -137,9 +171,9 @@ pub struct Note {
     pub slot: usize,
     /// The four-character game code, in ASCII rather than the font table.
     pub game_code: String,
-    /// The note's name, decoded from the font table.
+    /// The note's name, decoded from the font table to show, as [`font::decode`] does.
     pub name: String,
-    /// The note's extension, decoded from the font table. Usually empty.
+    /// The note's extension, decoded the same way. Usually empty.
     pub extension: String,
     /// The note table entry's 32 bytes, verbatim and opaque.
     ///
@@ -151,14 +185,26 @@ pub struct Note {
 }
 
 impl Note {
-    /// The note's name and extension as one path, which is how a filesystem would spell it.
+    /// The note's name and extension as one path: the name [spelled](font::spell), then a dot
+    /// and the spelled extension where the extension's first code is not NUL. `GAME` with the
+    /// extension `A` is `GAME.A`.
+    ///
+    /// Read off the note's entry, so it is what the pak holds rather than the name tidied up to
+    /// show. `None` when either field holds a code with no character, or when the entry is not
+    /// an entry's length. A note built by hand, with no entry, is spelled as the entry a
+    /// [`PakBuilder`] would write for it.
     #[must_use]
-    pub fn path(&self) -> String {
-        if self.extension.is_empty() {
-            self.name.clone()
-        } else {
-            format!("{}.{}", self.name, self.extension)
+    pub fn path(&self) -> Option<String> {
+        let entry = match self.dirent.len() {
+            NOTE_ENTRY => self.dirent.clone(),
+            0 => build::note_entry(self),
+            _ => return None,
+        };
+        let name = font::spell(&entry[0x10..0x20])?;
+        if entry[0x0C] == 0 {
+            return Some(name);
         }
+        Some(format!("{name}.{}", font::spell(&entry[0x0C..0x10])?))
     }
 }
 
@@ -352,6 +398,31 @@ mod tests {
         assert_eq!(font::encode("AB", 4), vec![26, 27, 0, 0]);
     }
 
+    /// The table as N64brew documents it: an apostrophe among the punctuation, and katakana with
+    /// its marks after it, up to `0x94` and no further.
+    #[test]
+    fn the_font_table_runs_to_katakana() {
+        assert_eq!(font::decode_char(0x37), '\'');
+        assert_eq!(font::decode_char(0x41), '@');
+        assert_eq!((font::decode_char(0x42), font::decode_char(0x50)), ('。', 'ア'));
+        assert_eq!((font::decode_char(0x7B), font::decode_char(0x7C)), ('ワ', 'ガ'));
+        assert_eq!((font::decode_char(0x94), font::decode_char(0x95)), ('ポ', '\0'));
+        assert_eq!(font::decode_char(0x01), '\0');
+        assert_eq!(font::CHARSET.chars().count(), 0x95);
+        assert_eq!(font::spell(&font::encode("ゼルダノデンセツ", 16)).as_deref(), Some("ゼルダノデンセツ"));
+    }
+
+    /// A spelling stops at the first NUL and keeps spaces, and gives up on a code the table
+    /// leaves empty; a name to show trims and skips instead.
+    #[test]
+    fn a_field_is_spelled_up_to_its_nul_and_shown_tidied() {
+        assert_eq!(font::spell(&[26, 15, 0, 27]).as_deref(), Some("A "));
+        assert_eq!(font::decode(&[26, 15, 0, 27]), "A");
+        assert_eq!(font::spell(&[26, 0x05, 27]), None);
+        assert_eq!(font::decode(&[26, 0x05, 27]), "AB");
+        assert_eq!(font::spell(&[0, 26]).as_deref(), Some(""));
+    }
+
     #[test]
     fn reads_notes_and_keeps_the_pak_label() {
         let pak = pak_with(&[("NMKJ", "MARIOKART", 2), ("NSMJ", "SUPERMARIO", 1)]);
@@ -380,7 +451,16 @@ mod tests {
         let offset = NOTE_TABLE_PAGE * PAGE + 0x0C;
         pak[offset..offset + 4].copy_from_slice(&font::encode("DAT", 4));
         let parsed = ControllerPak::parse(&pak).expect("reads");
-        assert_eq!(parsed.notes()[0].path(), "SAVE.DAT");
+        assert_eq!(parsed.notes()[0].path().as_deref(), Some("SAVE.DAT"));
+    }
+
+    #[test]
+    fn a_note_with_a_code_the_table_leaves_empty_has_no_path() {
+        let mut pak = pak_with(&[("NMKJ", "SAVE", 1)]);
+        pak[NOTE_TABLE_PAGE * PAGE + 0x11] = 0x05;
+        let parsed = ControllerPak::parse(&pak).expect("still a note");
+        assert_eq!(parsed.notes()[0].path(), None);
+        assert_eq!(parsed.notes()[0].name, "SVE", "but there is still a name to show");
     }
 
     #[test]

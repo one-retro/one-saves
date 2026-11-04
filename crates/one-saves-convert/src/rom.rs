@@ -18,7 +18,9 @@ pub struct RomInfo {
     pub system: Option<&'static str>,
     /// The title as the header spells it, which is often padded and shouty.
     pub title: Option<String>,
-    /// The product code out of the header, where the console has one.
+    /// The product code out of the header, where the console has one: an N64's as
+    /// [`serial_of`](crate::n64::serial_of) spells it, `NUS-NSME`, which is what its Controller
+    /// Pak notes name too.
     pub serial: Option<String>,
     /// The key of the clock chip the cartridge carries, where the header says, such as
     /// `x.1sav.rtc.huc3`: what [`RawOptions::clock_chip`](crate::raw::RawOptions::clock_chip)
@@ -37,16 +39,13 @@ pub struct RomInfo {
 #[must_use]
 pub fn identify(bytes: &[u8]) -> Option<RomInfo> {
     let id = rom_id::identify_bytes(None, bytes).filter(|id| id.evidence == rom_id::Evidence::Header)?;
+    let n64 = id.system.slug == crate::n64::SYSTEM;
     Some(RomInfo {
         system: Some(id.system.slug),
         title: id.title,
-        serial: id.serial,
+        serial: if n64 { id.serial.as_deref().map(crate::n64::serial_of) } else { id.serial },
         clock: id.cartridge.clock.map(rom_id::Clock::key),
-        n64_save: if id.system.slug == crate::n64::SYSTEM {
-            id.cartridge.save.and_then(n64_save)
-        } else {
-            None
-        },
+        n64_save: if n64 { id.cartridge.save.and_then(n64_save) } else { None },
     })
 }
 
@@ -165,7 +164,7 @@ mod tests {
             let info = identify(rom).unwrap_or_else(|| panic!("{name} should parse"));
             assert_eq!(info.system, Some("n64"), "{name}");
             assert_eq!(info.title.as_deref(), Some("SUPER MARIO 64"), "{name}");
-            assert_eq!(info.serial.as_deref(), Some("NSME"), "{name}");
+            assert_eq!(info.serial.as_deref(), Some("NUS-NSME"), "{name}");
         }
     }
 

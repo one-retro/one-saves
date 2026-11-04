@@ -176,7 +176,7 @@ impl PakBuilder {
 }
 
 /// The note table entry a note gets: its own, or one carrying just the name and extension.
-fn note_entry(note: &Note) -> Vec<u8> {
+pub(crate) fn note_entry(note: &Note) -> Vec<u8> {
     if !note.dirent.is_empty() {
         return note.dirent.clone();
     }
@@ -291,7 +291,7 @@ mod tests {
         let parsed = ControllerPak::parse(&pak).expect("reads what it wrote");
         assert_eq!(parsed.notes().len(), 1);
         assert_eq!(parsed.notes()[0].game_code, "NMKJ");
-        assert_eq!(parsed.notes()[0].path(), "GHOST.DAT");
+        assert_eq!(parsed.notes()[0].path().as_deref(), Some("GHOST.DAT"));
         assert_eq!(parsed.notes()[0].data, vec![9u8; PAGE]);
     }
 

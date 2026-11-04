@@ -7,7 +7,7 @@ use n64_cpak::ControllerPak;
 
 let pak = ControllerPak::parse(&std::fs::read("pak.mpk")?)?;
 for note in pak.notes() {
-    println!("{} ({}) {} bytes", note.path(), note.game_code, note.data.len());
+    println!("{} ({}) {} bytes", note.name, note.game_code, note.data.len());
 }
 ```
 
@@ -28,7 +28,10 @@ backup table is read when the primary does not parse as chains.
 ## Note names are not ASCII
 
 A note's name is written in the N64 font's own code table, in which the digits start at 16 and the
-letters at 26. Reading one as bytes yields nonsense; the `font` module is the table.
+letters at 26, and katakana follows the punctuation. Reading one as bytes yields nonsense; the
+`font` module is the table. `Note::name` is the name to show, and `Note::path` the exact spelling —
+up to the first NUL, and `None` when a byte has no character — which two readers of one note agree
+on.
 
 ## Two notes can be the same note
 
