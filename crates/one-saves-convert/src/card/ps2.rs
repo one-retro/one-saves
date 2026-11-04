@@ -8,6 +8,16 @@
 //! icon and the game's own data — so its files are the parts of one nested bundle, told apart by
 //! [`path`](one_saves::Part::path). The directory's own entry belongs to no file, and rides on
 //! the outer `bundle` part alongside the slot.
+//!
+//! # The console's own folders
+//!
+//! Not every directory on a card is a game's. The browser keeps its play history in one, the
+//! network setup disc keeps its settings in another, and a system update lives in a third. Each
+//! is an ordinary directory with an `icon.sys` and files of its own, but no game wrote it, so it is
+//! not a save. It travels as [`system`](PartKind::System) parts instead: one for the directory,
+//! with an empty payload, then one per file in it, its `path` the directory's name and the file's
+//! joined by a slash. They are the ones Sony's software is documented to write: `B?DATA-SYSTEM`,
+//! `B?EXEC-SYSTEM`, `B?EXEC-DVDPLAYER`, `BWNETCNF` and `BWLINUX`, the `?` being the region.
 
 use one_saves::{Bundle, Game, Header, Part, PartKind};
 use ps2_memcard::{Capacity, CardBuilder, File, MemoryCard, Save};
@@ -92,22 +102,34 @@ fn entry_seconds(dirent: &[u8], at: usize) -> Option<i64> {
     civil_seconds(u16::from_le_bytes([f[6], f[7]]), f[5], f[4], f[3], f[2], f[1])
 }
 
-/// Reads a card into a bundle: one nested bundle per save, one part per file in it.
+/// Reads a card into a bundle: one nested bundle per save, one part per file in it, and the
+/// console's own folders as `system` parts beside them.
 pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     let card = MemoryCard::parse(bytes).map_err(|e| into_error(&e))?;
     let saves = card.saves().map_err(|e| into_error(&e))?;
+    let role = options.role_for(Format::Ps2Card);
 
+    // Saves and the console's folders stay in the order the root lists them, so a writer that
+    // keeps the part order lays the root down as it was.
     let mut parts = Vec::new();
     for (index, save) in saves.iter().enumerate() {
-        // A directory is named for its game's serial only when it is a game's: the system's own
-        // folders, such as BWNETCNF, carry none, and a save with no game has no `game` at all
-        // rather than an empty one, which the format refuses.
-        let game = serial_from_name(&save.name).map(|serial| Game::default().serial(serial));
+        let slot = u64::try_from(index).expect("fits");
         // The directory's record of the save: when it was made and when it was last written, both
         // qualified by the zone a PS2 keeps them in.
         let times = entry_seconds(&save.dirent, CREATED_AT)
             .zip(entry_seconds(&save.dirent, MODIFIED_AT))
             .map(|(created, modified)| created_and_modified(created, modified, Some(JST)));
+
+        if is_system_folder(&save.name) {
+            push_system_folder(&mut parts, save, slot, &role, times);
+            continue;
+        }
+
+        // A directory is named for its game's serial only when it is a game's. One that is not,
+        // and is not the console's either — a homebrew loader's, or a game that named its folder
+        // its own way — is a save nothing identifies, and a save with no game has no `game` at
+        // all rather than an empty one, which the format refuses.
+        let game = serial_from_name(&save.name).map(|serial| Game::default().serial(serial));
 
         // Each file is a part of the nested bundle, carrying its own directory entry. That is
         // what a PS2 save needs and a PS1 save does not: it is a directory with an entry of its
@@ -143,9 +165,9 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
 
         let mut part = Part::new(u64::try_from(parts.len()).expect("fits"), inner.to_vec()?)
             .kind(PartKind::Bundle)
-            .role(options.role_for(Format::Ps2Card))
+            .role(role.clone())
             .path(save.name.clone())
-            .slot(u64::try_from(index).expect("fits"))
+            .slot(slot)
             // The directory's own entry, carrying its mode bits and timestamps, belongs to no file.
             .dirent(save.dirent.clone())
             .game(game)
@@ -157,13 +179,49 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     }
 
     if parts.is_empty() {
-        parts.push(crate::card::card_image_part(0, bytes, &options.role_for(Format::Ps2Card)));
+        parts.push(crate::card::card_image_part(0, bytes, &role));
     }
 
     // The capacity is the card's data capacity, which is not the length of a dump of it: an 8 MB
-    // card dumps to 8650752 bytes because every page carries a 16-byte spare area. Nothing on a
-    // PS2 card belongs to no save, so there is no system area to keep.
+    // card dumps to 8650752 bytes because every page carries a 16-byte spare area. What on a PS2
+    // card belongs to no save is whole directories, which are parts, rather than bytes at a fixed
+    // place, so there is no system area to keep.
     Ok(Bundle::new(card_header(Format::Ps2Card, card.capacity(), None, options), parts))
+}
+
+/// One of the console's folders as `system` parts: the directory, then each file in it.
+///
+/// The directory's part carries its entry and its place in the root, as a save's outer part does,
+/// and nothing else: its contents are the parts after it. A file's `path` is the directory's name
+/// and its own, which is the whole of where it goes back.
+fn push_system_folder(
+    parts: &mut Vec<Part>,
+    folder: &Save,
+    slot: u64,
+    role: &one_saves::Slug,
+    times: Option<one_saves::extension::Dirent>,
+) {
+    let next_id = |parts: &Vec<Part>| u64::try_from(parts.len()).expect("fits");
+
+    let mut directory = Part::new(next_id(parts), Vec::new())
+        .kind(PartKind::System)
+        .role(role.clone())
+        .path(folder.name.clone())
+        .slot(slot)
+        .dirent(folder.dirent.clone());
+    if let Some(times) = times {
+        directory.extensions.insert(times);
+    }
+    parts.push(directory);
+
+    for file in &folder.files {
+        let part = Part::new(next_id(parts), file.data.clone())
+            .kind(PartKind::System)
+            .role(role.clone())
+            .path(format!("{}/{}", folder.name, file.name))
+            .dirent(file.dirent.clone());
+        parts.push(part);
+    }
 }
 
 /// Writes a bundle back out as a card image.
@@ -188,8 +246,6 @@ pub fn write_with_spare(bundle: &Bundle) -> Result<Vec<u8>> {
 }
 
 fn builder_for(bundle: &Bundle) -> Result<CardBuilder> {
-    let saves = crate::card::nested_saves(bundle)?;
-
     // A card that came from a bundle keeps its stated capacity where that is a size cards come
     // in; anything else gets the standard 8 MB card, since a capacity nothing makes is not a
     // card a console would accept.
@@ -202,28 +258,128 @@ fn builder_for(bundle: &Bundle) -> Result<CardBuilder> {
         .unwrap_or(Capacity::Mb8);
 
     let mut builder = CardBuilder::new(capacity);
-    for save in &saves {
-        let name = save
-            .path
-            .clone()
-            .ok_or_else(|| Error::NotConvertible("a save has no path to name its directory".into()))?;
-
-        let files = save
-            .inner
-            .parts
-            .iter()
-            .map(|part| {
-                Ok(File {
-                    name: part.path.clone().unwrap_or_else(|| name.clone()),
-                    dirent: part.dirent.clone().unwrap_or_default(),
-                    data: part.bytes()?.into_owned(),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        builder.add(Save { name, dirent: save.dirent.clone().unwrap_or_default(), files });
+    for directory in directories(bundle)? {
+        builder.add(directory);
     }
     Ok(builder)
+}
+
+/// Every directory the root holds, saves and the console's folders alike, in part order.
+///
+/// Part order is the order the root listed them in when the card was read, so keeping it lays the
+/// root down as it was. `slot` says the same, but a writer is free to change that; the parts
+/// themselves are what a bundle that moved a save around has kept in order.
+fn directories(bundle: &Bundle) -> Result<Vec<Save>> {
+    // The saves come out of their nested bundles in part order, so they line up one for one with
+    // the `bundle` parts walked below.
+    let mut saves = crate::card::nested_saves(bundle)?.into_iter();
+    let mut directories: Vec<Save> = Vec::new();
+    // Which of those a `system` part laid down, since a `system` file goes into one of the
+    // console's folders and never into a game's save.
+    let mut system: Vec<usize> = Vec::new();
+
+    for part in &bundle.parts {
+        match part.kind {
+            PartKind::Bundle => {
+                let save = saves.next().expect("a nested save for every `bundle` part");
+                let name = save.path.clone().ok_or_else(|| {
+                    Error::NotConvertible("a save has no path to name its directory".into())
+                })?;
+                let files = save
+                    .inner
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        Ok(File {
+                            name: part.path.clone().unwrap_or_else(|| name.clone()),
+                            dirent: part.dirent.clone().unwrap_or_default(),
+                            data: part.bytes()?.into_owned(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                directories.push(Save { name, dirent: save.dirent.unwrap_or_default(), files });
+            }
+            PartKind::System => {
+                // The format requires a path on every `system` part, so a bundle that decoded has
+                // one; a bundle built in memory may not have been checked yet.
+                let path = part
+                    .path
+                    .as_deref()
+                    .ok_or_else(|| Error::NotConvertible("a system entry has no path to put it at".into()))?;
+                let dirent = part.dirent.clone().unwrap_or_default();
+                match path.split_once('/') {
+                    // A name and nothing else is a directory in the root.
+                    None => {
+                        system.push(directories.len());
+                        directories.push(Save { name: path.to_owned(), dirent, files: Vec::new() });
+                    }
+                    Some((folder, name)) => {
+                        if name.contains('/') {
+                            return Err(Error::NotConvertible(format!(
+                                "{path} is a folder inside a folder, which a PS2 card's directories do not \
+                                 hold"
+                            )));
+                        }
+                        // A directory comes before what it holds, so the one this file goes in has
+                        // been laid down already, and is the last one of that name.
+                        let index = system
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|&index| directories[index].name == folder)
+                            .ok_or_else(|| {
+                                Error::NotConvertible(format!(
+                                    "{path} is in a folder no `system` part before it names"
+                                ))
+                            })?;
+                        directories[index].files.push(File {
+                            name: name.to_owned(),
+                            dirent,
+                            data: part.bytes()?.into_owned(),
+                        });
+                    }
+                }
+            }
+            // A `card-image` kept beside the saves is the archive, not the source, and an `aux` part
+            // is carried rather than read.
+            _ => {}
+        }
+    }
+    Ok(directories)
+}
+
+/// Whether a directory in the root is one of the console's own rather than a game's.
+///
+/// The ones Sony's software writes, and only those:
+///
+/// - `B?DATA-SYSTEM`, the browser's: its play history, written each time it boots a disc, and
+///   listed as "Your System Configuration".
+/// - `B?EXEC-SYSTEM`, a system update the boot ROM runs at startup, which is also where Free
+///   McBoot installs itself.
+/// - `B?EXEC-DVDPLAYER`, the DVD player a utility disc installs.
+/// - `BWNETCNF`, the network settings Sony's network library writes, from the Network Adaptor
+///   Start-up Disc or a game's own setup. No region letter.
+/// - `BWLINUX`, the one folder the PS2 Linux kernel lets itself touch.
+///
+/// The `?` is the console's region as the browser names it: `I` for Japan, `A` for North America
+/// and Asia, `E` for Europe, `C` for China. Those four are the whole list the browser picks from,
+/// in ps2homebrew's OSD-Initialization-Libraries (`osd/common/OSDInit.c`), which reimplements it;
+/// the network settings' path and files are in ps2sdk's `netcnf.c`.
+///
+/// A folder a homebrew loader keeps — Free McBoot's `BOOT` and `APPS`, OPL's `OPL` — is not here.
+/// No game wrote it either, but neither did the console, and the format has a word for a folder
+/// nothing identifies: a save with no game.
+fn is_system_folder(name: &str) -> bool {
+    const REGIONAL: [&str; 3] = ["DATA-SYSTEM", "EXEC-SYSTEM", "EXEC-DVDPLAYER"];
+    const UNREGIONAL: [&str; 2] = ["BWNETCNF", "BWLINUX"];
+
+    if UNREGIONAL.contains(&name) {
+        return true;
+    }
+    match name.as_bytes() {
+        [b'B', b'I' | b'A' | b'E' | b'C', ..] => REGIONAL.contains(&&name[2..]),
+        _ => false,
+    }
 }
 
 /// The product code out of a save directory's name.
@@ -335,35 +491,119 @@ mod tests {
         assert_eq!(from_dump.parts.len(), bundle.parts.len());
     }
 
-    /// The system's own folders are named for no game, so their saves carry no game, and a card
-    /// holding one still encodes. This once gave such a save an empty game, which the format
-    /// refuses, so reading a card with network settings on it made a bundle that would not write.
-    #[test]
-    fn a_system_folder_has_no_game_and_its_card_still_encodes() {
-        let file = |name: &str| File {
-            name: name.into(),
-            dirent: vec![0u8; ps2_memcard::ENTRY],
-            data: vec![7u8; 100],
-        };
-        let mut builder = CardBuilder::new(Capacity::Mb8);
-        builder.add(Save {
-            name: "BWNETCNF".into(),
-            dirent: vec![0u8; ps2_memcard::ENTRY],
-            files: vec![file("BWNETCNF")],
-        });
-        builder.add(Save {
-            name: "BASLUS-20312".into(),
-            dirent: vec![0u8; ps2_memcard::ENTRY],
-            files: vec![file("BASLUS-20312")],
-        });
-        let bundle = read(&builder.build().expect("builds"), &CardOptions::default()).expect("reads");
+    fn file(name: &str, fill: u8) -> File {
+        File { name: name.into(), dirent: vec![0u8; ps2_memcard::ENTRY], data: vec![fill; 100] }
+    }
 
-        assert_eq!(bundle.parts[0].path.as_deref(), Some("BWNETCNF"));
-        assert_eq!(bundle.parts[0].game, None);
-        let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).expect("inner bundle");
-        assert_eq!(inner.header.game, None);
-        assert_eq!(bundle.parts[1].game.as_ref().unwrap().serial.as_deref(), Some("SLUS-20312"));
-        bundle.to_vec().expect("encodes");
+    /// A card with the network settings on it between two directories that are not the console's:
+    /// a game's save, and a homebrew loader's folder that names no game.
+    fn card_with_network_settings() -> Vec<u8> {
+        let mut builder = CardBuilder::new(Capacity::Mb8);
+        for (name, files) in [
+            ("BASLUS-20312", vec![file("BASLUS-20312", 1)]),
+            ("BWNETCNF", vec![file("icon.sys", 2), file("BWNETCNF", 3)]),
+            ("OPL", vec![file("conf_opl.cfg", 4)]),
+        ] {
+            builder.add(Save { name: name.into(), dirent: vec![0u8; ps2_memcard::ENTRY], files });
+        }
+        builder.build().expect("builds")
+    }
+
+    /// The console's own folders are not saves, so they are not nested bundles: the directory is
+    /// one `system` part and each file in it another. This once made the network settings a save
+    /// with no game, which a consumer expecting every save to name one refused.
+    #[test]
+    fn the_consoles_own_folder_is_system_parts_rather_than_a_save() {
+        let bundle = read(&card_with_network_settings(), &CardOptions::default()).expect("reads");
+        bundle.validate().expect("a card with system parts is a valid bundle");
+
+        let summary: Vec<(PartKind, Option<&str>, Option<u64>)> =
+            bundle.parts.iter().map(|part| (part.kind.clone(), part.path.as_deref(), part.slot)).collect();
+        assert_eq!(
+            summary,
+            [
+                (PartKind::Bundle, Some("BASLUS-20312"), Some(0)),
+                (PartKind::System, Some("BWNETCNF"), Some(1)),
+                (PartKind::System, Some("BWNETCNF/icon.sys"), None),
+                (PartKind::System, Some("BWNETCNF/BWNETCNF"), None),
+                (PartKind::Bundle, Some("OPL"), Some(2)),
+            ],
+            "the root's order, the console's folder flattened into its entries"
+        );
+
+        let directory = &bundle.parts[1];
+        assert!(directory.payload.is_empty(), "a directory holds nothing but what comes after it");
+        assert_eq!(directory.dirent.as_ref().map(Vec::len), Some(ps2_memcard::ENTRY));
+        assert_eq!(bundle.parts[3].bytes().unwrap().as_ref(), [3u8; 100]);
+        assert!(bundle.parts[1..4].iter().all(|part| part.game.is_none()));
+
+        // A folder that is not the console's stays a save even when it names no game, because the
+        // format's word for that is unidentified rather than not a save.
+        assert_eq!(bundle.parts[0].game.as_ref().unwrap().serial.as_deref(), Some("SLUS-20312"));
+        assert_eq!(bundle.parts[4].game, None);
+    }
+
+    #[test]
+    fn the_consoles_own_folder_goes_back_where_it_was() {
+        let original = card_with_network_settings();
+        let bundle = read(&original, &CardOptions::default()).expect("reads");
+        let rebuilt = write(&bundle).expect("writes");
+
+        let directories = |image: &[u8]| MemoryCard::parse(image).unwrap().saves().unwrap();
+        assert_eq!(directories(&rebuilt), directories(&original));
+    }
+
+    /// A file can only go into a directory the parts have already laid down, and a PS2 card's
+    /// directories hold files and nothing deeper.
+    #[test]
+    fn a_system_entry_with_nowhere_to_go_is_refused() {
+        let mut bundle = read(&card_with_network_settings(), &CardOptions::default()).expect("reads");
+        bundle.parts[2].path = Some("BWNETCNF/deeper/icon.sys".into());
+        assert!(matches!(write(&bundle), Err(Error::NotConvertible(why)) if why.contains("inside a folder")));
+
+        let mut bundle = read(&card_with_network_settings(), &CardOptions::default()).expect("reads");
+        bundle.parts.remove(1);
+        assert!(
+            matches!(write(&bundle), Err(Error::NotConvertible(why)) if why.contains("no `system` part"))
+        );
+
+        // And a game's save is not one of the console's folders, whatever the path says.
+        let mut bundle = read(&card_with_network_settings(), &CardOptions::default()).expect("reads");
+        bundle.parts[2].path = Some("BASLUS-20312/icon.sys".into());
+        assert!(
+            matches!(write(&bundle), Err(Error::NotConvertible(why)) if why.contains("no `system` part"))
+        );
+    }
+
+    #[test]
+    fn the_consoles_folders_are_told_apart_by_name() {
+        for name in [
+            "BIDATA-SYSTEM",
+            "BADATA-SYSTEM",
+            "BEDATA-SYSTEM",
+            "BCDATA-SYSTEM",
+            "BIEXEC-SYSTEM",
+            "BEEXEC-DVDPLAYER",
+            "BWNETCNF",
+            "BWLINUX",
+        ] {
+            assert!(is_system_folder(name), "{name} is the console's");
+        }
+        // A letter that is no region's, a name with something after it, and the folders a homebrew
+        // loader keeps, which no game wrote and no console did either.
+        for name in [
+            "BASLUS-20312",
+            "BXDATA-SYSTEM",
+            "BADATA-SYSTEMS",
+            "BDATA-SYSTEM",
+            "badata-system",
+            "BWNETCNF2",
+            "OPL",
+            "BOOT",
+            "SYS-CONF",
+        ] {
+            assert!(!is_system_folder(name), "{name} is not the console's");
+        }
     }
 
     #[test]

@@ -46,11 +46,15 @@ knows what to write in a bundle's `source`.
 
 A card is a bundle whose `card` map holds the card's own properties and whose parts are one nested
 bundle per save, each carrying that save's directory entry verbatim. Extracting one save is then a
-byte copy rather than a re-encode.
+byte copy rather than a re-encode. What a console keeps on the card for itself — a PS2's browser
+history, its network settings, a system update — is no game's save, so it rides beside them as
+`system` parts, one per file or directory, and every save on a card is a game's.
 
-Every format round-trips: a card read into a bundle and written back out is the same card. What
-that does not promise is byte-exact fidelity through a PS2 *rebuild*, where a writer reallocates
-the filesystem — keep a `card-image` part if you need that.
+Every format round-trips: a card read into a bundle and written back out is one a console loads
+exactly as it loaded the original — every directory in its order, every entry, every byte of every
+file. It is not the same bytes. A writer allocates its own blocks, where a console's placement
+depends on everything ever written to the card, and leaves free blocks erased rather than holding
+whatever a deleted save left — keep a `card-image` part if you need those.
 
 A card with nothing on it is carried as a single `card-image` part, and `card::blank` makes one
 from nothing: any size the format comes in (`card::sizes`), a GameCube card for a Japanese console's

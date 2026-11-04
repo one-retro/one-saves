@@ -54,6 +54,7 @@ impl Bundle {
         // breaks by holding them is the one worth naming.
         self.check_parts_against_shape()?;
         self.check_part_addresses()?;
+        self.check_system_entries()?;
 
         for (index, part) in self.parts.iter().enumerate() {
             let path = format!("parts[{index}]");
@@ -103,6 +104,32 @@ impl Bundle {
         Ok(())
     }
 
+    /// Every `system` file sits in a directory with a `system` part of its own, ahead of the
+    /// file's.
+    ///
+    /// A writer lays a card's entries down in part order, so a file whose directory comes later,
+    /// or never, is one it has nowhere to put. Only a card holds `system` parts, which
+    /// [`check_parts_against_shape`](Self::check_parts_against_shape) has already settled.
+    fn check_system_entries(&self) -> Result<(), Error> {
+        let mut laid_down: Vec<&str> = Vec::new();
+        for (index, part) in self.parts.iter().enumerate() {
+            // A part without a path is refused on its own account, by `check_system_part`.
+            let Some(path) = part.path.as_deref().filter(|_| part.kind == PartKind::System) else {
+                continue;
+            };
+            if let Some((directory, _)) = path.rsplit_once('/')
+                && !laid_down.contains(&directory)
+            {
+                return Err(Error::at(
+                    format!("parts[{index}]"),
+                    ErrorKind::SystemEntryBeforeItsDirectory { directory: directory.to_owned() },
+                ));
+            }
+            laid_down.push(path);
+        }
+        Ok(())
+    }
+
     /// Which kinds of part this bundle's shape holds, and how many of each.
     ///
     /// A shape this version does not define constrains nothing: its rules are in a document this
@@ -146,6 +173,9 @@ impl Bundle {
                 if let Some(&index) = positions(PartKind::Bundle).first() {
                     return refuse(index, "state", "holds no nested bundle");
                 }
+                if let Some(&index) = positions(PartKind::System).first() {
+                    return refuse(index, "state", SYSTEM_ONLY_ON_A_CARD);
+                }
             }
             // One image, and nothing else: two are two bundles, which a collection holds together.
             Shape::Screenshot => {
@@ -176,6 +206,13 @@ impl Bundle {
                 {
                     return refuse(index, "save", "holds no nested bundle");
                 }
+                // An entry belonging to no game is the card's, so only a card has one. A device
+                // holds it inside the card it came off, which is where a writer looks for it.
+                if *shape != Shape::Card
+                    && let Some(&index) = positions(PartKind::System).first()
+                {
+                    return refuse(index, name, SYSTEM_ONLY_ON_A_CARD);
+                }
                 // A device's components are told apart by `role` and nothing else. Writing it is
                 // required rather than advised, because `role` otherwise defaults to `primary`, and
                 // two components that both fell back to it would be a device whose halves a
@@ -190,6 +227,9 @@ impl Bundle {
         Ok(())
     }
 }
+
+/// Why a `system` part is refused anywhere but on a card.
+const SYSTEM_ONLY_ON_A_CARD: &str = "holds no `system` part; an entry belonging to no game is a card's";
 
 /// The name a shape this version defines is written as, for an error to name it by.
 fn shape_name(shape: &Shape) -> &'static str {
@@ -288,6 +328,7 @@ fn check_part_kind(part: &Part, path: &str) -> Result<(), Error> {
     let kind = match part.kind {
         PartKind::State => "state",
         PartKind::Screenshot => "screenshot",
+        PartKind::System => return check_system_part(part, path),
         _ => return Ok(()),
     };
     let screenshot = part.kind == PartKind::Screenshot;
@@ -316,6 +357,25 @@ fn check_part_kind(part: &Part, path: &str) -> Result<(), Error> {
             }
             Some(_) => {}
         }
+    }
+    Ok(())
+}
+
+/// Checks the keys a `system` part takes.
+///
+/// Its `path` is the only thing that says where on the card the entry goes, so it is required.
+/// And it names no game, because belonging to none is what makes it a `system` part rather than a
+/// save: one that named a game would be a save filed under the wrong kind.
+fn check_system_part(part: &Part, path: &str) -> Result<(), Error> {
+    if part.path.is_none() {
+        return Err(Error::at(path, ErrorKind::MissingKey("path")));
+    }
+    // No game, since it belongs to none, and no `system`, which only indexes a nested bundle.
+    if part.game.is_some() {
+        return Err(Error::at(path, ErrorKind::KeyNotOnPart { kind: "system", field: "game" }));
+    }
+    if part.system.is_some() {
+        return Err(Error::at(path, ErrorKind::KeyNotOnPart { kind: "system", field: "system" }));
     }
     Ok(())
 }
@@ -859,6 +919,102 @@ mod tests {
             refused(bundle.header.clone().taken_with(TakenWith::default().language("ja")), "taken_with");
             refused(bundle.header.clone().origin(crate::Origin::Auto), "origin");
         }
+    }
+
+    /// A PS2 card with its network settings on it: a save, then the folder and its one file.
+    fn card_with_a_system_folder() -> Bundle {
+        Bundle {
+            header: Header::new(Shape::Card)
+                .card(crate::Card::new(Slug::parse("ps2-mc").unwrap(), 8_388_608)),
+            parts: vec![
+                nested_save(0),
+                Part::new(1, Vec::new()).kind(PartKind::System).path("BWNETCNF"),
+                Part::new(2, *b"NET").kind(PartKind::System).path("BWNETCNF/BWNETCNF"),
+            ],
+        }
+    }
+
+    #[test]
+    fn a_card_carries_entries_belonging_to_no_game_beside_its_saves() {
+        card_with_a_system_folder().validate().expect("a card holds system entries");
+
+        // The path is the whole of where the entry goes, so without one there is nowhere.
+        let mut pathless = card_with_a_system_folder();
+        pathless.parts[2].path = None;
+        assert_eq!(pathless.validate().unwrap_err().kind(), &ErrorKind::MissingKey("path"));
+
+        // And one naming a game is a save filed under the wrong kind.
+        let mut claimed = card_with_a_system_folder();
+        claimed.parts[2].game = Some(Game::default().serial("SCUS-97129"));
+        assert_eq!(
+            claimed.validate().unwrap_err().kind(),
+            &ErrorKind::KeyNotOnPart { kind: "system", field: "game" }
+        );
+
+        // `system` indexes a nested bundle, and an entry is not one.
+        let mut indexed = card_with_a_system_folder();
+        indexed.parts[1].system = Some(Slug::parse("ps2").unwrap());
+        assert_eq!(
+            indexed.validate().unwrap_err().kind(),
+            &ErrorKind::KeyNotOnPart { kind: "system", field: "system" }
+        );
+    }
+
+    /// A writer lays entries down in part order, so a file's directory comes ahead of it.
+    #[test]
+    fn a_system_file_comes_after_its_directory() {
+        let outside = || ErrorKind::SystemEntryBeforeItsDirectory { directory: "BWNETCNF".into() };
+
+        let mut orphan = card_with_a_system_folder();
+        orphan.parts.remove(1);
+        assert_eq!(orphan.validate().unwrap_err().kind(), &outside());
+
+        let mut late = card_with_a_system_folder();
+        late.parts.swap(1, 2);
+        late.parts[1].id = 1;
+        late.parts[2].id = 2;
+        let error = late.validate().unwrap_err();
+        assert_eq!(error.kind(), &outside());
+        assert_eq!(error.path(), "parts[1]", "the file, which is where it went wrong");
+
+        // A save's directory is not a system part's to put a file in.
+        let mut misfiled = card_with_a_system_folder();
+        misfiled.parts[2].path = Some("BASLUS-20312/icon.sys".into());
+        assert_eq!(
+            misfiled.validate().unwrap_err().kind(),
+            &ErrorKind::SystemEntryBeforeItsDirectory { directory: "BASLUS-20312".into() }
+        );
+    }
+
+    #[test]
+    fn only_a_card_carries_an_entry_belonging_to_no_game() {
+        let entry = || Part::new(1, *b"NET").kind(PartKind::System).path("BWNETCNF/BWNETCNF");
+        let reason = SYSTEM_ONLY_ON_A_CARD;
+
+        let save = bundle_of(vec![Part::new(0, *b"SAVE"), entry()]);
+        assert_eq!(save.validate().unwrap_err().kind(), &ErrorKind::PartNotInShape { shape: "save", reason });
+
+        let mut device = Bundle {
+            header: Header::new(Shape::Device).system(Slug::parse("ps2").unwrap()),
+            parts: vec![nested_save(0), entry().role(Slug::parse("memcard-1").unwrap())],
+        };
+        device.parts[0].role = Some(Slug::parse("memcard-2").unwrap());
+        assert_eq!(
+            device.validate().unwrap_err().kind(),
+            &ErrorKind::PartNotInShape { shape: "device", reason }
+        );
+
+        let state = state_of(vec![state_part(0), entry()]);
+        assert_eq!(
+            state.validate().unwrap_err().kind(),
+            &ErrorKind::PartNotInShape { shape: "state", reason }
+        );
+
+        let collection = collection_of(vec![nested_save(0), entry()]);
+        assert_eq!(
+            collection.validate().unwrap_err().kind(),
+            &ErrorKind::PartNotInShape { shape: "collection", reason }
+        );
     }
 
     #[test]

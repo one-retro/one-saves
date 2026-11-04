@@ -207,6 +207,15 @@ pub enum ErrorKind {
         second: u64,
     },
 
+    /// A card's `system` part sits in a directory no `system` part before it names.
+    ///
+    /// A writer lays a card's entries down in part order, so the directory has to come first or
+    /// there is nowhere to put the file.
+    SystemEntryBeforeItsDirectory {
+        /// The directory the entry's `path` names.
+        directory: String,
+    },
+
     /// `rom_hashes` was not in ascending tag order.
     RomHashesOutOfOrder,
 
@@ -312,6 +321,11 @@ impl fmt::Display for ErrorKind {
                 f,
                 "parts {first} and {second} are of one kind and agree on `role`, `path` and `slot` \
                  together, so nothing can tell them apart"
+            ),
+            ErrorKind::SystemEntryBeforeItsDirectory { directory } => write!(
+                f,
+                "sits in `{directory}`, and no `system` part before it is that directory, so a writer \
+                 has nowhere to put it"
             ),
             ErrorKind::RomHashesOutOfOrder => f.write_str("is not in ascending tag order"),
             ErrorKind::RomHashesDuplicateAlgorithm(algorithm) => {

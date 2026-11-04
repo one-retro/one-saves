@@ -3,8 +3,8 @@
   "spec_version": "0.6",
   "generated_from": "test/bundles.js",
   "counts": {
-    "valid": 37,
-    "invalid": 92
+    "valid": 38,
+    "invalid": 97
   },
   "cases": [
     {
@@ -27,6 +27,13 @@
       "file": "valid/ps2-card.cbor",
       "sha256": "f50f33e0ce09888f4c4eca6a8ea0bc4120e130a36cc6d357f7ec61c62615d2b7",
       "note": "A PS1 card holding three saves, two of them for one game, and a PS2 card holding one save that is itself a directory of files. Between them they cover both nesting shapes a card takes."
+    },
+    {
+      "name": "card-system-entries",
+      "expect": "valid",
+      "file": "valid/card-system-entries.cbor",
+      "sha256": "04d9bfa07d46478598f8c9e316170bd7dabf630a088641f281fd1f2415eca37c",
+      "note": "A PS2 card holding the console's network settings beside a game's save. The settings are no game's, so they are not a save: the directory is one `system` part with an empty payload, and each file in it another, after it."
     },
     {
       "name": "card-image-beside-splits",
@@ -683,6 +690,30 @@
       "note": "A screenshot bundle is one image. Two images are two bundles, which a collection can hold together."
     },
     {
+      "name": "system-part-in-a-save",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/system-part-in-a-save.cbor",
+      "sha256": "ca6eed25d2d17cb63f88f796ca93b5728f2f954b5edbff8edd76a8ec37ce6214",
+      "note": "A `system` part is an entry on a card that belongs to no game, so it sits on a card and nowhere else, says where on the card it goes, and names no game."
+    },
+    {
+      "name": "system-part-without-path",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/system-part-without-path.cbor",
+      "sha256": "885c6ea955be59f4c304ea2c836fd91930bcf4e35aaa97c39581d72d0e10e064",
+      "note": "A `system` part is an entry on a card that belongs to no game, so it sits on a card and nowhere else, says where on the card it goes, and names no game."
+    },
+    {
+      "name": "system-part-naming-a-game",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/system-part-naming-a-game.cbor",
+      "sha256": "16b9ed1c03a73aa02737d932e7d79562bc0a7314cd1feae4a7e1ee368e407f50",
+      "note": "A `system` part is an entry on a card that belongs to no game, so it sits on a card and nowhere else, says where on the card it goes, and names no game."
+    },
+    {
       "name": "taken-at-on-a-save",
       "expect": "invalid",
       "rejected_by": "schema",
@@ -1001,6 +1032,22 @@
       "file": "invalid/state-holding-a-bundle-part.cbor",
       "sha256": "94160cad6b9412042804e93a9f7c730a4cb2ed9ce8efa9cab71966db87e8c035",
       "note": "A state holds no nested bundle. A state and an in-game save in one file is a collection of two bundles."
+    },
+    {
+      "name": "system-file-without-its-directory",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/system-file-without-its-directory.cbor",
+      "sha256": "170aede290629415bada317389174db3b2ef9c8414129f5afebbb0983ef07404",
+      "note": "A `system` file sits in a directory that has a `system` part of its own, ahead of the file's, so a writer has made the directory before it reaches the file. Here the directory is missing, and then it comes too late."
+    },
+    {
+      "name": "system-file-before-its-directory",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/system-file-before-its-directory.cbor",
+      "sha256": "f25aea2fd3b5bce2f24aec59a135b05e43a8af0753a2d9230740b5d291d5a8eb",
+      "note": "A `system` file sits in a directory that has a `system` part of its own, ahead of the file's, so a writer has made the directory before it reaches the file. Here the directory is missing, and then it comes too late."
     }
   ]
 }

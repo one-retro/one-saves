@@ -187,10 +187,21 @@ impl Card {
         self.capacity() / self.block_size().max(1)
     }
 
-    /// How many blocks the saves on it occupy.
+    /// How many blocks the saves on it occupy, and the console's own files beside them.
+    ///
+    /// Those are not saves, so they are not listed, but a PS2's network settings take room on the
+    /// card all the same.
     #[must_use]
     pub fn used_blocks(&self) -> u64 {
-        self.entries().iter().map(|entry| entry.blocks).sum()
+        let block = self.block_size().max(1);
+        let system: u64 = self
+            .bundle
+            .parts
+            .iter()
+            .filter(|part| part.kind == PartKind::System)
+            .map(|part| part.payload.len().div_ceil(block))
+            .sum();
+        self.entries().iter().map(|entry| entry.blocks).sum::<u64>() + system
     }
 
     /// How many blocks are left.

@@ -764,6 +764,15 @@ pub enum PartKind {
     CardImage,
     /// The payload is itself a complete bundle. This is how a card holds its saves.
     Bundle,
+    /// One file or directory on a card that belongs to the card or the console, not to a game.
+    ///
+    /// A PS2's network settings and browser history are ordinary entries in its filesystem, which
+    /// no game wrote. They are not saves, so they are not nested bundles: a part per entry, its
+    /// [`path`](Part::path) the entry's place on the card and its [`dirent`](Part::dirent) the
+    /// entry, with a directory's payload empty and coming before what it holds. Only in a
+    /// [card](crate::Shape::Card), and never naming a game: the header's does not describe it
+    /// either, even on a card of one game.
+    System,
     /// Anything else binary. `content_type` should be set.
     Aux,
     /// A kind this crate does not know.
@@ -773,7 +782,7 @@ pub enum PartKind {
 }
 
 impl PartKind {
-    /// The kind a name denotes, mapping the five the spec writes and keeping anything else.
+    /// The kind a name denotes, mapping the six the spec writes and keeping anything else.
     #[must_use]
     pub fn from_name(name: Name) -> Self {
         match name.as_str() {
@@ -781,6 +790,7 @@ impl PartKind {
             "screenshot" => PartKind::Screenshot,
             "card-image" => PartKind::CardImage,
             "bundle" => PartKind::Bundle,
+            "system" => PartKind::System,
             "aux" => PartKind::Aux,
             _ => PartKind::Other(name),
         }
@@ -795,6 +805,7 @@ impl PartKind {
             PartKind::Screenshot => Some("screenshot"),
             PartKind::CardImage => Some("card-image"),
             PartKind::Bundle => Some("bundle"),
+            PartKind::System => Some("system"),
             PartKind::Aux => Some("aux"),
             PartKind::Other(name) => Some(name.as_str()),
         }
@@ -1049,7 +1060,7 @@ mod tests {
 
     #[test]
     fn a_spec_kind_round_trips_through_its_name() {
-        for text in ["state", "screenshot", "card-image", "bundle", "aux"] {
+        for text in ["state", "screenshot", "card-image", "bundle", "system", "aux"] {
             let kind = PartKind::from_name(Name::parse(text).unwrap());
             assert_eq!(kind.as_str(), Some(text));
             assert!(!matches!(kind, PartKind::Other(_)), "{text} should be a known kind");

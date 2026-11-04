@@ -158,6 +158,10 @@ card format cannot rebuild the card and **must not** attempt the write.
 A card with nothing saved on it converts too, as a single `card-image` part: a formatted card is
 still a real card, and an image is the only part it can have when there is no save to nest.
 
+Not everything on a card is a save. A PS2 keeps its browser history, its network settings and any
+system update in folders of its own, and those ride beside the saves as `system` parts, so every
+save on a card names the game it belongs to.
+
 ## Save states and screenshots
 
 A save state is not a save. The game wrote a save, and anything that runs the game reads it; an
