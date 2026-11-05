@@ -224,7 +224,8 @@ the save, the MiSTer Gameboy and GBA cores and the Gameboy core's Analogue Pocke
 bit-packed, Gambatte and mincer_ray's Pocket GBA core keep it in a `.rtc` file beside it. All of them arrive as the same two
 keys, and `extract` puts each back in the shape its producer writes — down to the reserved size,
 which is a whole 512-byte SD block on MiSTer and sixteen bytes on the Pocket. `convert` picks up a
-`.rtc` named after the save on its own; `extract --rtc-file` writes one.
+`.rtc` named after the save on its own, as long as it is a plain file and not a link; `--rtc-file`
+names one anywhere, and `extract --rtc-file` writes one.
 
 Gambatte's sidecar is a special case worth knowing about. It stores the instant the clock counts
 *from* rather than what it reads. The cartridge clock follows the host's, so `1saves` takes the

@@ -24,6 +24,13 @@ $ 1saves extract card.1saves --part 1   # pull one save out as its own bundle
 $ 1saves profiles                # what --from accepts
 ```
 
+A bundle is whatever file someone handed over, so `extract` checks it before writing any of it:
+every digest, down to each save on a card, and nothing at all is written from a bundle that does not
+match itself — `verify` says which part. An output is never written over an existing file without
+`--force`, and never through a link: with `--force` a link at the output is replaced, not followed.
+A clock or a thumbnail picked up from beside the input is read only when it is a plain file, since
+the user named the input and not it. What any one command inflates is capped, at 192 MiB.
+
 `new` makes an empty, formatted card, written as the file an emulator or a flash cart loads:
 
 ```console

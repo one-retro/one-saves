@@ -14,7 +14,11 @@ use one_saves::{Bundle, Name, Shape};
 use one_saves_convert::screenshot::{self, ScreenshotOptions};
 use one_saves_convert::state::{self, Emulator, StateFile, StateOptions};
 
-use crate::{Convert, Extract, Fallible, Identified, slug_flag, write_out};
+use crate::{Convert, Extract, Fallible, Identified, printable, read_beside, slug_flag, write_out};
+
+/// The largest thumbnail taken from beside a state. RetroArch's is a screenshot of the game, a few
+/// hundred kilobytes at most even upscaled; this is room for one of an 8K window and then some.
+const MAX_THUMBNAIL: u64 = 32 << 20;
 
 /// What a file is, when it is one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,9 +103,16 @@ pub(crate) fn convert(args: &Convert, kind: Kind, bytes: &[u8]) -> Fallible {
 
     let bundle = match kind {
         Kind::State(emulator) => {
-            // RetroArch keeps its thumbnail beside the state, named for it.
+            // RetroArch keeps its thumbnail beside the state, named for it. It is only ever read
+            // as a file of its own: anything else under that name is passed over, and said to be.
             let beside = appended(&args.input, ".png");
-            let thumbnail = (emulator == Emulator::RetroArch).then(|| std::fs::read(&beside).ok()).flatten();
+            let thumbnail = match emulator {
+                Emulator::RetroArch => read_beside(&beside, MAX_THUMBNAIL).unwrap_or_else(|why| {
+                    eprintln!("note: {why}, so it is not taken as the state's screenshot");
+                    None
+                }),
+                _ => None,
+            };
             if thumbnail.is_some() {
                 println!("{}: took the screenshot beside it", beside.display());
             }
@@ -219,17 +230,18 @@ pub(crate) fn extract(args: &Extract, bundle: &Bundle) -> Fallible {
     write_out(&output, &rebuilt.bytes, args.force)?;
     let core = bundle.header.source.as_ref().and_then(|source| source.core.as_ref());
     let into = core.map_or_else(String::new, |core| format!(", for {core}"));
+    // The file's name is the bundle's to choose, so it is shown escaped.
     println!(
         "{} -> {} ({}{into}, {} bytes)",
         args.input.display(),
-        output.display(),
+        printable(&output.display().to_string()),
         emulator.label(),
         rebuilt.bytes.len()
     );
     if let Some(png) = &rebuilt.screenshot {
         let beside = appended(&output, ".png");
         write_out(&beside, png, args.force)?;
-        println!("screenshot -> {} ({} bytes)", beside.display(), png.len());
+        println!("screenshot -> {} ({} bytes)", printable(&beside.display().to_string()), png.len());
     }
     if !rebuilt.left_out.is_empty() {
         let ids: Vec<String> = rebuilt.left_out.iter().map(ToString::to_string).collect();

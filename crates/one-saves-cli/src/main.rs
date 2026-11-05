@@ -225,17 +225,25 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("1saves: {error}");
-            // Errors nest — a bad part inside a nested bundle inside a card — and the chain is
-            // where the actual fault usually is.
-            let mut source = std::error::Error::source(&*error);
-            while let Some(inner) = source {
-                eprintln!("  caused by: {inner}");
-                source = inner.source();
-            }
+            eprint!("{}", report(&*error));
             ExitCode::FAILURE
         }
     }
+}
+
+/// What a failure prints: the error, then every error beneath it.
+///
+/// Errors nest — a bad part inside a nested bundle inside a card — and the chain is where the
+/// actual fault usually is. Each is escaped like any other text out of the file, since an error
+/// can quote some: a content type, an encoding, a member's name in an archive.
+fn report(error: &dyn std::error::Error) -> String {
+    let mut out = format!("1saves: {}\n", printable(&error.to_string()));
+    let mut source = error.source();
+    while let Some(inner) = source {
+        let _ = writeln!(out, "  caused by: {}", printable(&inner.to_string()));
+        source = inner.source();
+    }
+    out
 }
 
 type Fallible = Result<(), Box<dyn std::error::Error>>;
@@ -259,13 +267,81 @@ fn extension_of(path: &Path) -> String {
     path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase()
 }
 
-/// Refuses to clobber an existing file unless told to.
+/// Writes `bytes` to `path`, refusing to clobber an existing file unless told to.
+///
+/// Neither way writes through a link already at `path`. An output lands beside its input unless
+/// the caller says otherwise, and an input that came out of an archive can have a link beside it,
+/// named for the output and pointing anywhere the user can write: following it would put bytes the
+/// file chose wherever the file's author liked. Without `force`, the file is created only where
+/// nothing is — a dangling link counts as something. With it, the bytes go to a new file beside
+/// `path` that is then renamed over it, and a rename replaces a link rather than following it.
 fn write_out(path: &Path, bytes: &[u8], force: bool) -> Fallible {
-    if path.exists() && !force {
-        return Err(format!("{} already exists; pass --force to overwrite", path.display()).into());
+    if !force {
+        return create_new(path, bytes).map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => format!(
+                "{} already exists; pass --force to overwrite",
+                printable(&path.display().to_string())
+            )
+            .into(),
+            _ => e.into(),
+        });
     }
-    std::fs::write(path, bytes)?;
-    Ok(())
+
+    let name = path.file_name().ok_or_else(|| format!("{} names no file", path.display()))?;
+    let mut temporary = std::ffi::OsString::from(".");
+    temporary.push(name);
+    temporary.push(format!(".{}.1saves-partial", std::process::id()));
+    let temporary = path.with_file_name(temporary);
+    create_new(&temporary, bytes)?;
+    std::fs::rename(&temporary, path).map_err(|e| {
+        let _ = std::fs::remove_file(&temporary);
+        e.into()
+    })
+}
+
+/// Creates `path` with `bytes` in it, failing if anything at all is there, a link included.
+///
+/// `create_new` is `O_CREAT | O_EXCL`, which refuses an existing path without following it. A
+/// write that fails partway takes the file it made with it, rather than leaving half of one.
+fn create_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(bytes).and_then(|()| file.sync_all()).inspect_err(|_| {
+        let _ = std::fs::remove_file(path);
+    })
+}
+
+/// A file found beside the input rather than named on the command line, or `None` when there is
+/// none.
+///
+/// The user named the input and not this, so it is held to more than `fs::read` would. It has to
+/// be a regular file in its own right and not a link, because a link is how a directory someone
+/// else put together reaches a file of the user's they never meant to carry off in a bundle they
+/// share. And it has to be no longer than `limit`, so that a FIFO or a device under the expected
+/// name is turned down rather than waited on forever or read without end. Turned down, the error
+/// says why.
+fn read_beside(path: &Path, limit: u64) -> Result<Option<Vec<u8>>, String> {
+    use std::io::Read as _;
+    let shown = || printable(&path.display().to_string());
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{} cannot be read: {e}", shown())),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(format!("{} is not a regular file", shown()));
+    }
+    if metadata.len() > limit {
+        return Err(format!("{} is {} bytes, more than the {limit} it could be", shown(), metadata.len()));
+    }
+
+    let file = std::fs::File::open(path).map_err(|e| format!("{} cannot be read: {e}", shown()))?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes).map_err(|e| format!("{} cannot be read: {e}", shown()))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("{} grew past the {limit} bytes it could be while it was read", shown()));
+    }
+    Ok(Some(bytes))
 }
 
 /// The bytes to convert and the extension to detect them by, with any archive taken off first.
@@ -283,7 +359,8 @@ fn unwrap_archive(
     }
     let unpacked = one_saves_convert::archive::unpack(&bytes)?;
     if unpacked.assembled {
-        eprintln!("{}: built a card from {}", input.display(), unpacked.source);
+        // `source` lists the members' names, which are the archive's to choose.
+        eprintln!("{}: built a card from {}", input.display(), printable(&unpacked.source));
     }
     Ok((unpacked.bytes, unpacked.extension))
 }
@@ -295,19 +372,28 @@ fn unwrap_archive(
 /// records the instant itself, and has none here.
 type Sidecar = (std::path::PathBuf, Vec<u8>, Option<i64>);
 
+/// The longest a clock kept in a file of its own could be, with room to spare: the longest any
+/// producer writes is MiSTer's, at 512 bytes.
+const MAX_SIDECAR_CLOCK: u64 = 64 << 10;
+
 fn sidecar_clock(args: &Convert) -> Result<Option<Sidecar>, Box<dyn std::error::Error>> {
-    let path = args.rtc_file.clone().or_else(|| {
+    // A clock named on the command line is read as given. One found beside the input is read only
+    // as a file, since the user never named it.
+    let found = if let Some(path) = &args.rtc_file {
+        Some((path.clone(), std::fs::read(path)?))
+    } else {
         let beside = args.input.with_extension("rtc");
-        beside.exists().then_some(beside)
-    });
-    let Some(path) = path else {
+        read_beside(&beside, MAX_SIDECAR_CLOCK)
+            .map_err(|why| format!("{why}, so it is not read as the save's clock; name it with --rtc-file"))?
+            .map(|bytes| (beside, bytes))
+    };
+    let Some((path, bytes)) = found else {
         if args.rtc_captured_at.is_some() {
             return Err("--rtc-captured-at was given, but there is no sidecar clock to apply it to".into());
         }
         return Ok(None);
     };
 
-    let bytes = std::fs::read(&path)?;
     if bytes.len() != one_saves_convert::rtc::GAMBATTE_RTC_LEN {
         if args.rtc_captured_at.is_some() {
             return Err(format!(
@@ -643,6 +729,13 @@ fn extract(args: Extract) -> Fallible {
     let bytes = std::fs::read(&args.input)?;
     let bundle = Bundle::from_slice(&bytes)?;
 
+    // Nothing goes out that was not checked: decoding leaves most digests alone, and a part whose
+    // bytes are not the ones it names is not the save it says it is. This also holds what the
+    // writers below inflate to the budget, since a part claiming more than it has fails here.
+    if let Some(problem) = digest_problems(&bundle, &mut MAX_INFLATED.clone()).first() {
+        return Err(format!("{problem}; `1saves verify` lists every problem").into());
+    }
+
     // A part named by id is a straight payload dump, whatever the bundle is.
     if let Some(id) = args.part {
         let payload = raw::unwrap_part(&bundle, id)?;
@@ -807,10 +900,11 @@ const LABEL_WIDTH: usize = 13;
 /// later version's.
 const MAX_DEPTH: usize = 4;
 
-/// The most one listing inflates, across every compressed `bundle` part it opens.
+/// The most one command inflates, across every compressed part it opens: a listing, a check of the
+/// digests, a content hash.
 ///
 /// Inflating a part stops at what it claims, and the claim is the file's to make, so the claims
-/// need a bound of their own. One for the whole listing rather than one a part, because a file can
+/// need a bound of their own. One for the whole command rather than one a part, because a file can
 /// hold any number of parts each claiming just under a per-part cap, and an inflated bundle can
 /// hold thousands more. This is a dozen of the largest cards there are, 16 MiB GameCube ones: it
 /// declines a bomb and no real collection.
@@ -1193,11 +1287,13 @@ fn describe_extension(extensions: &one_saves::Extensions, key: &one_saves::Rever
 ///
 /// A bundle is whatever file someone handed over, and a title in it can hold an escape sequence
 /// that moves the cursor, retitles the window or rewrites what was printed before it. Every
-/// control character is written as its escape instead, the way `{:?}` would.
+/// control character is written as its escape instead, the way `{:?}` would. So is every one that
+/// reorders text — the bidirectional overrides, embeddings, isolates and marks — which would let a
+/// name show as something it is not, an `exe.sav` that reads as `vas.exe`.
 fn printable(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for character in text.chars() {
-        if character.is_control() {
+        if character.is_control() || is_bidi_control(character) {
             out.extend(character.escape_default());
         } else {
             out.push(character);
@@ -1206,26 +1302,94 @@ fn printable(text: &str) -> String {
     out
 }
 
+/// The format characters that change the order text is shown in.
+fn is_bidi_control(character: char) -> bool {
+    matches!(character, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// Every part's digest, checked against its bytes, in this bundle and in every bundle it holds.
+///
+/// Decoding checks a nested bundle's own digest, since that is its identity, but not those of the
+/// parts inside it, and nothing inside a compressed one, which it leaves shut. A byte flipped in
+/// one save on a card, with the card's digest of that save rewritten to match, is a file that
+/// decodes cleanly; this is what catches it. What it inflates comes out of `inflatable`, and it
+/// opens bundles [`MAX_DEPTH`] deep, the same bounds a listing keeps to. Anything it cannot check
+/// is a problem too, since a check that passes over a part has not passed it.
+///
+/// Each problem is a line naming the part by where it sits: `part 1 > part 0`.
+fn digest_problems(bundle: &Bundle, inflatable: &mut u64) -> Vec<String> {
+    let mut problems = Vec::new();
+    check_digests(bundle, "", 0, inflatable, &mut problems);
+    problems
+}
+
+fn check_digests(
+    bundle: &Bundle,
+    within: &str,
+    depth: usize,
+    inflatable: &mut u64,
+    problems: &mut Vec<String>,
+) {
+    for part in &bundle.parts {
+        let at = format!("{within}part {}", part.id);
+        if let Payload::Compressed { size, .. } = &part.payload {
+            if *size > *inflatable {
+                problems.push(format!(
+                    "{at}: not inflated, claiming {size} bytes where {inflatable} are left to inflate"
+                ));
+                continue;
+            }
+            *inflatable -= size;
+        }
+        let bytes = match part.bytes() {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                problems.push(format!("{at}: {}", printable(&e.to_string())));
+                continue;
+            }
+        };
+        if one_saves::HashValue::sha256_of(&bytes) != part.sha256 {
+            problems.push(format!("{at}: sha256 does not match its payload"));
+            continue;
+        }
+
+        if part.kind != PartKind::Bundle {
+            continue;
+        }
+        if depth >= MAX_DEPTH {
+            problems.push(format!("{at}: not checked, being more than {MAX_DEPTH} bundles deep"));
+            continue;
+        }
+        match Bundle::from_slice(&bytes) {
+            Ok(inner) => check_digests(&inner, &format!("{at} > "), depth + 1, inflatable, problems),
+            Err(e) => problems.push(format!("{at}: is not a bundle: {}", printable(&e.to_string()))),
+        }
+    }
+}
+
+/// What every compressed part at the top of `bundle` claims it inflates to, together.
+///
+/// The parts of a bundle nested in another are uncompressed, so these are all the claims a
+/// command that opens no nested bundle acts on.
+fn claimed_inflation(bundle: &Bundle) -> u64 {
+    bundle
+        .parts
+        .iter()
+        .filter(|part| matches!(part.payload, Payload::Compressed { .. }))
+        .fold(0u64, |total, part| total.saturating_add(part.payload.len()))
+}
+
 fn verify(path: &Path) -> Fallible {
     let bytes = std::fs::read(path)?;
     let bundle = Bundle::from_slice(&bytes)?;
 
     // Decoding already ran every structural rule; what is left is the digests, which are checked
-    // against the bytes rather than trusted.
-    let mut bad = 0;
-    for part in &bundle.parts {
-        match part.verify() {
-            Ok(true) => {}
-            Ok(false) => {
-                bad += 1;
-                eprintln!("  part {}: sha256 does not match its payload", part.id);
-            }
-            Err(e) => {
-                bad += 1;
-                eprintln!("  part {}: {e}", part.id);
-            }
-        }
+    // against the bytes rather than trusted, all the way down.
+    let problems = digest_problems(&bundle, &mut MAX_INFLATED.clone());
+    for problem in &problems {
+        eprintln!("  {problem}");
     }
+    let mut bad = problems.len();
 
     // Re-encoding must reproduce the file byte for byte. That is the property the content hash
     // rests on, and the one most likely to be quietly wrong.
@@ -1245,9 +1409,17 @@ fn hash(path: &Path) -> Fallible {
     let bytes = std::fs::read(path)?;
     let bundle = Bundle::from_slice(&bytes)?;
     println!("file    {}", one_saves::HashValue::sha256_of(&bytes));
+    // The content hash is over every part inflated, all at once, so the claims are weighed first.
+    let claimed = claimed_inflation(&bundle);
+    if claimed > MAX_INFLATED {
+        println!(
+            "content unavailable: its parts claim {claimed} bytes inflated, past the {MAX_INFLATED} this inflates"
+        );
+        return Ok(());
+    }
     match bundle.content_hash() {
         Ok(content) => println!("content {content}"),
-        Err(e) => println!("content unavailable: {e}"),
+        Err(e) => println!("content unavailable: {}", printable(&e.to_string())),
     }
     Ok(())
 }
@@ -1284,6 +1456,155 @@ mod tests {
         assert_eq!(printable("ＴＥＫＫＥＮ　４"), "ＴＥＫＫＥＮ　４");
         assert_eq!(printable("\u{1b}]0;owned\u{7}\u{1b}[2J"), r"\u{1b}]0;owned\u{7}\u{1b}[2J");
         assert_eq!(printable("two\nlines\u{9b}"), r"two\nlines\u{9b}");
+    }
+
+    #[test]
+    fn text_from_a_bundle_cannot_reorder_itself_either() {
+        // RIGHT-TO-LEFT OVERRIDE shows `exe.sav` as `vas.exe`; every bidirectional control is
+        // escaped, and nothing else outside ASCII is.
+        assert_eq!(printable("save\u{202e}vas.exe"), r"save\u{202e}vas.exe");
+        assert_eq!(printable("\u{2066}a\u{2069}\u{200f}\u{61c}"), r"\u{2066}a\u{2069}\u{200f}\u{61c}");
+        assert_eq!(printable("ポケモン"), "ポケモン");
+    }
+
+    #[test]
+    fn an_error_quoting_the_file_cannot_drive_the_terminal() {
+        #[derive(Debug)]
+        struct Quoting(&'static str, Option<Box<Quoting>>);
+        impl std::fmt::Display for Quoting {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.0)
+            }
+        }
+        impl std::error::Error for Quoting {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                self.1.as_deref().map(|inner| inner as &(dyn std::error::Error + 'static))
+            }
+        }
+
+        let error =
+            Quoting("`\u{1b}]0;owned\u{7}` is not an encoding", Some(Box::new(Quoting("\u{1b}[2J", None))));
+        let report = report(&error);
+        assert!(!report.contains('\u{1b}') && !report.contains('\u{7}'), "{report:?}");
+        assert_eq!(report, "1saves: `\\u{1b}]0;owned\\u{7}` is not an encoding\n  caused by: \\u{1b}[2J\n");
+    }
+
+    /// A directory of this test's own, empty.
+    fn scratch(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!("1saves-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    #[test]
+    fn writing_refuses_whatever_is_already_there() {
+        let directory = scratch("write-refuses");
+        let path = directory.join("out.mcd");
+        write_out(&path, b"first", false).unwrap();
+        let error = write_out(&path, b"second", false).unwrap_err();
+        assert!(error.to_string().contains("already exists; pass --force"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+
+        write_out(&path, b"second", true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1, "no temporary is left behind");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writing_never_follows_a_link_planted_at_the_output() {
+        // An archive extracted with its links can leave `save.srm -> somewhere` beside the bundle
+        // it ships, and `extract` writes `save.srm` by default.
+        let directory = scratch("write-links");
+        let victim = directory.join("victim");
+        let output = directory.join("save.srm");
+
+        // Dangling: following it would create the victim.
+        std::os::unix::fs::symlink(&victim, &output).unwrap();
+        assert!(write_out(&output, b"payload", false).is_err());
+        assert!(!victim.exists(), "the link's target was created");
+
+        // Pointing at a file: --force replaces the link, and the file it pointed at is untouched.
+        std::fs::write(&victim, b"precious").unwrap();
+        write_out(&output, b"payload", true).unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+        assert!(std::fs::symlink_metadata(&output).unwrap().file_type().is_file());
+        assert_eq!(std::fs::read(&output).unwrap(), b"payload");
+    }
+
+    #[test]
+    fn a_file_beside_the_input_is_read_when_it_is_a_small_regular_file() {
+        let directory = scratch("beside-regular");
+        assert_eq!(read_beside(&directory.join("absent.rtc"), 64), Ok(None));
+
+        let clock = directory.join("save.rtc");
+        std::fs::write(&clock, [1, 2, 3, 4]).unwrap();
+        assert_eq!(read_beside(&clock, 64), Ok(Some(vec![1, 2, 3, 4])));
+
+        std::fs::write(&clock, [0; 65]).unwrap();
+        let why = read_beside(&clock, 64).unwrap_err();
+        assert!(why.contains("more than the 64"), "{why}");
+
+        assert!(read_beside(&directory, 64).unwrap_err().contains("not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_beside_the_input_is_not_a_link_or_a_fifo() {
+        let directory = scratch("beside-special");
+
+        // A link to a file of the user's would carry it off in a bundle they share.
+        let private = directory.join("private.png");
+        std::fs::write(&private, b"\x89PNG private").unwrap();
+        let thumbnail = directory.join("game.state.png");
+        std::os::unix::fs::symlink(&private, &thumbnail).unwrap();
+        assert!(read_beside(&thumbnail, 1 << 20).unwrap_err().contains("not a regular file"));
+
+        // A FIFO would be waited on forever, so it must be turned down without being opened.
+        let fifo = directory.join("game.rtc");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        assert!(made.success());
+        assert!(read_beside(&fifo, 64).unwrap_err().contains("not a regular file"));
+    }
+
+    /// A collection holding one save, with the save's own part's digest wrong and everything
+    /// around it consistent: the file a byte flipped and resealed at the outer level makes.
+    fn resealed_collection() -> Bundle {
+        let mut save = Bundle::new(one_saves::Header::default(), vec![Part::new(0, *b"SAVE")]);
+        save.parts[0].sha256 = one_saves::HashValue::sha256_of(b"EVAS");
+        let nested = Part::new(0, save.to_vec().unwrap()).kind(PartKind::Bundle);
+        let bundle = Bundle::new(one_saves::Header::new(one_saves::Shape::Collection), vec![nested]);
+        Bundle::from_slice(&bundle.to_vec().unwrap()).expect("decodes, which is the point")
+    }
+
+    #[test]
+    fn digests_are_checked_inside_nested_bundles() {
+        let problems = digest_problems(&resealed_collection(), &mut MAX_INFLATED.clone());
+        assert_eq!(problems, ["part 0 > part 0: sha256 does not match its payload"]);
+    }
+
+    #[test]
+    fn a_top_level_digest_that_does_not_match_is_a_problem() {
+        let mut bundle = Bundle::new(one_saves::Header::default(), vec![Part::new(0, *b"SAVE")]);
+        bundle.parts[0].sha256 = one_saves::HashValue::sha256_of(b"EVAS");
+        let problems = digest_problems(&bundle, &mut MAX_INFLATED.clone());
+        assert_eq!(problems, ["part 0: sha256 does not match its payload"]);
+    }
+
+    #[test]
+    fn a_claim_past_the_budget_is_not_inflated() {
+        // Not a zstd frame at all: were it inflated, it would fail differently.
+        let mut part = Part::new(0, *b"SAVE");
+        part.payload = Payload::Compressed { bytes: b"not zstd".to_vec(), size: 1 << 40 };
+        let bundle = Bundle::new(one_saves::Header::default(), vec![part]);
+        assert_eq!(claimed_inflation(&bundle), 1 << 40);
+
+        let mut inflatable = MAX_INFLATED;
+        let problems = digest_problems(&bundle, &mut inflatable);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("not inflated, claiming 1099511627776 bytes"), "{}", problems[0]);
+        assert_eq!(inflatable, MAX_INFLATED, "nothing was charged for what was not inflated");
     }
 
     fn convert_args(line: &[&str]) -> Convert {
