@@ -334,9 +334,20 @@ impl Card {
             )));
         }
 
-        let temporary = self.path.with_extension("1cards-new");
-        std::fs::write(&temporary, &bytes).map_err(Error::Io)?;
-        std::fs::rename(&temporary, &self.path).map_err(Error::Io)?;
+        // A card started here has nothing to replace, and something that has turned up at its
+        // path since is not this card's to replace either, so it is created where it goes. A card
+        // that was opened is replaced by renaming a finished copy over it, so a failure part-way
+        // leaves the original as it was.
+        if self.new {
+            create(&self.path, &bytes)?;
+        } else {
+            let temporary = self.path.with_extension("1cards-new");
+            create(&temporary, &bytes)?;
+            if let Err(error) = std::fs::rename(&temporary, &self.path) {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(Error::Io(error));
+            }
+        }
         self.dirty = false;
         self.new = false;
         Ok(())
@@ -348,6 +359,41 @@ impl Card {
             part.id = index as u64;
         }
     }
+}
+
+/// Writes a file that must not exist yet, and sees its bytes onto the disk.
+///
+/// Creating it new is what makes this safe beside files someone else put there. The temporary a
+/// card is written to sits in the card's directory under a name anyone can guess, and a card
+/// often arrives in a directory an archive was extracted into: `fs::write` follows a symbolic
+/// link planted at that name and writes the card over whatever it points to, and the rename then
+/// moves the link over the card. Created new, the open refuses anything already at the path, a
+/// link included, without following it.
+///
+/// Something already there is refused rather than worked around with another name: it is either a
+/// write that died before it could rename, or something nobody should be writing through, and
+/// either way the person at the keyboard should hear about it. One this writes and then fails to
+/// finish is removed, since it is known to be this one's.
+fn create(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            Error::Refused(format!(
+                "something is in the way at {}, where this writes the card; move it aside and write \
+                 again",
+                path.display()
+            ))
+        } else {
+            Error::Io(error)
+        }
+    })?;
+    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(Error::Io(error));
+    }
+    Ok(())
 }
 
 /// How many of a card's blocks a save occupies.

@@ -6,6 +6,7 @@
 //! that replaces the original only once the rebuilt card has been read back.
 
 use std::io::stdout;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crossterm::event::{self, Event, KeyEventKind};
@@ -15,7 +16,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui_image::picker::Picker;
 
-use one_saves_tui::app::App;
+use one_saves_tui::app::{App, printable};
 use one_saves_tui::model::Card;
 
 const USAGE: &str = "\
@@ -35,8 +36,10 @@ otherwise, so `1cards card.ps2 copy.ps2` makes an empty card to copy onto.
 ";
 
 fn main() -> ExitCode {
-    let paths: Vec<String> = std::env::args().skip(1).collect();
-    if paths.is_empty() || paths.iter().any(|a| a == "-h" || a == "--help") {
+    // `args_os`, because a card's name need not be UTF-8 to be a name, and `args` panics on one
+    // that is not.
+    let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    if paths.is_empty() || paths.iter().any(|a| a.as_os_str() == "-h" || a.as_os_str() == "--help") {
         print!("{USAGE}");
         return ExitCode::SUCCESS;
     }
@@ -48,14 +51,16 @@ fn main() -> ExitCode {
     // The cards that are there first, so one that is not can be started like one that is.
     let mut opened = Vec::new();
     for path in &paths {
-        if !std::path::Path::new(path).exists() {
+        if !path.exists() {
             opened.push(None);
             continue;
         }
         match Card::open(path) {
             Ok(card) => opened.push(Some(card)),
             Err(error) => {
-                eprintln!("1cards: {path}: {error}");
+                // An error can quote the card, an archive member's name or what a part claims to
+                // be, and this goes to the terminal like anything drawn on it.
+                eprintln!("1cards: {}", printable(&format!("{}: {error}", path.display())));
                 return ExitCode::FAILURE;
             }
         }
@@ -67,7 +72,7 @@ fn main() -> ExitCode {
         match Card::create(&paths[at], opened.iter().flatten().next()) {
             Ok(card) => opened[at] = Some(card),
             Err(error) => {
-                eprintln!("1cards: {error}");
+                eprintln!("1cards: {}", printable(&error.to_string()));
                 return ExitCode::FAILURE;
             }
         }
@@ -77,7 +82,7 @@ fn main() -> ExitCode {
     match run(cards) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("1cards: {error}");
+            eprintln!("1cards: {}", printable(&error.to_string()));
             ExitCode::FAILURE
         }
     }

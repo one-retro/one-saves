@@ -299,3 +299,103 @@ fn formatting_a_card_empties_it_and_writing_makes_it_so() {
     assert_eq!(again.entries().len(), 0);
     assert_eq!(again.capacity(), capacity, "the same card, empty");
 }
+
+const PS1: &str = "macos/duckstation/shared_card_1.mcd";
+
+/// A directory of its own in the temporary one, emptied first.
+fn fresh_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a directory");
+    dir
+}
+
+/// A card is written to a temporary beside it, under a name anyone can guess, and a card often
+/// sits in a directory an archive was extracted into. A link planted at that name was followed:
+/// the card was written over whatever it pointed to, outside the directory, and the rename then
+/// moved the link over the card. Now anything at that name, a link included, is refused without
+/// being followed, and nothing is written anywhere.
+#[cfg(unix)]
+#[test]
+fn writing_a_card_never_writes_through_a_link_planted_beside_it() {
+    use std::os::unix::fs::symlink;
+
+    let dir = fresh_dir("1cards-planted");
+    let victim = dir.join("precious.txt");
+    std::fs::write(&victim, b"not a card").expect("writes the victim");
+    let path = dir.join("card.mcd");
+    std::fs::copy(fixture(PS1), &path).expect("copies the fixture");
+    let temporary = dir.join("card.1cards-new");
+    symlink(&victim, &temporary).expect("plants a link");
+
+    let mut card = Card::open(&path).expect("opens");
+    let (before, saves) = (std::fs::read(&path).expect("the card"), card.entries().len());
+    card.remove(0).expect("removes");
+    let refused = card.save().expect_err("refuses").to_string();
+    assert!(refused.contains("in the way"), "says why: {refused}");
+    assert_eq!(std::fs::read(&victim).expect("the victim"), b"not a card", "the link was not followed");
+    assert_eq!(std::fs::read(&path).expect("the card"), before, "nor the card replaced");
+    let link = std::fs::symlink_metadata(&temporary).expect("still there");
+    assert!(link.file_type().is_symlink(), "and the link is left as it was found");
+    assert!(card.dirty(), "the edit is still waiting to be written");
+
+    // A link to nothing was followed too, and created its target wherever it pointed.
+    let elsewhere = dir.join("elsewhere.mcd");
+    std::fs::remove_file(&temporary).expect("removes the link");
+    symlink(&elsewhere, &temporary).expect("plants a dangling link");
+    assert!(card.save().is_err(), "refused");
+    assert!(!elsewhere.exists(), "and nothing was created at the far end");
+
+    // Out of the way, the write goes through as it always did.
+    std::fs::remove_file(&temporary).expect("removes the link");
+    card.save().expect("writes");
+    assert_eq!(Card::open(&path).expect("reopens").entries().len(), saves - 1);
+    assert_eq!(std::fs::read(&victim).expect("the victim"), b"not a card");
+}
+
+/// A card started here is written where it goes rather than renamed into place, and a link that
+/// turns up at that path before it is written is refused the same way: the card is new, so
+/// whatever is there is not this card's to replace.
+#[cfg(unix)]
+#[test]
+fn a_new_card_is_not_written_through_a_link_planted_where_it_goes() {
+    use std::os::unix::fs::symlink;
+
+    let dir = fresh_dir("1cards-planted-new");
+    let victim = dir.join("precious.txt");
+    std::fs::write(&victim, b"not a card").expect("writes the victim");
+    let path = dir.join("new.mcr");
+    let mut card = Card::create(&path, None).expect("starts");
+    symlink(&victim, &path).expect("plants a link");
+
+    assert!(card.save().expect_err("refuses").to_string().contains("in the way"));
+    assert_eq!(std::fs::read(&victim).expect("the victim"), b"not a card");
+    assert!(card.is_new(), "and the card is still waiting to be created");
+
+    std::fs::remove_file(&path).expect("removes the link");
+    card.save().expect("writes");
+    assert!(Card::open(&path).expect("reopens").entries().is_empty());
+}
+
+/// A bundle is not a card, so nothing in one is inflated here.
+///
+/// A `.1saves` part can be compressed, and the size it says it inflates to is its producer's say:
+/// the CLI holds what it inflates to a budget for that reason. This opens cards, which carry their
+/// saves uncompressed, and a bundle is refused for not being one before any part of it is looked
+/// at, under its own extension or a card's.
+#[test]
+fn a_bundle_is_refused_rather_than_inflated() {
+    use one_saves::{Bundle, Header, Part, Payload, Shape};
+
+    // A zstd frame's magic and nothing else, claiming to inflate to 4 GiB.
+    let mut part = Part::new(0, Vec::new());
+    part.payload = Payload::Compressed { bytes: vec![0x28, 0xb5, 0x2f, 0xfd], size: 4 << 30 };
+    let bundle = Bundle::new(Header::new(Shape::Card), vec![part]).to_cbor().to_cbor_data();
+
+    for name in ["1cards-bundle.1saves", "1cards-bundle.mcr"] {
+        let path = std::env::temp_dir().join(name);
+        std::fs::write(&path, &bundle).expect("writes");
+        let refused = Card::open(&path).err().expect("refuses").to_string();
+        assert!(refused.contains("not a card"), "{name}: {refused}");
+    }
+}

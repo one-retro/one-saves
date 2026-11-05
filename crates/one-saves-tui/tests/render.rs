@@ -628,3 +628,146 @@ fn a_card_started_here_is_marked_new_and_is_created_rather_than_written_over() {
     assert!(path.exists());
     assert!(!screen(&mut app, 100, 24).contains("[new]"), "and is no longer new");
 }
+
+fn fixture(rest: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/saves").join(rest)
+}
+
+/// Whether text holds anything a terminal acts on rather than shows: a control character, or one
+/// that reorders the text after it.
+fn acts(text: &str) -> bool {
+    text.chars().any(|c| {
+        c.is_control()
+            || matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+    })
+}
+
+/// A save's title is the card's say, and a card keeps it byte for byte.
+///
+/// Drawn as it came, a PlayStation title spelling `ESC ] 52` wrote the clipboard of whoever opened
+/// the card, `ESC ] 0` retitled their window and `ESC [ 31 m` coloured everything after it: ratatui
+/// hands a character with no width to the cell before it, and the terminal is sent cells as they
+/// are. A name can reorder itself as easily, and a card's name is as much the file's say.
+#[test]
+fn nothing_a_card_says_reaches_the_terminal_as_an_instruction() {
+    let mut bytes = std::fs::read(fixture(PS1)).expect("the fixture");
+    // The first save's title, in the frame that opens its first block.
+    let title: &[u8] = b"GT\x1b]52;c;aGFja2Vk\x07\x1b]0;PWNED\x07\x1b[31mRED\x7f\x80";
+    bytes[0x2004..0x2004 + 64].fill(0);
+    bytes[0x2004..0x2004 + title.len()].copy_from_slice(title);
+    let path = std::env::temp_dir().join("1cards-\u{202e}dcm.evil\u{2066}.mcd");
+    std::fs::write(&path, &bytes).expect("writes the card");
+
+    let mut app = App::new(vec![Card::open(&path).expect("opens")], picker());
+    assert!(app.cards[0].entries()[0].title.contains('\u{1b}'), "the card keeps its title as it is");
+
+    // The list and the save beside it, then every question that quotes a title or a name.
+    let mut drawn = vec![screen(&mut app, 100, 24)];
+    app.ask_delete();
+    drawn.push(screen(&mut app, 100, 24));
+    app.dismiss();
+    app.ask_format();
+    drawn.push(screen(&mut app, 100, 24));
+    app.dismiss();
+    app.cards[0].remove(1).expect("something to write");
+    app.ask_write();
+    drawn.push(screen(&mut app, 100, 24));
+    app.dismiss();
+    // And what a status line says, which is often an error quoting a file.
+    app.status = Some("not a card: \u{9b}31m\u{1b}[2J\u{202e}gnp.exe".into());
+    drawn.push(screen(&mut app, 100, 24));
+
+    for (at, screen) in drawn.iter().enumerate() {
+        assert!(!screen.lines().any(acts), "screen {at} sends the terminal an instruction:\n{screen:?}");
+    }
+    assert!(
+        drawn[0].contains("GT␛]52;c;aGFja2Vk␇"),
+        "the escape is shown rather than acted on:\n{}",
+        drawn[0]
+    );
+    assert!(drawn[0].contains("1cards-�dcm.evil�.mcd"), "and so is the reordering:\n{}", drawn[0]);
+    assert!(drawn[4].contains("not a card: �31m␛[2J"), "{}", drawn[4]);
+}
+
+/// The binary's last word goes to the same terminal, and an error can quote anything: an archive
+/// member's name, what a part says it is. Two cards in one archive is an error naming both, and a
+/// member is named whatever its archiver said.
+#[test]
+fn a_fatal_error_reaches_the_terminal_with_its_escapes_shown() {
+    use std::io::Write;
+
+    let card = std::fs::read(fixture(PS1)).expect("a card");
+    let archive = {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for name in ["\u{1b}]0;PWNED\u{7}\u{1b}[2Ja.mcd", "b\u{202e}.mcd"] {
+            writer.start_file(name, options).expect("a member");
+            writer.write_all(&card).expect("writes");
+        }
+        writer.finish().expect("finishes").into_inner()
+    };
+    let path = std::env::temp_dir().join("1cards-render-fatal.zip");
+    std::fs::write(&path, archive).expect("writes the archive");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_1cards")).arg(&path).output().expect("runs");
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{said}");
+    assert!(said.starts_with("1cards: "), "it says why: {said}");
+    assert!(!acts(said.trim_end()), "and sends the terminal nothing to act on: {said:?}");
+}
+
+/// The same map the old way, one owner a block, for checking the new way draws what it drew.
+fn map_by_block(
+    sizes: &[u64],
+    total: u64,
+    room: usize,
+    selected: Option<usize>,
+) -> (u64, Vec<Option<usize>>) {
+    let total = usize::try_from(total).expect("a small card");
+    let mut owners: Vec<Option<usize>> = Vec::new();
+    for (at, &size) in sizes.iter().enumerate() {
+        owners.extend(std::iter::repeat_n(Some(at), usize::try_from(size).expect("a small save")));
+    }
+    owners.resize(total, None);
+    let per_cell = if room == 0 { 1 } else { total.div_ceil(room).max(1) };
+    let cells = owners
+        .chunks(per_cell)
+        .take(room)
+        .map(|chunk| {
+            let mut held = chunk.iter().flatten().copied();
+            let first = held.clone().next();
+            held.find(|at| Some(*at) == selected).or(first)
+        })
+        .collect();
+    (per_cell as u64, cells)
+}
+
+/// A card's size is the card's say too. The map listed the owner of every block, so a PS2 card
+/// whose superblock claims a hundred million clusters was a 1.6 GB allocation every frame, and the
+/// most a card can claim was 68 GB. What it draws is cells, and the cells are what it allocates.
+#[test]
+fn a_card_claiming_to_be_enormous_maps_only_what_the_screen_holds() {
+    use one_saves_tui::app::block_map;
+
+    // Everything a u64 can count, mapped into a screenful of cells.
+    let (per_cell, cells) = block_map(&[3, 1], u64::MAX, 80 * 20, Some(1));
+    assert!(cells.len() <= 80 * 20, "{} cells", cells.len());
+    assert_eq!(per_cell, u64::MAX.div_ceil(80 * 20));
+    assert_eq!(cells[0], Some(1), "the selected save wins the cell it shares");
+    assert!(cells[1..].iter().all(Option::is_none), "and the rest is free");
+    assert!(block_map(&[3, 1], u64::MAX, 0, None).1.is_empty(), "no room is no cells");
+
+    // A card that is what it says draws the same map it always did.
+    for (sizes, total) in [(&[5u64, 1][..], 16u64), (&[3, 0, 7, 2], 8192), (&[40, 40], 50), (&[], 123)] {
+        for room in [0, 1, 7, 16, 100, 3000] {
+            for selected in [None, Some(0), Some(1), Some(3)] {
+                assert_eq!(
+                    block_map(sizes, total, room, selected),
+                    map_by_block(sizes, total, room, selected),
+                    "{sizes:?} on {total} in {room}, {selected:?} selected"
+                );
+            }
+        }
+    }
+}

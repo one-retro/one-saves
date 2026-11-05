@@ -4,6 +4,7 @@
 //! the questions worth asking twice, so the rules can be tested without a terminal and the drawing
 //! can be read without the rules in the way.
 
+use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
@@ -487,7 +488,7 @@ impl App {
                 .enumerate()
                 .map(|(at, entry)| {
                     ListItem::new(Line::from(vec![
-                        Span::styled(fit(&entry.title, name_width), Style::default().fg(hue(at))),
+                        Span::styled(fit(&printable(&entry.title), name_width), Style::default().fg(hue(at))),
                         Span::styled(
                             format!("{:>4} blk", entry.blocks),
                             Style::default().fg(Color::DarkGray),
@@ -504,7 +505,7 @@ impl App {
                         .border_type(if focused { BorderType::Thick } else { BorderType::Plain })
                         .border_style(Style::default().fg(border))
                         .title(Span::styled(
-                            title,
+                            printable(&title).into_owned(),
                             Style::default().fg(border).add_modifier(if focused {
                                 Modifier::BOLD
                             } else {
@@ -546,23 +547,16 @@ impl App {
     ///
     /// The order is the directory's rather than the card's physical layout: a save's blocks are
     /// not recorded once it is read, and packing them in listed order is what writing the card
-    /// back does anyway.
+    /// back does anyway. What it costs is the cells on screen, not the blocks: see [`block_map`].
     fn draw_map(&self, frame: &mut Frame, area: Rect) {
         let card = self.card();
-        let entries = card.entries();
-        let total = usize::try_from(card.blocks()).unwrap_or(usize::MAX);
-
-        // Which save holds each block, then nothing for the free ones.
-        let mut owners: Vec<Option<usize>> = Vec::new();
-        for (at, entry) in entries.iter().enumerate() {
-            owners.extend(std::iter::repeat_n(Some(at), usize::try_from(entry.blocks).unwrap_or(0)));
-        }
-        owners.resize(total, None);
+        let sizes: Vec<u64> = card.entries().iter().map(|entry| entry.blocks).collect();
 
         let block = Block::default().borders(Borders::ALL);
         let inner = block.inner(area);
         let room = usize::from(inner.width) * usize::from(inner.height);
-        let per_cell = if room == 0 { 1 } else { total.div_ceil(room).max(1) };
+        let selected = self.selected();
+        let (per_cell, owners) = block_map(&sizes, card.blocks(), room, selected);
 
         let title = if per_cell == 1 {
             format!(" {} of {} blocks used ", card.used_blocks(), card.blocks())
@@ -571,25 +565,14 @@ impl App {
         };
         frame.render_widget(block.title(title), area);
 
-        let selected = self.selected();
         let cells: Vec<Span> = owners
-            .chunks(per_cell.max(1))
-            .map(|chunk| {
-                // The selected save wins its cell, so a small one is not hidden by a large
-                // neighbour sharing the same handful of blocks.
-                let owner = chunk
-                    .iter()
-                    .flatten()
-                    .copied()
-                    .find(|at| Some(*at) == selected)
-                    .or_else(|| chunk.iter().flatten().copied().next());
-                match owner {
-                    Some(at) if Some(at) == selected => {
-                        Span::styled("█", Style::default().fg(hue(at)).add_modifier(Modifier::BOLD))
-                    }
-                    Some(at) => Span::styled("▓", Style::default().fg(hue(at))),
-                    None => Span::styled("·", Style::default().fg(Color::DarkGray)),
+            .iter()
+            .map(|owner| match *owner {
+                Some(at) if Some(at) == selected => {
+                    Span::styled("█", Style::default().fg(hue(at)).add_modifier(Modifier::BOLD))
                 }
+                Some(at) => Span::styled("▓", Style::default().fg(hue(at))),
+                None => Span::styled("·", Style::default().fg(Color::DarkGray)),
             })
             .collect();
 
@@ -633,11 +616,11 @@ impl App {
         }
 
         let mut lines = vec![Line::styled(
-            entry.title.clone(),
+            printable(&entry.title).into_owned(),
             Style::default().fg(hue(index)).add_modifier(Modifier::BOLD),
         )];
         if let Some(detail) = &entry.detail {
-            lines.push(Line::styled(detail.clone(), Style::default().fg(Color::Gray)));
+            lines.push(Line::styled(printable(detail).into_owned(), Style::default().fg(Color::Gray)));
         }
         lines.push(Line::from(""));
         lines.push(Line::styled(format!("{} blocks", entry.blocks), Style::default().fg(Color::DarkGray)));
@@ -653,7 +636,7 @@ impl App {
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         let keys = "↑↓ select   ⇥ card   c copy   d delete   f format   w write   q quit";
         let (text, style) = match &self.status {
-            Some(said) => (said.clone(), Style::default().fg(Color::Cyan)),
+            Some(said) => (printable(said).into_owned(), Style::default().fg(Color::Cyan)),
             None => (keys.to_owned(), Style::default().fg(Color::DarkGray)),
         };
         frame.render_widget(
@@ -675,12 +658,12 @@ impl App {
         let text_width = usize::from(width).saturating_sub(4);
 
         let mut body = vec![Line::from("")];
-        for line in wrap(&confirm.question, text_width) {
+        for line in wrap(&printable(&confirm.question), text_width) {
             body.push(Line::from(line));
         }
         if let Some(warning) = &confirm.warning {
             body.push(Line::from(""));
-            for line in wrap(warning, text_width) {
+            for line in wrap(&printable(warning), text_width) {
                 body.push(Line::styled(line, Style::default().fg(Color::Yellow)));
             }
         }
@@ -843,4 +826,93 @@ fn fit(text: &str, columns: usize) -> String {
         used += 1;
     }
     out + &" ".repeat(columns.saturating_sub(used))
+}
+
+/// Text out of a file, made safe to put in front of a terminal.
+///
+/// Everything on screen that a file had a say in goes through this: a save's title and detail, a
+/// card's name and path, an archive member's name, an error quoting any of them. A card keeps its
+/// titles byte for byte, as it has to in order to be written back, and a PlayStation title is
+/// whatever its directory frame decodes to, so `ESC ] 52 ; c ; …` in one is a write to the
+/// clipboard the moment it reaches the terminal. Nothing on the way stops it: ratatui appends a
+/// character with no width to the cell before it, and the backend prints cells as they are.
+///
+/// So a C0 control is shown as the picture Unicode keeps for it, `␛` for an escape, and `DEL` as
+/// `␡`. What has no picture is shown as `�`: a C1 control, which some terminals act on as they do
+/// the escape it abbreviates, and a character that reorders the text after it, which can make a
+/// name read as something it is not. Text holding none of them comes back untouched.
+#[must_use]
+pub fn printable(text: &str) -> Cow<'_, str> {
+    fn shown(c: char) -> Option<char> {
+        match c {
+            '\u{0}'..='\u{1f}' => char::from_u32(0x2400 + u32::from(c)),
+            '\u{7f}' => Some('\u{2421}'),
+            '\u{80}'..='\u{9f}'
+            | '\u{061c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}' => Some(char::REPLACEMENT_CHARACTER),
+            _ => None,
+        }
+    }
+
+    if !text.chars().any(|c| shown(c).is_some()) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(text.chars().map(|c| shown(c).unwrap_or(c)).collect())
+}
+
+/// What each cell of a card's block map shows, and how many blocks a cell stands for.
+///
+/// `sizes` are the saves' blocks in the order they are listed, packed from the start of the card;
+/// `total` is the card's blocks; `room` is how many cells there are to draw in. A cell that holds
+/// any of the selected save shows that save, so a one-block save stays findable among thousands,
+/// and otherwise it shows the first save it holds, or nothing where all its blocks are free.
+///
+/// Worked out a cell at a time from where each save's blocks start and end, rather than by listing
+/// the owner of every block and cutting the list into cells. That list was as long as the card
+/// says it is, which is the card's say: a PS2 card claiming a hundred million clusters made it a
+/// 1.6 GB allocation, every frame. This allocates a cell's worth for each cell and nothing for
+/// the blocks, so what bounds it is the screen.
+#[must_use]
+pub fn block_map(
+    sizes: &[u64],
+    total: u64,
+    room: usize,
+    selected: Option<usize>,
+) -> (u64, Vec<Option<usize>>) {
+    let room_blocks = u64::try_from(room).unwrap_or(u64::MAX);
+    let per_cell = if room == 0 { 1 } else { total.div_ceil(room_blocks).max(1) };
+    let cells = usize::try_from(total.div_ceil(per_cell)).unwrap_or(usize::MAX).min(room);
+
+    // Where each save's blocks run, cut off where the card ends.
+    let mut runs: Vec<(u64, u64, usize)> = Vec::new();
+    let mut start = 0u64;
+    for (index, &size) in sizes.iter().enumerate() {
+        let end = start.saturating_add(size).min(total);
+        if end > start {
+            runs.push((start, end, index));
+        }
+        start = end;
+    }
+
+    // The cells go forward and so do the runs, so a run behind the cell is never looked at again.
+    let mut first = 0;
+    let owners = (0..cells)
+        .map(|cell| {
+            let from = u64::try_from(cell).unwrap_or(u64::MAX).saturating_mul(per_cell);
+            let to = from.saturating_add(per_cell).min(total);
+            while runs.get(first).is_some_and(|&(_, end, _)| end <= from) {
+                first += 1;
+            }
+            let mut held =
+                runs[first..].iter().take_while(|&&(start, _, _)| start < to).map(|&(_, _, at)| at);
+            let owner = held.clone().next();
+            held.find(|&at| Some(at) == selected).or(owner)
+        })
+        .collect();
+    (per_cell, owners)
 }
