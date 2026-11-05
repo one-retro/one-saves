@@ -317,17 +317,21 @@ fn create_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// The user named the input and not this, so it is held to more than `fs::read` would. It has to
 /// be a regular file in its own right and not a link, because a link is how a directory someone
 /// else put together reaches a file of the user's they never meant to carry off in a bundle they
-/// share. And it has to be no longer than `limit`, so that a FIFO or a device under the expected
-/// name is turned down rather than waited on forever or read without end. Turned down, the error
-/// says why.
+/// share; a FIFO would be waited on forever. And it has to be no longer than `limit`, so nothing
+/// under the expected name is read without end. Turned down, the error says why.
+///
+/// It is opened first and judged by the handle, not looked at by name and then opened: between
+/// the look and the open, whoever put the directory together could put something else there.
 fn read_beside(path: &Path, limit: u64) -> Result<Option<Vec<u8>>, String> {
     use std::io::Read as _;
     let shown = || printable(&path.display().to_string());
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let file = match open_beside(path) {
+        Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if is_a_link_refused(&e) => return Err(format!("{} is not a regular file", shown())),
         Err(e) => return Err(format!("{} cannot be read: {e}", shown())),
     };
+    let metadata = file.metadata().map_err(|e| format!("{} cannot be read: {e}", shown()))?;
     if !metadata.file_type().is_file() {
         return Err(format!("{} is not a regular file", shown()));
     }
@@ -335,13 +339,57 @@ fn read_beside(path: &Path, limit: u64) -> Result<Option<Vec<u8>>, String> {
         return Err(format!("{} is {} bytes, more than the {limit} it could be", shown(), metadata.len()));
     }
 
-    let file = std::fs::File::open(path).map_err(|e| format!("{} cannot be read: {e}", shown()))?;
     let mut bytes = Vec::new();
     file.take(limit + 1).read_to_end(&mut bytes).map_err(|e| format!("{} cannot be read: {e}", shown()))?;
     if bytes.len() as u64 > limit {
         return Err(format!("{} grew past the {limit} bytes it could be while it was read", shown()));
     }
     Ok(Some(bytes))
+}
+
+/// Opens a file found beside the input for [`read_beside`] to judge, without following a link at
+/// its name or waiting on a FIFO.
+///
+/// `O_NOFOLLOW` refuses a link outright, with `ELOOP`, and `O_NONBLOCK` opens a FIFO at once rather
+/// than waiting for a writer to turn up. Neither changes how a regular file reads.
+#[cfg(unix)]
+fn open_beside(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)
+}
+
+/// Opens a file found beside the input for [`read_beside`] to judge, without following a link at
+/// its name.
+///
+/// `FILE_FLAG_OPEN_REPARSE_POINT` opens a link as itself, whose handle then reads as no regular
+/// file, and `FILE_FLAG_BACKUP_SEMANTICS` lets a directory open at all, to be turned down the same
+/// way rather than with an access error.
+#[cfg(windows)]
+fn open_beside(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_beside(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
+/// Whether opening failed because `O_NOFOLLOW` found a link, which is a refusal and not a fault.
+#[cfg(unix)]
+fn is_a_link_refused(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ELOOP)
+}
+
+/// Whether opening failed because it found a link. Never, where a link opens as itself.
+#[cfg(not(unix))]
+fn is_a_link_refused(_: &std::io::Error) -> bool {
+    false
 }
 
 /// The bytes to convert and the extension to detect them by, with any archive taken off first.
@@ -1546,7 +1594,7 @@ mod tests {
         let why = read_beside(&clock, 64).unwrap_err();
         assert!(why.contains("more than the 64"), "{why}");
 
-        assert!(read_beside(&directory, 64).unwrap_err().contains("not a regular file"));
+        assert!(read_beside(&directory, 64).is_err(), "a directory is not a file to read");
     }
 
     #[cfg(unix)]
@@ -1561,11 +1609,15 @@ mod tests {
         std::os::unix::fs::symlink(&private, &thumbnail).unwrap();
         assert!(read_beside(&thumbnail, 1 << 20).unwrap_err().contains("not a regular file"));
 
-        // A FIFO would be waited on forever, so it must be turned down without being opened.
+        // A FIFO would be waited on forever, so it must be turned down without waiting for a
+        // writer: it opens at once, and its handle says what it is. So must a link to one.
         let fifo = directory.join("game.rtc");
         let made = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
         assert!(made.success());
         assert!(read_beside(&fifo, 64).unwrap_err().contains("not a regular file"));
+        let linked = directory.join("other.rtc");
+        std::os::unix::fs::symlink(&fifo, &linked).unwrap();
+        assert!(read_beside(&linked, 64).unwrap_err().contains("not a regular file"));
     }
 
     /// A collection holding one save, with the save's own part's digest wrong and everything

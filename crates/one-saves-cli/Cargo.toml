@@ -22,6 +22,9 @@ one-saves-registry.workspace = true
 one-saves-convert.workspace = true
 clap.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [features]
 default = ["archive", "cards", "dat", "dat-cmpro", "rom", "states", "zstd"]
 # Every card format. Each is forwarded to one-saves-convert, where it gates one crate and one

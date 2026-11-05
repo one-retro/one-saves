@@ -1323,6 +1323,7 @@ name = "one-saves-cli"
 version = "0.7.0"
 dependencies = [
  "clap",
+ "libc",
  "one-saves",
  "one-saves-convert",
  "one-saves-registry",

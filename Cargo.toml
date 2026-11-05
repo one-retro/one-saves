@@ -88,6 +88,9 @@ encoding_rs = "0.8"
 # all in `extract`, which nothing here calls, but an audit should not have to know that.
 zip = { version = "9.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 clap = { version = "4.5", features = ["derive"] }
+# The open(2) flags the CLI opens a file it was not named with by, on Unix only. Already in the
+# graph under dcbor, so it costs nothing to build.
+libc = "0.2"
 # DAT catalogs, in both the Logiqx XML and ClrMamePro syntaxes. `index` and `verify` stay off:
 # one-saves-convert keeps its own digest index, keyed by `one_saves::HashValue`, and hashing is
 # one-saves' job. `cmpro` is the ClrMamePro syntax and the `winnow` parser under it, which
