@@ -9,12 +9,20 @@
 //! file per track, and each track's `INDEX` is measured from the start of its
 //! own file. A single-file sheet names one image holding every track, and the
 //! `INDEX` says how far into it each begins.
+//!
+//! A sheet is text that came with the dump, so the names in it are as
+//! untrusted as the rest of the dump: `FILE "/dev/zero"` and
+//! `FILE "../../.ssh/id_ed25519"` parse like any other line. Nothing here opens
+//! what a sheet names, and [`resolve`] is how to find it without leaving the
+//! sheet's directory.
+
+use std::path::{Component, Path, PathBuf};
 
 /// Where a cue sheet's data track lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataTrack {
-    /// The file naming it, exactly as the sheet spells it. Resolve against the
-    /// sheet's own directory.
+    /// The file naming it, exactly as the sheet spells it. Untrusted: find it
+    /// with [`resolve`], against the sheet's own directory.
     pub file: String,
     /// How far into that file the track begins. Zero for a sheet that gives the
     /// data track a file of its own.
@@ -66,6 +74,11 @@ fn file_name(rest: &str) -> Option<String> {
 /// these together, so none of them is a dump of its own: a data track opens
 /// like a disc and an audio track like nothing at all, and neither is the
 /// thing an emulator was pointed at.
+///
+/// The names are the sheet's say and nothing more: an absolute path, a `..`,
+/// a device. Find each with [`resolve`] rather than joining it to a directory,
+/// and check it is a regular file before opening it, since opening a FIFO
+/// blocks until something writes to it.
 #[must_use]
 pub fn files(text: &str) -> Vec<String> {
     text.lines()
@@ -74,6 +87,41 @@ pub fn files(text: &str) -> Vec<String> {
             word.eq_ignore_ascii_case("FILE").then(|| file_name(rest)).flatten()
         })
         .collect()
+}
+
+/// Where a file a sheet names sits, against the directory the sheet is in, or
+/// `None` where the name reaches outside it.
+///
+/// Only a relative name of plain components resolves: no root, no drive, no
+/// `..`. A sheet has no business naming anything but the tracks beside it, and
+/// one that names `/dev/zero` or `../../.ssh/id_ed25519` is not describing a
+/// disc. A `.` is allowed, since it goes nowhere.
+///
+/// This is about the name alone, and opens nothing. A symbolic link inside the
+/// directory still leads wherever it points, and whether what is there is a
+/// regular file is the caller's to check before reading it.
+///
+/// ```
+/// use std::path::Path;
+/// use disc_id::cue::resolve;
+///
+/// let dir = Path::new("games");
+/// assert_eq!(resolve(dir, "Disc (Track 1).bin"), Some(dir.join("Disc (Track 1).bin")));
+/// assert_eq!(resolve(dir, "../../etc/passwd"), None);
+/// assert_eq!(resolve(dir, "/dev/zero"), None);
+/// ```
+#[must_use]
+pub fn resolve(dir: &Path, name: &str) -> Option<PathBuf> {
+    let name = Path::new(name);
+    let mut plain = false;
+    for component in name.components() {
+        match component {
+            Component::Normal(_) => plain = true,
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) | Component::ParentDir => return None,
+        }
+    }
+    plain.then(|| dir.join(name))
 }
 
 /// The first data track a cue sheet names.
