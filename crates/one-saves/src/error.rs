@@ -75,6 +75,17 @@ pub enum ErrorKind {
     /// it says.
     Encoding(String),
 
+    /// The CBOR nests arrays, maps and tags deeper than this decoder reads.
+    ///
+    /// Not a rule of the specification, which sets no depth, but a limit of this implementation:
+    /// decoding recurses, so without one a file of a few kilobytes made of nothing but array heads
+    /// takes the stack with it, which is an abort rather than an error. The limit is far past
+    /// anything a bundle needs.
+    TooDeep {
+        /// How many levels this decoder reads.
+        limit: usize,
+    },
+
     /// The file is not wrapped in the bundle tag.
     NotABundle {
         /// The tag that was there instead, if the value was tagged at all.
@@ -312,6 +323,9 @@ impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ErrorKind::Encoding(why) => write!(f, "not deterministically encoded CBOR: {why}"),
+            ErrorKind::TooDeep { limit } => {
+                write!(f, "nests deeper than the {limit} levels this decoder reads")
+            }
             ErrorKind::NotABundle { found: Some(tag) } => {
                 write!(f, "tag {tag} is not the bundle tag {}", crate::BUNDLE_TAG)
             }

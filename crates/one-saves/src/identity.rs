@@ -26,7 +26,9 @@ impl Bundle {
     ///
     /// # Errors
     ///
-    /// Decompressing a payload that does not inflate to the length and digest it claims.
+    /// Decompressing a payload that does not inflate to the length it claims. A part's `sha256` is
+    /// not compared here: the content hash is of what the bundle holds, whether or not its digests
+    /// are right, and [`Part::verify`] is what checks one.
     pub fn content_hash(&self) -> Result<HashValue, Error> {
         Ok(HashValue::sha256_of(&self.normalized()?.to_vec()?))
     }
@@ -95,8 +97,11 @@ fn inflate(bytes: &[u8], size: u64, path: &str) -> Result<Vec<u8>, Error> {
     let mut plain = Vec::new();
     decoder.take(size.saturating_add(1)).read_to_end(&mut plain).map_err(|e| invalid(e.to_string()))?;
 
-    if plain.len() != capacity {
+    if plain.len() > capacity {
         return Err(invalid(format!("inflated past the stated {capacity} bytes")));
+    }
+    if plain.len() < capacity {
+        return Err(invalid(format!("inflated to {} of the stated {capacity} bytes", plain.len())));
     }
     Ok(plain)
 }
@@ -156,5 +161,16 @@ mod tests {
             !message.contains(&(4usize << 20).to_string()),
             "must not know the true length, which would mean it inflated everything: {message}"
         );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn a_payload_that_falls_short_of_its_claim_says_so() {
+        let short = zstd::stream::encode_all(&[7u8; 10][..], 3).unwrap();
+        let mut bundle = Bundle { header: Header::default(), parts: vec![Part::new(0, *b"SAVE")] };
+        bundle.parts[0].payload = Payload::Compressed { bytes: short, size: 64 };
+
+        let error = bundle.parts[0].bytes().unwrap_err();
+        assert!(error.to_string().contains("inflated to 10 of the stated 64 bytes"), "{error}");
     }
 }

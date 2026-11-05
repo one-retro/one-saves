@@ -6,6 +6,8 @@
 //! admits is here too, rather than in the decoder, so a bundle a caller built is held to it on the
 //! way out exactly as one read off the wire is on the way in.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::codec::{Strictness, check_path};
 use crate::error::{Error, ErrorKind};
 use crate::hash::HashValue;
@@ -91,15 +93,17 @@ impl Bundle {
     /// two parts a consumer cannot tell apart is a bundle it cannot act on. With all three
     /// defaulting to absence, two bare saves collide on exactly this. Parts of different kinds
     /// never do, which is what lets a state part and its screenshot go without an address.
+    ///
+    /// A set rather than a comparison of every pair: the number of parts is the file's to choose,
+    /// and pairwise, a few megabytes of them kept a decoder busy for minutes.
     fn check_part_addresses(&self) -> Result<(), Error> {
+        let mut seen = HashMap::with_capacity(self.parts.len());
         for (index, part) in self.parts.iter().enumerate() {
-            for earlier in &self.parts[..index] {
-                if earlier.kind == part.kind && earlier.address() == part.address() {
-                    return Err(Error::at(
-                        format!("parts[{index}]"),
-                        ErrorKind::PartsShareAnAddress { first: earlier.id, second: part.id },
-                    ));
-                }
+            if let Some(first) = seen.insert((&part.kind, part.address()), part.id) {
+                return Err(Error::at(
+                    format!("parts[{index}]"),
+                    ErrorKind::PartsShareAnAddress { first, second: part.id },
+                ));
             }
         }
         Ok(())
@@ -112,7 +116,7 @@ impl Bundle {
     /// or never, is one it has nowhere to put. Only a card holds `system` parts, which
     /// [`check_parts_against_shape`](Self::check_parts_against_shape) has already settled.
     fn check_system_entries(&self) -> Result<(), Error> {
-        let mut laid_down: Vec<&str> = Vec::new();
+        let mut laid_down: HashSet<&str> = HashSet::new();
         for (index, part) in self.parts.iter().enumerate() {
             // A part without a path is refused on its own account, by `check_system_part`.
             let Some(path) = part.path.as_deref().filter(|_| part.kind == PartKind::System) else {
@@ -126,7 +130,7 @@ impl Bundle {
                     ErrorKind::SystemEntryBeforeItsDirectory { directory: directory.to_owned() },
                 ));
             }
-            laid_down.push(path);
+            laid_down.insert(path);
         }
         Ok(())
     }
@@ -674,8 +678,7 @@ fn check_nested(part: &Part, header: &Header, path: &str) -> Result<(), Error> {
     };
 
     let inner = Bundle::from_cbor(
-        &dcbor::CBOR::try_from_data(bytes)
-            .map_err(|e| Error::at(path, ErrorKind::Encoding(e.to_string())))?,
+        &crate::codec::decode_cbor(bytes).map_err(|kind| Error::at(path, kind))?,
         Strictness::Decoder,
     )
     .map_err(|e| Error::at(path, ErrorKind::NestedPayloadNotABundle(Box::new(e))))?;
@@ -787,6 +790,34 @@ mod tests {
             bundle_of(parts).validate().unwrap_err().kind(),
             &ErrorKind::PartsShareAnAddress { first: 0, second: 1 }
         );
+    }
+
+    #[test]
+    fn a_bundle_of_very_many_parts_is_checked_in_linear_time() {
+        // The part count is the file's to choose. Comparing every pair of parts, this many kept a
+        // decoder busy for minutes; it is under a second with a set, and still finds the duplicate.
+        let count = 100_000u64;
+        let mut parts: Vec<Part> = (0..count).map(|id| Part::new(id, *b"a").slot(id)).collect();
+        let started = std::time::Instant::now();
+        assert!(bundle_of(parts.clone()).validate().is_ok());
+
+        parts.last_mut().unwrap().slot = Some(0);
+        assert_eq!(
+            bundle_of(parts).validate().unwrap_err().kind(),
+            &ErrorKind::PartsShareAnAddress { first: 0, second: count - 1 }
+        );
+        assert!(started.elapsed().as_secs() < 30, "took {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn a_nested_bundle_nested_without_end_is_an_error_and_not_an_abort() {
+        // A `bundle` part's payload is decoded during validation, so the depth limit has to hold
+        // there as well as at the top: a few kilobytes of array heads overflowed the stack.
+        let mut payload = vec![0x81; 100_000];
+        payload.push(0x00);
+        let part = Part::new(0, payload).kind(PartKind::Bundle);
+        let error = collection_of(vec![part]).validate().unwrap_err();
+        assert_eq!(error.kind(), &ErrorKind::TooDeep { limit: crate::codec::MAX_NESTING });
     }
 
     #[test]

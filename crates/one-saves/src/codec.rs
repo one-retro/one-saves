@@ -111,6 +111,85 @@ impl Fields {
     }
 }
 
+// ---- reading CBOR ----------------------------------------------------------------------------
+
+/// The deepest arrays, maps and tags may sit inside one another in a bundle's CBOR.
+///
+/// The specification sets no depth; this is the decoder's own limit. dcbor decodes by recursion
+/// and sets none either, so without it a file of a couple of kilobytes, nothing but array heads,
+/// overflows the stack: an abort, where every other malformed file is an error. A bundle's own
+/// structure is a handful of levels — the tag, its envelope, the header, a map in it, an extension
+/// value — and a nested bundle is a byte string that starts again from nothing, so this leaves an
+/// extension's value a hundred levels and more to say whatever it says.
+pub(crate) const MAX_NESTING: usize = 128;
+
+/// Decodes `bytes` as deterministic CBOR, having first refused anything nested past
+/// [`MAX_NESTING`].
+pub(crate) fn decode_cbor(bytes: &[u8]) -> Result<CBOR, ErrorKind> {
+    check_nesting(bytes)?;
+    CBOR::try_from_data(bytes).map_err(|e| ErrorKind::Encoding(e.to_string()))
+}
+
+/// Walks the heads of the one CBOR value at the start of `bytes`, without recursing, and refuses
+/// it if it nests deeper than [`MAX_NESTING`].
+///
+/// Depth is all this judges. Anything malformed — a truncated head, an indefinite length, a
+/// reserved additional-information value — ends the walk and is left to dcbor, which refuses it at
+/// that same point: it reads the value in the same order this does, so it never gets past it.
+fn check_nesting(bytes: &[u8]) -> Result<(), ErrorKind> {
+    // How many items each open array, map and tag has still to come, beneath one slot for the
+    // value itself. The depth is how many are open past that slot.
+    let mut open: Vec<u64> = vec![1];
+    let mut at = 0usize;
+    while let Some(remaining) = open.last_mut() {
+        if *remaining == 0 {
+            open.pop();
+            continue;
+        }
+        *remaining -= 1;
+
+        let Some(&initial) = bytes.get(at) else { return Ok(()) };
+        at += 1;
+        let width = match initial & 0x1F {
+            0..=23 => 0,
+            24 => 1,
+            25 => 2,
+            26 => 4,
+            27 => 8,
+            _ => return Ok(()),
+        };
+        let Some(head) = bytes.get(at..at + width) else { return Ok(()) };
+        at += width;
+        let argument = if width == 0 {
+            u64::from(initial & 0x1F)
+        } else {
+            head.iter().fold(0u64, |value, &byte| (value << 8) | u64::from(byte))
+        };
+
+        let holds = match initial >> 5 {
+            // Byte and text strings: skipped whole. A length past the end is truncation.
+            2 | 3 => {
+                match usize::try_from(argument).ok().and_then(|length| at.checked_add(length)) {
+                    Some(end) if end <= bytes.len() => at = end,
+                    _ => return Ok(()),
+                }
+                0
+            }
+            4 => argument,
+            5 => argument.saturating_mul(2),
+            6 => 1,
+            _ => 0,
+        };
+        if holds > 0 {
+            if open.len() > MAX_NESTING {
+                return Err(ErrorKind::TooDeep { limit: MAX_NESTING });
+            }
+            open.push(holds);
+        }
+    }
+    Ok(())
+}
+
 // ---- small readers ---------------------------------------------------------------------------
 
 fn want_map<'a>(value: &'a CBOR, path: &str) -> Result<&'a Map, Error> {
@@ -206,8 +285,7 @@ impl Bundle {
 
     /// Reads a bundle at a chosen [`Strictness`].
     pub fn from_slice_with(bytes: &[u8], strictness: Strictness) -> Result<Self, Error> {
-        let cbor =
-            CBOR::try_from_data(bytes).map_err(|e| Error::at("", ErrorKind::Encoding(e.to_string())))?;
+        let cbor = decode_cbor(bytes).map_err(|kind| Error::at("", kind))?;
         let bundle = Bundle::from_cbor(&cbor, strictness)?;
         bundle.validate()?;
         Ok(bundle)
@@ -881,5 +959,66 @@ impl Part {
             },
         );
         finish(map, &self.unknown, &self.extensions)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `depth` arrays of one element each, around a zero.
+    fn nested(depth: usize) -> Vec<u8> {
+        let mut bytes = vec![0x81; depth];
+        bytes.push(0x00);
+        bytes
+    }
+
+    #[test]
+    fn a_value_as_deep_as_the_limit_reads() {
+        assert!(check_nesting(&nested(MAX_NESTING)).is_ok());
+        assert!(decode_cbor(&nested(MAX_NESTING)).is_ok());
+    }
+
+    #[test]
+    fn a_value_past_the_limit_is_an_error_and_not_an_abort() {
+        // A few kilobytes of these overflowed the stack inside dcbor in a debug build, a few tens
+        // in release, before anything here had looked at what the value was.
+        assert_eq!(check_nesting(&nested(MAX_NESTING + 1)), Err(ErrorKind::TooDeep { limit: MAX_NESTING }));
+        let error = Bundle::from_slice(&nested(1_000_000)).unwrap_err();
+        assert_eq!(error.kind(), &ErrorKind::TooDeep { limit: MAX_NESTING });
+    }
+
+    #[test]
+    fn maps_and_tags_count_toward_the_depth_as_arrays_do() {
+        // A map of one entry whose value is the next map, and a tag around each.
+        let mut bytes = Vec::new();
+        for _ in 0..=MAX_NESTING / 2 {
+            bytes.extend_from_slice(&[0xC1, 0xA1, 0x00]);
+        }
+        bytes.push(0x00);
+        assert!(matches!(check_nesting(&bytes), Err(ErrorKind::TooDeep { .. })));
+    }
+
+    #[test]
+    fn strings_are_skipped_whole_rather_than_read_as_heads() {
+        // A byte string full of array heads is just bytes, however many there are.
+        let mut bytes = vec![0x59, 0x10, 0x00];
+        bytes.extend(std::iter::repeat_n(0x81, 0x1000));
+        assert!(check_nesting(&bytes).is_ok());
+    }
+
+    #[test]
+    fn a_malformed_value_is_left_to_dcbor_to_refuse() {
+        // Truncated, indefinite and reserved heads end the walk; it is dcbor that says what is
+        // wrong with them, so the error is the one it has always been.
+        for bytes in [
+            &[0x9A, 0xFF][..],
+            &[0x9F, 0x00, 0xFF],
+            &[0x1C],
+            &[0x5B, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+        ] {
+            assert!(check_nesting(bytes).is_ok());
+            assert!(matches!(decode_cbor(bytes), Err(ErrorKind::Encoding(_))));
+        }
     }
 }

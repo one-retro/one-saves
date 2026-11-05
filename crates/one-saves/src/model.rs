@@ -744,7 +744,7 @@ impl Card {
 /// What role a part's bytes play.
 ///
 /// Absent on the wire means [`Save`](PartKind::Save), which is the vast majority of parts.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum PartKind {
     /// An in-game save: what a game wrote to its medium. The default, and never written out.
     #[default]
