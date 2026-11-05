@@ -12,6 +12,7 @@
 //!
 //! Reading only. An archive is a way a save arrived, not a format this crate writes back.
 
+use std::borrow::Cow;
 use std::io::Read;
 
 use crate::detect::detect;
@@ -77,8 +78,12 @@ fn members(bytes: &[u8]) -> Result<Vec<Member>> {
         }
         // `name` is the path as stored. Nothing here writes a file, so a member that climbs out of
         // the archive with `..` cannot reach anything; it is skipped anyway, because a name like
-        // that is a sign of an archive built to be extracted carelessly rather than read.
-        let name = file.name().to_owned();
+        // that is a sign of an archive built to be extracted carelessly rather than read. A name
+        // that does not decode in the encoding its flags claim is still a member: it is read
+        // lossily, since the name only steers detection and a garbled one just detects worse.
+        let name = file
+            .name()
+            .map_or_else(|_| String::from_utf8_lossy(file.name_raw()).into_owned(), Cow::into_owned);
         if name.split('/').any(|part| part == "..") || name.starts_with("__MACOSX/") {
             continue;
         }

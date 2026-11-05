@@ -62,7 +62,11 @@ sha1 = "0.11"
 sha2 = "0.11"
 md-5 = "0.11"
 crc32fast = "1.4"
-zstd = "0.13"
+# 0.13.4 is the floor the RUSTSEC-2026-03xx/04xx advisories against zstd-safe 7.2 set. The
+# defaults are off because each is surface this never uses on bytes it was handed: `legacy`
+# decodes the pre-1.0 frame formats no producer of a payload here ever wrote, and
+# `zdict_builder` trains dictionaries, which nothing does.
+zstd = { version = "0.13.4", default-features = false }
 # Gzip and zlib, for the producers that compress what they write: standalone Mednafen gzips a
 # Saturn Backup RAM Cart, and RetroArch, mGBA and DuckStation deflate their save states. `zlib-rs`
 # rather than the `rust_backend` default: both are pure Rust, and this is the one `zip` already
@@ -78,9 +82,11 @@ png = "0.18"
 # the characters a Western release happens to use.
 encoding_rs = "0.8"
 # Zip archives, which is how saves are shared: an archive of a card, or of the loose saves off
-# one. Reading only, and `deflate` is the pure-Rust decoder — the other twelve deflate features
-# are encoders or bindings to a C library, and nothing here writes an archive.
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+# one. Reading only, and `deflate-flate2-zlib-rs` is the pure-Rust decoder on the same flate2
+# backend as everything else here; 9's plain `deflate` pulls in the zopfli encoder too, and
+# nothing here writes an archive. 9.0 is the floor RUSTSEC-2026-0367/0368/0369/0429 set. Those are
+# all in `extract`, which nothing here calls, but an audit should not have to know that.
+zip = { version = "9.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 clap = { version = "4.5", features = ["derive"] }
 # DAT catalogs, in both the Logiqx XML and ClrMamePro syntaxes. `index` and `verify` stay off:
 # one-saves-convert keeps its own digest index, keyed by `one_saves::HashValue`, and hashing is
