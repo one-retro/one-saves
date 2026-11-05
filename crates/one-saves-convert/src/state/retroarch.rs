@@ -28,6 +28,7 @@
 //! [`StateOptions::source`](crate::state::StateOptions::source) and refuses to guess.
 
 use std::borrow::Cow;
+use std::ops::Range;
 
 use one_saves::{Bundle, Part, PartKind};
 
@@ -43,9 +44,26 @@ const RZIP_CHUNK: usize = 128 * 1024;
 /// The largest chunk RetroArch reads.
 const MAX_CHUNK: usize = 64 << 20;
 
-/// The most a state may inflate to. No core's state comes near it; a header claiming more is a
-/// file asking to be handed memory, not a state.
-const MAX_STATE: u64 = 1 << 30;
+/// The most a state may inflate to, its blocks and RetroArch's wrapping around them included.
+///
+/// A core's state is the emulated machine's memory and the core's own bookkeeping. A Wii, which
+/// Dolphin's core takes states of, has 88 MiB of RAM, and a PS2 has 32 MiB; this clears the
+/// largest with room to spare. A header claiming more is a file asking to be handed memory, not a
+/// state, and every byte a file inflates to is held more than once on its way into a bundle, so the
+/// cap is what bounds that too.
+const MAX_STATE: usize = 256 << 20;
+
+/// The most blocks a file may hold besides the core's data.
+///
+/// RetroArch writes two of its own, the achievement runtime's and a replay's, and skips a tag it
+/// does not know, which leaves a later version room for more. Each block becomes a part of its
+/// own, which costs a hundred times the eight bytes an empty one takes in the file, and RZIP
+/// compresses a run of empty ones a thousandfold: uncapped, a file of nothing else costs tens of
+/// thousands of times its size.
+const MAX_BLOCKS: usize = 64;
+
+/// What pads a block's data out to eight bytes.
+const PADDING: [u8; 8] = [0; 8];
 
 /// Reads a RetroArch state file, and its thumbnail when there is one, into a state bundle.
 ///
@@ -63,22 +81,35 @@ pub fn read(file: &StateFile<'_>, options: &StateOptions) -> Result<Bundle> {
     }
 
     let plain = unzip(file.bytes)?;
-    let (data, blocks) = unwrap(&plain)?;
+    let (memory, blocks) = unwrap(&plain)?;
     let (origin, slot) =
         crate::state::origin_and_slot(crate::state::retroarch_slot(&file.name.to_ascii_lowercase()));
 
-    let mut parts = vec![crate::state::state_part(data.to_vec(), slot)];
+    let aux: Vec<Part> = blocks
+        .into_iter()
+        .map(|(tag, at)| {
+            Part::new(0, plain[at].to_vec())
+                .kind(PartKind::Aux)
+                .path(tag_path(tag))
+                .content_type("application/octet-stream")
+        })
+        .collect();
+    // The core's data is most of the file, so where the file had to be inflated it is cut out of
+    // what was inflated rather than copied out of it.
+    let data = match plain {
+        Cow::Owned(mut plain) => {
+            plain.copy_within(memory.clone(), 0);
+            plain.truncate(memory.len());
+            plain
+        }
+        Cow::Borrowed(plain) => plain[memory].to_vec(),
+    };
+
+    let mut parts = vec![crate::state::state_part(data, slot)];
     if let Some(screenshot) = file.screenshot {
         parts.push(crate::state::screenshot_part(screenshot.to_vec())?);
     }
-    for (tag, block) in blocks {
-        parts.push(
-            Part::new(0, block.to_vec())
-                .kind(PartKind::Aux)
-                .path(tag_path(tag))
-                .content_type("application/octet-stream"),
-        );
-    }
+    parts.extend(aux);
 
     let found = Found { app: Some("retroarch"), origin, ..Found::default() };
     let bundle = Bundle::new(crate::state::header(options, found), crate::state::number(parts));
@@ -95,8 +126,8 @@ pub fn read(file: &StateFile<'_>, options: &StateOptions) -> Result<Bundle> {
 ///
 /// # Errors
 ///
-/// [`Error::NotConvertible`] for a bundle that is not a state, names no core, or holds an `aux`
-/// part whose `path` is not a block's tag.
+/// [`Error::NotConvertible`] for a bundle that is not a state, names no core, holds an `aux` part
+/// whose `path` is not a block's tag, or holds more than a state is read back at.
 pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let contents = Contents::of(bundle)?;
     if bundle.header.source.as_ref().and_then(|source| source.core.as_ref()).is_none() {
@@ -106,6 +137,10 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     }
 
     let mut left_out: Vec<u64> = contents.saves.iter().map(|part| part.id).collect();
+    // Every block is held to what the file is read back at before it is inflated, since a
+    // compressed part's length is its own claim and inflating it is what costs the memory. The
+    // wrapping is sixteen bytes, and each block eight more and its padding.
+    let mut room = MAX_STATE - 16;
     let mut blocks = Vec::new();
     for part in &contents.aux {
         let tag = part.path.as_deref().and_then(path_tag).ok_or_else(|| {
@@ -114,19 +149,26 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
                 part.id
             ))
         })?;
-        blocks.push((tag, part.bytes()?));
+        blocks.push((tag, block_within(part, &mut room)?));
     }
+    let state = block_within(contents.state, &mut room)?;
 
     // RetroArch writes a replay first, then the core's data, then the rest.
-    let mut wrapped = b"RASTATE\x01".to_vec();
-    for (tag, data) in blocks.iter().filter(|(tag, _)| tag == b"RPLY") {
-        push_block(&mut wrapped, *tag, data);
+    let order: Vec<([u8; 4], &[u8])> = blocks
+        .iter()
+        .filter(|(tag, _)| tag == b"RPLY")
+        .map(|(tag, data)| (*tag, data.as_ref()))
+        .chain([(*b"MEM ", state.as_ref())])
+        .chain(blocks.iter().filter(|(tag, _)| tag != b"RPLY").map(|(tag, data)| (*tag, data.as_ref())))
+        .chain([(*b"END ", &[][..])])
+        .collect();
+    let headers = order.iter().map(|(tag, data)| block_header(*tag, data)).collect::<Result<Vec<_>>>()?;
+    // The file is compressed from its pieces where they lie, so the core's data is never copied
+    // into a file of its own first.
+    let mut wrapped: Vec<&[u8]> = vec![b"RASTATE\x01"];
+    for ((_, data), header) in order.iter().zip(&headers) {
+        wrapped.extend([&header[..], data, &PADDING[..data.len().next_multiple_of(8) - data.len()]]);
     }
-    push_block(&mut wrapped, *b"MEM ", &contents.state.bytes()?);
-    for (tag, data) in blocks.iter().filter(|(tag, _)| tag != b"RPLY") {
-        push_block(&mut wrapped, *tag, data);
-    }
-    push_block(&mut wrapped, *b"END ", &[]);
 
     let name = format!(
         "{}{}",
@@ -168,7 +210,7 @@ fn unzip(bytes: &[u8]) -> Result<Cow<'_, [u8]>> {
             "its RZIP chunks are {chunk} bytes, where RetroArch reads up to {MAX_CHUNK}"
         )));
     }
-    if total == 0 || total > MAX_STATE {
+    if total == 0 || total > MAX_STATE as u64 {
         return Err(corrupt(format!("it claims to inflate to {total} bytes")));
     }
     let total =
@@ -199,16 +241,17 @@ fn unzip(bytes: &[u8]) -> Result<Cow<'_, [u8]>> {
     Ok(Cow::Owned(out))
 }
 
-/// RetroArch's blocks other than the core's data, each with its tag, in file order.
-type Blocks<'a> = Vec<([u8; 4], &'a [u8])>;
+/// RetroArch's blocks other than the core's data, each with its tag and where it lies, in file
+/// order.
+type Blocks = Vec<([u8; 4], Range<usize>)>;
 
-/// The core's data, and every other block with its tag, from an unwrapped file.
+/// Where the core's data lies in an unwrapped file, and every other block with its tag.
 ///
 /// A file that is not `RASTATE` is the core's data alone, which is what RetroArch before 1.9.1
 /// wrote.
-fn unwrap(plain: &[u8]) -> Result<(&[u8], Blocks<'_>)> {
+fn unwrap(plain: &[u8]) -> Result<(Range<usize>, Blocks)> {
     let Some(rest) = plain.strip_prefix(b"RASTATE") else {
-        return Ok((plain, Vec::new()));
+        return Ok((0..plain.len(), Vec::new()));
     };
     let corrupt = |why: String| Error::Corrupt { format: FORMAT, why };
     match rest.first() {
@@ -229,11 +272,16 @@ fn unwrap(plain: &[u8]) -> Result<(&[u8], Blocks<'_>)> {
         if &tag == b"END " {
             break;
         }
-        let data = at.checked_add(length).and_then(|end| plain.get(at..end)).ok_or_else(|| {
-            corrupt(format!("its {} block runs past the end", String::from_utf8_lossy(&tag)))
-        })?;
+        let data =
+            at.checked_add(length).filter(|&end| end <= plain.len()).map(|end| at..end).ok_or_else(|| {
+                corrupt(format!("its {} block runs past the end", String::from_utf8_lossy(&tag)))
+            })?;
         if &tag == b"MEM " {
             memory = Some(data);
+        } else if blocks.len() == MAX_BLOCKS {
+            return Err(corrupt(format!(
+                "it holds more than {MAX_BLOCKS} blocks besides the core's data, where RetroArch writes two"
+            )));
         } else {
             blocks.push((tag, data));
         }
@@ -243,23 +291,53 @@ fn unwrap(plain: &[u8]) -> Result<(&[u8], Blocks<'_>)> {
     Ok((memory, blocks))
 }
 
-/// Appends a block: its tag, its length, and its data padded with zeros to eight bytes.
-fn push_block(out: &mut Vec<u8>, tag: [u8; 4], data: &[u8]) {
-    out.extend_from_slice(&tag);
-    out.extend_from_slice(&u32::try_from(data.len()).expect("a block fits RetroArch's u32").to_le_bytes());
-    out.extend_from_slice(data);
-    out.resize(out.len().next_multiple_of(8), 0);
+/// A part's bytes as a block, held to what is left of `room` for it, and taken out of `room`.
+fn block_within<'a>(part: &'a Part, room: &mut usize) -> Result<Cow<'a, [u8]>> {
+    let data = crate::state::bytes_within(part, room.saturating_sub(8), "a RetroArch state")?;
+    *room = room.saturating_sub(8 + data.len().next_multiple_of(8));
+    Ok(data)
 }
 
-/// Compresses as RZIP version 1, in RetroArch's chunk size.
-fn rzip(plain: &[u8]) -> Vec<u8> {
+/// A block's header: its tag, and its length as the `u32` RetroArch gives it.
+fn block_header(tag: [u8; 4], data: &[u8]) -> Result<[u8; 8]> {
+    let length = u32::try_from(data.len()).map_err(|_| {
+        Error::NotConvertible(format!(
+            "a block of {} bytes is more than RetroArch's file has room for",
+            data.len()
+        ))
+    })?;
+    let mut header = [0; 8];
+    header[..4].copy_from_slice(&tag);
+    header[4..].copy_from_slice(&length.to_le_bytes());
+    Ok(header)
+}
+
+/// Compresses the file `plain` is the pieces of as RZIP version 1, in RetroArch's chunk size.
+fn rzip(plain: &[&[u8]]) -> Vec<u8> {
+    let total: usize = plain.iter().map(|piece| piece.len()).sum();
     let mut out = b"#RZIPv\x01#".to_vec();
     out.extend_from_slice(&u32::try_from(RZIP_CHUNK).expect("the chunk size fits").to_le_bytes());
-    out.extend_from_slice(&(plain.len() as u64).to_le_bytes());
-    for chunk in plain.chunks(RZIP_CHUNK) {
+    out.extend_from_slice(&(total as u64).to_le_bytes());
+    let mut push = |chunk: &[u8]| {
         let compressed = image::deflate_zlib(chunk);
         out.extend_from_slice(&u32::try_from(compressed.len()).expect("a chunk fits").to_le_bytes());
         out.extend_from_slice(&compressed);
+    };
+    // A chunk can span pieces, and a piece many chunks, so each is filled from the pieces in turn.
+    let mut chunk = Vec::with_capacity(RZIP_CHUNK.min(total));
+    for mut piece in plain.iter().copied() {
+        while !piece.is_empty() {
+            let take = (RZIP_CHUNK - chunk.len()).min(piece.len());
+            chunk.extend_from_slice(&piece[..take]);
+            piece = &piece[take..];
+            if chunk.len() == RZIP_CHUNK {
+                push(&chunk);
+                chunk.clear();
+            }
+        }
+    }
+    if !chunk.is_empty() {
+        push(&chunk);
     }
     out
 }
@@ -310,7 +388,7 @@ mod tests {
         push_block(&mut wrapped, *b"ACHV", b"cheevos");
         push_block(&mut wrapped, *b"END ", &[]);
 
-        let bundle = read(&file(&rzip(&wrapped), "Sonic CD (USA).state3"), &options()).unwrap();
+        let bundle = read(&file(&rzip(&[&wrapped]), "Sonic CD (USA).state3"), &options()).unwrap();
         assert_eq!(bundle.parts[0].kind, PartKind::State);
         assert_eq!(bundle.parts[0].bytes().unwrap(), core.as_slice());
         assert_eq!(bundle.parts[0].slot, Some(3));
@@ -365,6 +443,14 @@ mod tests {
         assert_eq!((path_tag("MEMORY"), path_tag(""), path_tag("0x123")), (None, None, None));
     }
 
+    /// Appends a block: its tag, its length, and its data padded with zeros to eight bytes.
+    fn push_block(out: &mut Vec<u8>, tag: [u8; 4], data: &[u8]) {
+        out.extend_from_slice(&tag);
+        out.extend_from_slice(&u32::try_from(data.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(data);
+        out.resize(out.len().next_multiple_of(8), 0);
+    }
+
     /// A `RASTATE` file holding these blocks, in this order, then `END `.
     fn wrapped(blocks: &[([u8; 4], &[u8])]) -> Vec<u8> {
         let mut out = b"RASTATE\x01".to_vec();
@@ -394,7 +480,7 @@ mod tests {
 
     #[test]
     fn the_thumbnail_beside_a_state_is_its_screenshot_and_goes_back_beside_it() {
-        let file = rzip(&wrapped(&[(*b"MEM ", b"CORE")]));
+        let file = rzip(&[&wrapped(&[(*b"MEM ", b"CORE")])]);
         let png = thumbnail();
         let state = StateFile { bytes: &file, name: "game.state1", screenshot: Some(&png) };
         let bundle = read(&state, &options()).unwrap();
@@ -457,11 +543,11 @@ mod tests {
             assert!(matches!(error, Error::Corrupt { .. }), "{what}: {error}");
         };
         corrupt(&rzip_of(3, RZIP_CHUNK, &plain, image::deflate_zlib), "RZIP version 3");
-        let mut empty = rzip(&plain);
+        let mut empty = rzip(&[&plain]);
         empty[8..12].copy_from_slice(&0u32.to_le_bytes());
         corrupt(&empty, "RZIP chunks of nothing");
-        corrupt(&rzip(&plain)[..19], "an RZIP header cut short");
-        let mut short = rzip(&plain);
+        corrupt(&rzip(&[&plain])[..19], "an RZIP header cut short");
+        let mut short = rzip(&[&plain]);
         short[12..20].copy_from_slice(&(plain.len() as u64 + 1).to_le_bytes());
         corrupt(&short, "RZIP that inflates to less than it says");
 
@@ -471,8 +557,63 @@ mod tests {
     }
 
     #[test]
+    fn more_blocks_than_retroarch_writes_are_refused_before_they_become_parts() {
+        // An empty block is eight bytes, RZIP compresses a run of them a thousandfold, and each
+        // was a part of its own: a 73 KB file once cost gigabytes.
+        let with_empty = |tags: &[[u8; 4]]| {
+            let mut blocks = vec![(*b"MEM ", &b"CORE"[..])];
+            blocks.extend(tags.iter().map(|tag| (*tag, &[][..])));
+            wrapped(&blocks)
+        };
+        let tags: Vec<[u8; 4]> = (0..MAX_BLOCKS).map(|n| u32::try_from(n).unwrap().to_be_bytes()).collect();
+        let most = read(&file(&with_empty(&tags), "game.state"), &options()).unwrap();
+        assert_eq!(most.parts.len(), 1 + MAX_BLOCKS, "as many as are read");
+
+        let many = rzip(&[&with_empty(&vec![*b"ACHV"; 100_000])]);
+        assert!(many.len() < 8192, "{} bytes", many.len());
+        match read(&file(&many, "game.state"), &options()) {
+            Err(Error::Corrupt { why, .. }) => assert!(why.contains("blocks"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_state_claiming_past_the_largest_any_core_takes_is_refused_before_it_is_inflated() {
+        // A gibibyte was under the cap before, and a megabyte of zeros claiming it was inflated
+        // whole, then written out whole again.
+        for claim in [MAX_STATE as u64 + 1, 1 << 30] {
+            let mut forged = b"#RZIPv\x01#".to_vec();
+            forged.extend_from_slice(&u32::try_from(MAX_CHUNK).unwrap().to_le_bytes());
+            forged.extend_from_slice(&claim.to_le_bytes());
+            let zeros = image::deflate_zlib(&[0; 4096]);
+            forged.extend_from_slice(&u32::try_from(zeros.len()).unwrap().to_le_bytes());
+            forged.extend_from_slice(&zeros);
+            match unzip(&forged) {
+                Err(Error::Corrupt { why, .. }) => assert!(why.contains("claims"), "{claim}: {why}"),
+                other => panic!("{claim}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_part_claiming_more_than_the_file_is_read_back_at_is_refused_before_it_is_inflated() {
+        // Past 4 GiB a block once panicked on its `u32` length, after it had been inflated.
+        let bundle = read(&file(&wrapped(&[(*b"MEM ", b"CORE")]), "game.state"), &options()).unwrap();
+        let mut odd = bundle.clone();
+        odd.parts.push(crate::state::part_claiming(1, (1 << 32) + 16).kind(PartKind::Aux).path("ACHV"));
+        let error = write(&odd, "game").unwrap_err();
+        assert!(matches!(error, Error::NotConvertible(_)), "{error}");
+
+        // The core's data alone at the cap leaves no room for RetroArch's wrapping around it.
+        let mut odd = bundle;
+        odd.parts[0] = crate::state::part_claiming(0, MAX_STATE as u64).kind(PartKind::State);
+        let error = write(&odd, "game").unwrap_err();
+        assert!(matches!(error, Error::NotConvertible(_)), "the core's data: {error}");
+    }
+
+    #[test]
     fn what_retroarch_keeps_elsewhere_is_left_out() {
-        let file = rzip(&wrapped(&[(*b"MEM ", b"CORE")]));
+        let file = rzip(&[&wrapped(&[(*b"MEM ", b"CORE")])]);
         let mut bundle = read(&self::file(&file, "game.state"), &options()).unwrap();
         let jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F'];
         bundle.parts.push(crate::state::screenshot_part(jpeg).unwrap());

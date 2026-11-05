@@ -168,25 +168,43 @@ pub fn cartridge(bundle: &Bundle) -> Result<Option<(N64Save, Vec<u8>)>> {
     cartridge_of(bundle)
 }
 
+/// How many bundles deep a cartridge is looked for beneath the one it is asked of.
+///
+/// The shapes this version defines nest three deep at most — a collection holding a device
+/// holding a card holding a save — and a device's cartridge is one bundle down. Validation holds a
+/// bundle to that only for a shape it knows, though, so a file of nested bundles of a shape it
+/// does not is cut off here rather than followed down. One level past the defined shapes leaves
+/// room for a later version's.
+const MAX_DEPTH: usize = 4;
+
 /// The chip and its normal-form memory, out of a save's `cartridge` part or a device's.
 ///
 /// Inside a device's cartridge component the save is the component's only socket, so its part
 /// carries no role, and the key is what marks it.
 fn cartridge_of(bundle: &Bundle) -> Result<Option<(N64Save, Vec<u8>)>> {
-    let Some(part) = bundle.parts.iter().find(|part| {
-        part.role.as_ref().is_some_and(|r| r.as_str() == CARTRIDGE) || part.extensions.get::<N64>().is_some()
-    }) else {
-        return Ok(None);
-    };
-    if part.kind == PartKind::Bundle {
-        return cartridge_of(&Bundle::from_slice(&part.bytes()?)?);
+    let mut nested: Option<Bundle> = None;
+    for _ in 0..=MAX_DEPTH {
+        let current = nested.as_ref().unwrap_or(bundle);
+        let Some(part) = current.parts.iter().find(|part| {
+            part.role.as_ref().is_some_and(|r| r.as_str() == CARTRIDGE)
+                || part.extensions.get::<N64>().is_some()
+        }) else {
+            return Ok(None);
+        };
+        if part.kind == PartKind::Bundle {
+            nested = Some(Bundle::from_slice(&part.bytes()?)?);
+            continue;
+        }
+        // A part with no key is a cartridge save whose chip nobody recorded, and the length of its
+        // bytes is exactly the thing that cannot settle it.
+        let save = part.extensions.get::<N64>().map(|n64| n64.save).ok_or_else(|| {
+            Error::NotConvertible("this cartridge save does not say which chip it is for".into())
+        })?;
+        return Ok(Some((save, part.bytes()?.into_owned())));
     }
-    // A part with no key is a cartridge save whose chip nobody recorded, and the length of its
-    // bytes is exactly the thing that cannot settle it.
-    let save = part.extensions.get::<N64>().map(|n64| n64.save).ok_or_else(|| {
-        Error::NotConvertible("this cartridge save does not say which chip it is for".into())
-    })?;
-    Ok(Some((save, part.bytes()?.into_owned())))
+    Err(Error::NotConvertible(format!(
+        "this bundle nests its cartridge more than {MAX_DEPTH} bundles deep, deeper than any shape does"
+    )))
 }
 
 /// Reverses each 32-bit word's bytes, which is its own inverse.
@@ -775,6 +793,29 @@ mod tests {
         assert_eq!(unwrap(&bundle, WordOrder::Swapped).unwrap(), (N64Save::Sram256k, file.clone()));
         let (_, console) = unwrap(&bundle, WordOrder::Console).unwrap();
         assert_eq!(&console[..4], &[3, 2, 1, 0], "the same save for a flash cartridge");
+    }
+
+    #[test]
+    fn a_cartridge_nested_past_any_shape_is_refused_rather_than_followed_down() {
+        // A shape this version does not define is one validation cannot hold to a depth, so a file
+        // of them nested thousands deep used to take the stack with it. Each level here holds the
+        // last on the cartridge role, as a device holds its cartridge.
+        let shape = || Shape::from_slug(slug("later-shape"));
+        let mut bundle =
+            wrap(&[1u8; 512], N64Save::Eeprom4k, WordOrder::Console, &N64Options::default()).unwrap();
+        for depth in 1..=MAX_DEPTH + 1 {
+            let part = Part::new(0, bundle.to_vec().unwrap()).kind(PartKind::Bundle).role(slug(CARTRIDGE));
+            bundle = Bundle::new(Header::new(shape()), vec![part]);
+            let found = cartridge(&bundle);
+            if depth <= MAX_DEPTH {
+                assert_eq!(found.unwrap().map(|(save, _)| save), Some(N64Save::Eeprom4k), "{depth} deep");
+            } else {
+                assert!(matches!(found, Err(Error::NotConvertible(_))), "{depth} deep: {found:?}");
+                assert!(matches!(unwrap(&bundle, WordOrder::Console), Err(Error::NotConvertible(_))));
+                #[cfg(feature = "n64")]
+                assert!(matches!(write_srm(&bundle, None), Err(Error::NotConvertible(_))));
+            }
+        }
     }
 
     #[test]

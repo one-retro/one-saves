@@ -148,8 +148,8 @@ pub fn read(file: &StateFile<'_>, options: &StateOptions) -> Result<Bundle> {
 ///
 /// # Errors
 ///
-/// [`Error::NotConvertible`] for a bundle that is not a state, loads into another core, or records
-/// no format version.
+/// [`Error::NotConvertible`] for a bundle that is not a state, loads into another core, records no
+/// format version, or holds more data than DuckStation loads.
 pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let contents = Contents::of(bundle)?;
     crate::state::require_core(bundle, "duckstation", "DuckStation")?;
@@ -167,12 +167,13 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
         })?;
 
     let mut left_out: Vec<u64> = contents.saves.iter().chain(&contents.aux).map(|part| part.id).collect();
-    // DuckStation keeps a bare framebuffer, so the picture has to decode. One that does not, or a
-    // JPEG, stays in the bundle rather than costing the state its rebuild.
+    // DuckStation keeps a bare framebuffer, so the picture has to decode, and no larger than the
+    // reader takes. One that does not, or a JPEG, stays in the bundle rather than costing the state
+    // its rebuild.
     let screenshot = match contents.screenshot {
         Some(part) => {
             let decoded = (part.content_type.as_deref() == Some("image/png"))
-                .then(|| image::decode_rgba(&part.bytes().ok()?).ok())
+                .then(|| image::decode_rgba(&part.bytes().ok()?, (MAX_SIDE, MAX_SIDE)).ok())
                 .flatten();
             if decoded.is_none() {
                 left_out.push(part.id);
@@ -182,7 +183,9 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
         None => None,
     };
 
-    let data = contents.state.bytes()?;
+    // Held to DuckStation's cap before it is inflated, which also keeps every length and offset
+    // below in the `u32` DuckStation gives it.
+    let data = crate::state::bytes_within(contents.state, MAX_DATA, "a DuckStation state")?;
     let (compression, stored) = compress(&data, version);
     let mut out = vec![0u8; HEADER];
     let mut put = |at: usize, value: u32| out[at..at + 4].copy_from_slice(&value.to_le_bytes());
@@ -194,14 +197,18 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let (width, height, rgba) = screenshot.unwrap_or_default();
     let shot_at = HEADER;
     let data_at = shot_at + rgba.len();
+    let fits = |value: usize| {
+        u32::try_from(value)
+            .map_err(|_| Error::NotConvertible(format!("{value} does not fit a DuckStation header")))
+    };
     put(184, width);
     put(188, height);
-    put(192, u32::try_from(rgba.len()).expect("a screenshot fits"));
-    put(196, if rgba.is_empty() { 0 } else { u32::try_from(shot_at).expect("an offset fits") });
+    put(192, fits(rgba.len())?);
+    put(196, if rgba.is_empty() { 0 } else { fits(shot_at)? });
     put(200, compression);
-    put(204, u32::try_from(stored.len()).expect("the data fits"));
-    put(208, u32::try_from(data.len()).expect("the data fits"));
-    put(212, u32::try_from(data_at).expect("an offset fits"));
+    put(204, fits(stored.len())?);
+    put(208, fits(data.len())?);
+    put(212, fits(data_at)?);
     out[8..136].copy_from_slice(&fixed::<128>(title));
     out[136..168].copy_from_slice(&fixed::<32>(serial));
     out.extend_from_slice(&rgba);
@@ -390,7 +397,7 @@ mod tests {
     fn picture(bundle: &Bundle) -> (u32, u32, Vec<u8>, u8) {
         let part = bundle.parts.iter().find(|part| part.kind == PartKind::Screenshot).expect("a screenshot");
         let png = part.bytes().unwrap();
-        let (width, height, rgba) = image::decode_rgba(&png).unwrap();
+        let (width, height, rgba) = image::decode_rgba(&png, (MAX_SIDE, MAX_SIDE)).unwrap();
         // The colour type is the tenth byte of IHDR's data, which opens at 16.
         (width, height, rgba, png[25])
     }
@@ -586,6 +593,33 @@ mod tests {
             assert_eq!(rebuilt.left_out, [1, 2, 3], "a picture it cannot decode, a save and the rest");
             let again = read_as(&rebuilt.bytes, &rebuilt.name).unwrap();
             assert_eq!(again.parts.len(), 1, "the state loads without them");
+        }
+    }
+
+    #[test]
+    fn a_picture_past_what_the_reader_takes_is_left_out_without_being_decoded() {
+        // A few dozen bytes claiming a petabyte of pixels, which decoding would have allocated
+        // for, and one a pixel wider than the reader takes back.
+        let wide = image::encode(MAX_SIDE + 1, 1, 4, &vec![0xFF; 4 * (MAX_SIDE as usize + 1)]).unwrap();
+        for picture in [image::claiming(1 << 24, 1 << 24), wide] {
+            let mut bundle = bundle_at(72);
+            let mut part = crate::state::screenshot_part(picture).unwrap();
+            part.id = 1;
+            bundle.parts[1] = part;
+            let rebuilt = write(&bundle, "ignored").unwrap();
+            assert_eq!(rebuilt.left_out, [1]);
+            assert_eq!(read_as(&rebuilt.bytes, &rebuilt.name).unwrap().parts.len(), 1, "no screen");
+        }
+    }
+
+    #[test]
+    fn data_claiming_more_than_duckstation_loads_is_refused_before_it_is_inflated() {
+        // Past 4 GiB this once panicked on the header's `u32`, after it had been inflated.
+        for size in [MAX_DATA as u64 + 1, (1 << 32) + 16] {
+            let mut bundle = bundle_at(72);
+            bundle.parts[0] = crate::state::part_claiming(0, size).kind(PartKind::State);
+            let error = write(&bundle, "ignored").unwrap_err();
+            assert!(matches!(error, Error::NotConvertible(_)), "{size}: {error}");
         }
     }
 

@@ -57,6 +57,17 @@ const MAX_STATE: usize = 16 << 20;
 /// save memory, at 128 KiB; the cap is on the sum, since a file can hold any number of items.
 const MAX_ITEMS: usize = 64 << 20;
 
+/// The most items a state may hold. mGBA keeps one item to a tag, and has fewer than a dozen tags.
+///
+/// [`MAX_ITEMS`] bounds what the items hold and not how many there are, and an item of nothing
+/// still becomes a part of its own, which costs far more than the sixteen bytes its header takes
+/// in the file: a file of nothing but empty items would otherwise cost a hundred times its size.
+const MAX_ITEM_COUNT: usize = 64;
+
+/// The widest and tallest screen mGBA has: the Super Game Boy's, border and all. mGBA reads a
+/// state's picture into the screen it is running and clips whatever is past it.
+const LARGEST_SCREEN: (u32, u32) = (256, 224);
+
 /// The `path` prefix an item mGBA keeps for itself takes as an `aux` part.
 const ITEM_PATH: &str = "extdata/";
 
@@ -235,21 +246,31 @@ pub fn read(file: &StateFile<'_>, options: &StateOptions) -> Result<Bundle> {
 ///
 /// A PNG screenshot makes it the PNG container mGBA writes by default; without one it is the bare
 /// container. mGBA reads only an eight-bit RGB PNG, so a screenshot in any other PNG layout is
-/// encoded again as one, which loses nothing it could show.
+/// encoded again as one, which loses nothing it could show. One larger than any screen mGBA has is
+/// not, since mGBA would clip it, and is left out.
 ///
 /// # Errors
 ///
-/// [`Error::NotConvertible`] for a bundle that is not a state, or loads into another core.
+/// [`Error::NotConvertible`] for a bundle that is not a state, loads into another core, or holds a
+/// part larger than mGBA's file has room for.
 pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let contents = Contents::of(bundle)?;
     crate::state::require_core(bundle, "mgba", "mGBA")?;
 
-    let data = contents.state.bytes()?;
+    // Each part is held to what mGBA's file has room for before it is inflated, since a
+    // compressed part's length is its own claim and inflating it is what costs the memory.
+    let data = crate::state::bytes_within(contents.state, MAX_STATE, "an mGBA state")?;
+    let mut room = MAX_ITEMS;
+    let mut item = |part: &Part| -> Result<Vec<u8>> {
+        let bytes = crate::state::bytes_within(part, room, "an mGBA state")?.into_owned();
+        room = room.saturating_sub(bytes.len());
+        Ok(bytes)
+    };
     let mut left_out = Vec::new();
     let mut items: Vec<(u32, Vec<u8>)> = Vec::new();
     for (index, save) in contents.saves.iter().enumerate() {
         if index == 0 {
-            let mut save = save.bytes()?.into_owned();
+            let mut save = item(save)?;
             // The Game Boy core takes its save back with the clock footer on it, as its file has
             // it; the GBA core keeps its clock elsewhere.
             if Machine::of(&data) == Some(Machine::Gb)
@@ -272,7 +293,7 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
             .and_then(|path| path.strip_prefix(ITEM_PATH))
             .and_then(|tag| tag.parse().ok())
         {
-            Some(tag) => items.push((tag, part.bytes()?.into_owned())),
+            Some(tag) => items.push((tag, item(part)?)),
             None => left_out.push(part.id),
         }
     }
@@ -303,7 +324,7 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     };
     let bytes = match png {
         Some(png) => pack_png(&png, &data, &items)?,
-        None => pack_bare(&data, &items),
+        None => pack_bare(&data, &items)?,
     };
 
     let stem = crate::state::component(stem);
@@ -343,6 +364,9 @@ fn unpack_png(bytes: &[u8]) -> Result<(Vec<u8>, Items, Option<Vec<u8>>)> {
         match &kind {
             b"gbAs" => data = Some(image::inflate_zlib(body, MAX_STATE, FORMAT)?),
             b"gbAx" => {
+                if items.len() == MAX_ITEM_COUNT {
+                    return Err(corrupt("it holds more items than mGBA writes"));
+                }
                 let tag = le32(body, 0, FORMAT)?;
                 let size = le32(body, 4, FORMAT)? as usize;
                 inflated = size.saturating_add(inflated);
@@ -388,6 +412,9 @@ fn unpack_bare(bytes: &[u8]) -> Result<(Vec<u8>, Items)> {
         if tag == 0 {
             break;
         }
+        if items.len() == MAX_ITEM_COUNT {
+            return Err(corrupt("it holds more items than mGBA writes".into()));
+        }
         let length = i32::from_le_bytes(header[4..8].try_into().expect("four bytes"));
         let offset = i64::from_le_bytes(header[8..16].try_into().expect("eight bytes"));
         let item = usize::try_from(offset)
@@ -415,38 +442,48 @@ fn pack_png(png: &[u8], data: &[u8], items: &[(u32, Vec<u8>)]) -> Result<Vec<u8>
             out.extend_from_slice(chunk.raw);
         }
     }
-    out.extend_from_slice(&image::chunk(*b"gbAs", &image::deflate_zlib(data)));
+    out.extend_from_slice(&image::chunk(*b"gbAs", &image::deflate_zlib(data))?);
     for (tag, item) in items {
         let mut body = tag.to_le_bytes().to_vec();
-        body.extend_from_slice(&u32::try_from(item.len()).expect("an item fits").to_le_bytes());
+        body.extend_from_slice(&u32::try_from(item.len()).map_err(|_| too_long(*tag, item))?.to_le_bytes());
         body.extend_from_slice(&image::deflate_zlib(item));
-        out.extend_from_slice(&image::chunk(*b"gbAx", &body));
+        out.extend_from_slice(&image::chunk(*b"gbAx", &body)?);
     }
-    out.extend_from_slice(&image::chunk(*b"IEND", &[]));
+    out.extend_from_slice(&image::chunk(*b"IEND", &[])?);
     Ok(out)
 }
 
 /// Packs the bare container: the data, the list of items and its end, then the items.
-fn pack_bare(data: &[u8], items: &[(u32, Vec<u8>)]) -> Vec<u8> {
+fn pack_bare(data: &[u8], items: &[(u32, Vec<u8>)]) -> Result<Vec<u8>> {
     let mut out = data.to_vec();
     if items.is_empty() {
-        return out;
+        return Ok(out);
     }
     let mut offset = data.len() + (items.len() + 1) * 16;
     for (tag, item) in items {
+        let length = i32::try_from(item.len()).map_err(|_| too_long(*tag, item))?;
+        let at = i64::try_from(offset).map_err(|_| too_long(*tag, item))?;
         out.extend_from_slice(&tag.to_le_bytes());
-        out.extend_from_slice(&i32::try_from(item.len()).expect("an item fits").to_le_bytes());
-        out.extend_from_slice(&i64::try_from(offset).expect("an offset fits").to_le_bytes());
+        out.extend_from_slice(&length.to_le_bytes());
+        out.extend_from_slice(&at.to_le_bytes());
         offset += item.len();
     }
     out.extend_from_slice(&[0; 16]);
     for (_, item) in items {
         out.extend_from_slice(item);
     }
-    out
+    Ok(out)
+}
+
+/// What an item too long for the length mGBA gives it is refused as.
+fn too_long(tag: u32, item: &[u8]) -> Error {
+    Error::NotConvertible(format!("item {tag} is {} bytes, more than an mGBA state has room for", item.len()))
 }
 
 /// A PNG in the one layout mGBA reads back: eight-bit RGB, not interlaced.
+///
+/// One in any other layout is decoded and encoded again, and refused first where it claims to be
+/// larger than [`LARGEST_SCREEN`].
 fn rgb_png(png: &[u8]) -> Result<Vec<u8>> {
     let header = image::chunks(png, "screenshot")?
         .into_iter()
@@ -460,7 +497,7 @@ fn rgb_png(png: &[u8]) -> Result<Vec<u8>> {
     {
         return Ok(png.to_vec());
     }
-    let (width, height, rgba) = image::decode_rgba(png)?;
+    let (width, height, rgba) = image::decode_rgba(png, LARGEST_SCREEN)?;
     image::encode(width, height, 3, &image::rgb_of(&rgba))
 }
 
@@ -614,7 +651,7 @@ mod tests {
         let mut data = gba_data();
         data[0x08..0x0C].copy_from_slice(&0x1F1C_08FBu32.to_le_bytes());
         data[0x10..0x20].copy_from_slice(b"POKEMON EMERBPEE");
-        let file = pack_bare(&data, &[]);
+        let file = pack_bare(&data, &[]).unwrap();
         let bundle =
             read(&StateFile { bytes: &file, name: "game.ss1", screenshot: None }, &StateOptions::default())
                 .unwrap();
@@ -642,7 +679,7 @@ mod tests {
             data[0x08] = model;
             data[0x10..0x1F].copy_from_slice(b"POKEMON_GLDAAUE");
             data[0x1F] = if flag == 0 { b'X' } else { flag };
-            let file = pack_bare(&data, &[]);
+            let file = pack_bare(&data, &[]).unwrap();
             let state = StateFile { bytes: &file, name: "game.ss1", screenshot: None };
             let bundle = read(&state, &StateOptions::default()).unwrap();
             let game = bundle.header.game.as_ref().unwrap();
@@ -671,7 +708,7 @@ mod tests {
         save.extend_from_slice(&crate::rtc::build_mbc3(&registers, &registers, anchor, 8));
         let items =
             [(SAVEDATA, save.clone()), (META_TIME, ((anchor + 50) * 1_000_000).to_le_bytes().to_vec())];
-        let file = pack_bare(&data, &items);
+        let file = pack_bare(&data, &items).unwrap();
 
         let state = StateFile { bytes: &file, name: "Pokemon Gold.ss1", screenshot: None };
         let bundle = read(&state, &StateOptions::default()).unwrap();
@@ -692,7 +729,7 @@ mod tests {
         // save memory is a footer to take off.
         let mut save = vec![0x42; 0x20000];
         save.extend_from_slice(&[0; 16]);
-        let file = pack_bare(&gba_data(), &[(SAVEDATA, save.clone())]);
+        let file = pack_bare(&gba_data(), &[(SAVEDATA, save.clone())]).unwrap();
         let state = StateFile { bytes: &file, name: "game.ss1", screenshot: None };
         let bundle = read(&state, &StateOptions::default()).unwrap();
         assert_eq!(bundle.parts[1].bytes().unwrap().as_ref(), save.as_slice());
@@ -703,7 +740,7 @@ mod tests {
     fn a_game_the_caller_names_keeps_its_hashes_and_takes_the_files_where_it_has_none() {
         let mut data = gba_data();
         data[0x08..0x0C].copy_from_slice(&0x1F1C_08FBu32.to_le_bytes());
-        let file = pack_bare(&data, &[]);
+        let file = pack_bare(&data, &[]).unwrap();
         let state = StateFile { bytes: &file, name: "game.ss1", screenshot: None };
 
         let mut named = Game::default();
@@ -721,13 +758,14 @@ mod tests {
     #[test]
     fn a_bare_state_reads_its_items_by_offset() {
         let file =
-            pack_bare(&gba_data(), &[(SCREENSHOT, vec![0x80; 240 * 160 * 4]), (SAVEDATA, vec![1; 512])]);
+            pack_bare(&gba_data(), &[(SCREENSHOT, vec![0x80; 240 * 160 * 4]), (SAVEDATA, vec![1; 512])])
+                .unwrap();
         let state = StateFile { bytes: &file, name: "game.ss0", screenshot: None };
         let bundle = read(&state, &StateOptions::default()).unwrap();
         assert_eq!(bundle.header.origin, Some(Origin::Auto), "slot 0 is the one mGBA resumes from");
         assert_eq!(bundle.parts[1].content_type.as_deref(), Some("image/png"), "the framebuffer, made a PNG");
         assert_eq!(bundle.parts[2].bytes().unwrap().as_ref(), &[1; 512]);
-        assert_eq!(unpack_bare(&pack_bare(&gba_data(), &[])).unwrap().1, []);
+        assert_eq!(unpack_bare(&pack_bare(&gba_data(), &[]).unwrap()).unwrap().1, []);
     }
 
     #[test]
@@ -749,6 +787,66 @@ mod tests {
     }
 
     #[test]
+    fn more_items_than_mgba_writes_are_refused_before_they_become_parts() {
+        // An item of nothing is sixteen bytes in the bare container and a part in the bundle, so a
+        // file of a million of them once cost a hundred times its size.
+        let empty: Vec<(u32, Vec<u8>)> = (0x200..).zip(vec![Vec::new(); MAX_ITEM_COUNT + 1]).collect();
+        let bare = pack_bare(&gba_data(), &empty).unwrap();
+        let png = pack_png(&screen(), &gba_data(), &empty).unwrap();
+        for (file, container) in [(bare, "bare"), (png, "PNG")] {
+            match read_as(&file, "game.ss1") {
+                Err(Error::Corrupt { why, .. }) => assert!(why.contains("items"), "{container}: {why}"),
+                other => panic!("{container}: {other:?}"),
+            }
+        }
+        let most = read_as(&pack_bare(&gba_data(), &empty[1..]).unwrap(), "game.ss1").unwrap();
+        assert_eq!(most.parts.len(), 1 + MAX_ITEM_COUNT, "as many as are read");
+    }
+
+    #[test]
+    fn a_part_claiming_more_than_mgbas_file_holds_is_refused_before_it_is_inflated() {
+        // Each claims more than its length in the file has room for, or more than mGBA's reader
+        // takes back. An item past 2 GiB once panicked here, after it had been inflated.
+        let bundle = read_as(&pack_bare(&gba_data(), &[]).unwrap(), "game.ss1").unwrap();
+        let claims = [
+            crate::state::part_claiming(1, (1 << 31) + 16).kind(PartKind::Aux).path("extdata/4"),
+            crate::state::part_claiming(1, MAX_ITEMS as u64 + 1),
+        ];
+        for part in claims {
+            let mut odd = bundle.clone();
+            odd.parts.push(part);
+            let error = write(&odd, "game").unwrap_err();
+            assert!(matches!(error, Error::NotConvertible(_)), "{error}");
+        }
+        let mut odd = bundle;
+        odd.parts[0] = crate::state::part_claiming(0, MAX_STATE as u64 + 1).kind(PartKind::State);
+        let error = write(&odd, "game").unwrap_err();
+        assert!(matches!(error, Error::NotConvertible(_)), "the core's data: {error}");
+    }
+
+    #[test]
+    fn a_picture_larger_than_any_screen_mgba_has_is_left_out_without_being_decoded() {
+        // A few dozen bytes claiming a petabyte of pixels, which decoding would have allocated
+        // for, and one a pixel wider than the Super Game Boy's screen, which mGBA would clip.
+        let (most_wide, most_high) = LARGEST_SCREEN;
+        let wide = image::encode(most_wide + 1, most_high, 4, &vec![0; 4 * (257 * 224)]).unwrap();
+        for picture in [image::claiming(1 << 24, 1 << 24), wide] {
+            let mut bundle = read_as(&pack_bare(&gba_data(), &[]).unwrap(), "game.ss1").unwrap();
+            bundle.parts.push(crate::state::screenshot_part(picture).unwrap());
+            bundle.parts = crate::state::number(bundle.parts);
+            let rebuilt = write(&bundle, "game").unwrap();
+            assert_eq!((rebuilt.left_out, rebuilt.bytes), (vec![1], gba_data()), "written bare");
+        }
+
+        // The largest screen mGBA has is drawn again as the RGB it reads.
+        let largest = image::encode(most_wide, most_high, 4, &vec![0; 4 * (256 * 224)]).unwrap();
+        let mut bundle = read_as(&pack_bare(&gba_data(), &[]).unwrap(), "game.ss1").unwrap();
+        bundle.parts.push(crate::state::screenshot_part(largest).unwrap());
+        bundle.parts = crate::state::number(bundle.parts);
+        assert_eq!(write(&bundle, "game").unwrap().left_out, []);
+    }
+
+    #[test]
     fn cheats_round_trip_through_mgbas_text() {
         let text = "!disabled\n!PARv3\n# Walk through walls\n1234 5678\nABCD EF01\n# \n0000 0000\n";
         let sets = parse_cheats(text);
@@ -762,7 +860,7 @@ mod tests {
     fn a_state_for_another_core_is_not_rebuilt_as_mgbas() {
         let source = one_saves::Source::default().core(Name::parse("vba-next").unwrap());
         let options = StateOptions::default().source(source);
-        let file = pack_bare(&gba_data(), &[]);
+        let file = pack_bare(&gba_data(), &[]).unwrap();
         let mut bundle =
             read(&StateFile { bytes: &file, name: "game.ss1", screenshot: None }, &options).unwrap();
         bundle.header.source = options.source.map(|source| source.app(None));
@@ -797,7 +895,7 @@ mod tests {
         assert_eq!(rebuilt.left_out, []);
         let picture = unpack_png(&rebuilt.bytes).unwrap().2.unwrap();
         assert_eq!(color_type(&picture), 2, "RGB");
-        let (width, height, again) = image::decode_rgba(&picture).unwrap();
+        let (width, height, again) = image::decode_rgba(&picture, LARGEST_SCREEN).unwrap();
         assert_eq!(
             (width, height, image::rgb_of(&again)),
             (240, 160, image::rgb_of(&pixels)),
@@ -810,7 +908,7 @@ mod tests {
         let jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F'];
         let broken = [PNG_SIGNATURE, b"not a picture"].concat();
         for picture in [jpeg, broken] {
-            let mut bundle = read_as(&pack_bare(&gba_data(), &[]), "game.ss1").unwrap();
+            let mut bundle = read_as(&pack_bare(&gba_data(), &[]).unwrap(), "game.ss1").unwrap();
             bundle.parts.push(crate::state::screenshot_part(picture).unwrap());
             bundle.parts = crate::state::number(bundle.parts);
             let rebuilt = write(&bundle, "game").unwrap();
@@ -824,10 +922,11 @@ mod tests {
         let screen = vec![0x33; 8 * 4 * 4];
         let dimensions = [8, 0, 4, 0].to_vec();
         let file =
-            pack_bare(&gba_data(), &[(SCREENSHOT, screen.clone()), (SCREENSHOT_DIMENSIONS, dimensions)]);
+            pack_bare(&gba_data(), &[(SCREENSHOT, screen.clone()), (SCREENSHOT_DIMENSIONS, dimensions)])
+                .unwrap();
         let bundle = read_as(&file, "game.ss1").unwrap();
         let png = bundle.parts[1].bytes().unwrap();
-        assert_eq!(image::decode_rgba(&png).unwrap().0, 8, "eight wide, as the item says");
+        assert_eq!(image::decode_rgba(&png, LARGEST_SCREEN).unwrap().0, 8, "eight wide, as the item says");
         assert_eq!(bundle.parts.len(), 2, "the dimensions are how it was read, and nothing of their own");
 
         // With no item, or one the framebuffer's length belies, a size no screen of mGBA's has is
@@ -836,7 +935,7 @@ mod tests {
             vec![(SCREENSHOT, screen.clone())],
             vec![(SCREENSHOT, screen), (SCREENSHOT_DIMENSIONS, vec![9, 0, 4, 0])],
         ] {
-            let bundle = read_as(&pack_bare(&gba_data(), &items), "game.ss1").unwrap();
+            let bundle = read_as(&pack_bare(&gba_data(), &items).unwrap(), "game.ss1").unwrap();
             assert_eq!(bundle.parts[1].kind, PartKind::Aux);
             assert_eq!(bundle.parts[1].path.as_deref(), Some("extdata/1"));
         }
@@ -851,7 +950,7 @@ mod tests {
             (META_TIME, vec![0; 4]),
             (META_CREATOR, b"medusa 0.1\0".to_vec()),
         ];
-        let file = pack_bare(&gba_data(), &items);
+        let file = pack_bare(&gba_data(), &items).unwrap();
         let bundle = read_as(&file, "game.ss1").unwrap();
         let paths: Vec<_> = bundle.parts[2..].iter().map(|part| part.path.as_deref().unwrap()).collect();
         assert_eq!(
@@ -870,14 +969,16 @@ mod tests {
 
     #[test]
     fn an_empty_cheats_section_is_no_cheats() {
-        let bundle = read_as(&pack_bare(&gba_data(), &[(CHEATS, b"\n\n".to_vec())]), "game.ss1").unwrap();
+        let bundle =
+            read_as(&pack_bare(&gba_data(), &[(CHEATS, b"\n\n".to_vec())]).unwrap(), "game.ss1").unwrap();
         assert_eq!(bundle.parts.len(), 1, "nothing on the side");
         assert!(bundle.parts[0].extensions.is_empty(), "and no key on the state part");
     }
 
     #[test]
     fn what_mgba_has_no_item_for_is_left_out() {
-        let mut bundle = read_as(&pack_bare(&gba_data(), &[(SAVEDATA, vec![1; 512])]), "game.ss1").unwrap();
+        let mut bundle =
+            read_as(&pack_bare(&gba_data(), &[(SAVEDATA, vec![1; 512])]).unwrap(), "game.ss1").unwrap();
         bundle.parts.push(Part::new(2, *b"SAVE").path("other.sav"));
         bundle.parts.push(Part::new(3, *b"MORE").kind(PartKind::Aux).path("notes"));
         bundle.validate().unwrap();
@@ -901,7 +1002,7 @@ mod tests {
             let mut body = tag.to_le_bytes().to_vec();
             body.extend_from_slice(&size.to_le_bytes());
             body.extend_from_slice(&image::deflate_zlib(data));
-            image::chunk(*b"gbAx", &body)
+            image::chunk(*b"gbAx", &body).unwrap()
         };
         let with = |chunks: &[Vec<u8>]| {
             let mut out = pack_png(&screen(), &gba_data(), &[]).unwrap();
@@ -918,7 +1019,7 @@ mod tests {
             other => panic!("an item past the cap: {other:?}"),
         }
 
-        let bare = pack_bare(&gba_data(), &[(SAVEDATA, vec![1; 512])]);
+        let bare = pack_bare(&gba_data(), &[(SAVEDATA, vec![1; 512])]).unwrap();
         corrupt(&bare[..0x60000], "data cut short");
         corrupt(&bare[..0x61000 + 8], "a list of items cut short");
         let mut outside = bare.clone();

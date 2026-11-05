@@ -26,6 +26,15 @@ use one_saves::{Game, HashAlgorithm, HashValue};
 
 use crate::error::{Error, Result};
 
+/// How deep a ClrMamePro catalog's blocks may nest.
+///
+/// A real catalog nests two deep — a game, and a `rom` inside it — or three. The parser underneath
+/// recurses once a level and has no bound of its own, so a file nesting ten thousand deep takes
+/// the stack with it; the depth is counted before the text is handed over, and this leaves room
+/// for any dialect there is many times over.
+#[cfg(feature = "dat-cmpro")]
+const MAX_NESTING: usize = 32;
+
 /// One entry in a catalog: a dump, and the game it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -76,6 +85,8 @@ impl Catalog {
                     .to_owned(),
             });
         }
+        #[cfg(feature = "dat-cmpro")]
+        check_nesting(text)?;
         let datafile = datary::from_str(text)
             .map_err(|error| Error::NotThisFormat { format: "DAT catalog", why: error.to_string() })?;
         Ok(Self::from_datafile(&datafile))
@@ -199,6 +210,48 @@ impl Catalog {
 #[cfg(not(feature = "dat-cmpro"))]
 fn is_xml(text: &str) -> bool {
     text.trim_start_matches('\u{feff}').trim_start().starts_with('<')
+}
+
+/// Refuses a ClrMamePro catalog whose blocks nest past [`MAX_NESTING`], before it is parsed.
+///
+/// Only text `datary` hands its ClrMamePro parser is counted, which is anything its XML detection
+/// does not claim; the XML reader keeps no stack per element. Parentheses are counted the way the
+/// syntax reads them: one inside a quoted value is text, and a backslash there makes the next
+/// character literal. A quoted value also ends at the end of its line, where the parser gives up
+/// on it, so a stray quote cannot hide what follows it from the count.
+#[cfg(feature = "dat-cmpro")]
+fn check_nesting(text: &str) -> Result<()> {
+    use datary::DatFormat as _;
+
+    if datary::format::Xml.detect(text.as_bytes()) {
+        return Ok(());
+    }
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut bytes = text.bytes();
+    while let Some(byte) = bytes.next() {
+        match (quoted, byte) {
+            (true, b'\\') => {
+                bytes.next();
+            }
+            (true, b'"' | b'\n') => quoted = false,
+            (false, b'"') => quoted = true,
+            (false, b'(') => {
+                depth += 1;
+                if depth > MAX_NESTING {
+                    return Err(Error::NotThisFormat {
+                        format: "DAT catalog",
+                        why: format!(
+                            "its blocks nest more than {MAX_NESTING} deep, where a catalog's nest three"
+                        ),
+                    });
+                }
+            }
+            (false, b')') => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Every digest a catalog entry carries, as this crate's values.
@@ -408,6 +461,39 @@ game (
     /// A minimal ClrMamePro catalog, for the one test that needs the syntax without a reader.
     #[cfg(not(feature = "dat-cmpro"))]
     const CLRMAMEPRO_ONLY: &str = "clrmamepro ( name \"Nintendo - Game Boy\" )\n";
+
+    #[test]
+    #[cfg(feature = "dat-cmpro")]
+    fn a_catalog_nested_past_any_dialect_is_refused_before_it_is_parsed() {
+        // A game, and blocks nested inside it to a depth: ten thousand took the parser's stack.
+        let nested = |depth: usize| {
+            format!(
+                "game ( name g rom ( name a size 1 crc 11111111 ) {}{} )",
+                "x ( ".repeat(depth - 1),
+                ") ".repeat(depth - 1)
+            )
+        };
+        assert_eq!(Catalog::parse(&nested(MAX_NESTING)).expect("as deep as is read").len(), 1);
+        for depth in [MAX_NESTING + 1, 10_000] {
+            match Catalog::parse(&nested(depth)) {
+                Err(Error::NotThisFormat { why, .. }) => assert!(why.contains("nest"), "{why}"),
+                other => panic!("{depth} deep: {other:?}"),
+            }
+        }
+
+        // A parenthesis in a quoted value is text, an escaped quote does not end one, and a quote
+        // left open ends with its line.
+        let quoted = format!(
+            "game ( name \"{} \\\" {}\" rom ( name a size 1 crc 11111111 ) )",
+            "(".repeat(100),
+            "(".repeat(100)
+        );
+        assert_eq!(Catalog::parse(&quoted).expect("text, not blocks").len(), 1);
+        let open = format!("game ( name \"unclosed\n{}", "x ( ".repeat(MAX_NESTING + 1));
+        assert!(
+            matches!(Catalog::parse(&open), Err(Error::NotThisFormat { why, .. }) if why.contains("nest"))
+        );
+    }
 
     #[test]
     #[cfg(feature = "dat-cmpro")]
