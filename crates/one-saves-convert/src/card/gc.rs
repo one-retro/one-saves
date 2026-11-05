@@ -256,13 +256,22 @@ pub fn write(bundle: &Bundle) -> Result<Vec<u8>> {
         // Only reached for a save that arrived without an entry; one that has an entry carries its
         // codes inside it, verbatim.
         let serial = save.inner.header.game.as_ref().and_then(|game| game.serial.clone()).unwrap_or_default();
-        let (game_code, maker_code) = serial.split_at(serial.len().min(4));
+        let dirent = save.dirent.unwrap_or_default();
+        // The codes are four ASCII characters and two, which is what the entry has room for and
+        // the console shows. A serial is free text, though, and one that is not ASCII names
+        // neither code — splitting it at byte four can land inside a character.
+        if dirent.is_empty() && !serial.is_ascii() {
+            return Err(Error::NotConvertible(format!(
+                "{serial:?} is not a GameCube serial: its game and maker codes are ASCII"
+            )));
+        }
+        let (game_code, maker_code) = serial.split_at_checked(serial.len().min(4)).unwrap_or((&serial, ""));
         builder.add(Save {
             slot: 0,
             game_code: game_code.to_owned(),
             maker_code: maker_code.to_owned(),
             filename: save.path.unwrap_or_default(),
-            dirent: save.dirent.unwrap_or_default(),
+            dirent,
             data: save.bytes,
         });
     }
@@ -416,6 +425,34 @@ mod tests {
         let plain =
             read(&card_with(64, &[("GAFE01", "sunshine", 1)]), &CardOptions::default()).expect("reads");
         assert!(plain.parts[0].extensions.get::<Dirent>().is_none());
+    }
+
+    #[test]
+    fn a_serial_that_is_not_ascii_is_refused_rather_than_split_inside_a_character() {
+        // A save that brings no entry of its own takes its codes from its serial, split after the
+        // fourth byte — which in `ABCé01` is the middle of the `é`, and panicked.
+        let card = card_with(64, &[("GAFE01", "sunshine", 1)]);
+        let mut bundle = read(&card, &CardOptions::default()).expect("reads");
+        let entry = bundle.parts[0].dirent.clone();
+        let game = Game::default().serial("ABC\u{e9}01");
+        bundle.parts[0] = save_part_with(
+            Format::GcCard,
+            0,
+            vec![1u8; gc_memcard::BLOCK],
+            Some(game),
+            &CardOptions::default(),
+            one_saves::Extensions::new(),
+        )
+        .expect("a part")
+        .path("sunshine");
+
+        let error = write(&bundle).expect_err("no codes to write");
+        assert!(matches!(&error, Error::NotConvertible(why) if why.contains("ASCII")), "{error:?}");
+
+        // The same serial beside an entry is never read, since the entry carries the codes.
+        bundle.parts[0].dirent = entry;
+        let rebuilt = MemoryCard::parse(&write(&bundle).expect("writes")).expect("reads");
+        assert_eq!(rebuilt.saves()[0].game_code, "GAFE");
     }
 
     #[test]

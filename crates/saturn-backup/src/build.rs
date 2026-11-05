@@ -185,14 +185,14 @@ impl BackupBuilder {
                     run
                 }
             };
-            write_save(&mut out, g, save, &blocks);
+            write_save(&mut out, g, save, &blocks)?;
         }
         Ok(out)
     }
 }
 
 /// Lays one save down over the blocks it has been given.
-fn write_save(out: &mut [u8], g: Geometry, save: &Save, blocks: &[usize]) {
+fn write_save(out: &mut [u8], g: Geometry, save: &Save, blocks: &[usize]) -> Result<()> {
     // The entry, then the list, then the data, as one continuous stream over the blocks'
     // content areas. Building it flat and cutting it up afterwards is what keeps the list's
     // spill into the second block from needing a case of its own.
@@ -213,12 +213,21 @@ fn write_save(out: &mut [u8], g: Geometry, save: &Save, blocks: &[usize]) {
     };
     // The length is the one field that has to agree with what is actually being written, so it is
     // rewritten either way: a caller that changed the payload must not leave the old figure.
-    let size = u32::try_from(save.data.len()).expect("a save fits a volume, and a volume fits u32");
+    let size = u32::try_from(save.data.len())
+        .map_err(|_| Error::Corrupt(format!("`{}` is longer than an entry can state", save.name)))?;
     entry[0x1E - TAG_LEN..0x22 - TAG_LEN].copy_from_slice(&size.to_be_bytes());
 
+    // The list names a block in sixteen bits, so a volume of more blocks than that has blocks no
+    // save can be put on. No volume the backup library lays out comes close; a geometry a caller
+    // made up can.
     let mut stream = entry;
     for &block in &blocks[1..] {
-        let number = u16::try_from(block).expect("a block index fits a word");
+        let number = u16::try_from(block).map_err(|_| {
+            Error::Corrupt(format!(
+                "`{}` would sit on block {block}, which a block list cannot name",
+                save.name
+            ))
+        })?;
         stream.extend_from_slice(&number.to_be_bytes());
     }
     stream.extend_from_slice(&0u16.to_be_bytes());
@@ -231,6 +240,7 @@ fn write_save(out: &mut [u8], g: Geometry, save: &Save, blocks: &[usize]) {
         let chunk = &stream[taken.min(stream.len())..(taken + g.content()).min(stream.len())];
         out[at + TAG_LEN..at + TAG_LEN + chunk.len()].copy_from_slice(chunk);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -421,6 +431,44 @@ mod tests {
         let error = BackupRam::parse(&astray).expect_err("block 600 is not on a 512-block volume");
         assert!(matches!(error, Error::Corrupt(_)), "{error:?}");
         assert!(error.to_string().contains("600"), "{error}");
+    }
+
+    #[test]
+    fn saves_sharing_blocks_cannot_read_more_than_the_volume_holds() {
+        // One save of eleven blocks, its first block copied over sixty free ones: sixty-one saves
+        // whose lists all name the same ten blocks, 671 blocks' worth off a volume of 510. Scaled
+        // up, this was 192 KB of volume reading out as 116 MB of saves.
+        let mut builder = BackupBuilder::new(32_768, 64).expect("a real geometry");
+        builder.add(save("SHARED", vec![1u8; 600]));
+        let image = builder.build().expect("writes");
+        let g = Geometry::new(32_768, 64).expect("a real geometry");
+        assert_eq!(g.blocks_for(600), 11);
+        let first = image[Geometry::FIRST_DATA_BLOCK * g.block..][..g.block].to_vec();
+
+        let mut shared = image.clone();
+        for block in 100..160 {
+            shared[block * g.block..][..g.block].copy_from_slice(&first);
+        }
+        let error = BackupRam::parse(&shared).expect_err("more blocks than the volume has");
+        assert!(matches!(&error, Error::Corrupt(why) if why.contains("same blocks")), "{error:?}");
+
+        // Two of them sharing is damage a volume can still be read through: twenty-two blocks'
+        // worth, which a volume of 510 could hold.
+        let mut damaged = image;
+        damaged[100 * g.block..][..g.block].copy_from_slice(&first);
+        let volume = BackupRam::parse(&damaged).expect("reads");
+        assert_eq!(volume.saves().len(), 2);
+        assert_eq!(volume.saves()[0].data, volume.saves()[1].data);
+    }
+
+    #[test]
+    fn a_block_a_list_cannot_name_is_refused_rather_than_panicked_over() {
+        // More blocks than sixteen bits count, which no console lays out and a caller can still
+        // ask for. A save put past block 65535 used to panic writing its list.
+        let mut builder = BackupBuilder::new(65_540 * 64, 64).expect("a geometry, if not a real one");
+        builder.add_at(save("FAR", vec![1u8; 40]), vec![2, 65_536]);
+        let error = builder.build().expect_err("block 65536 is past what a list names");
+        assert!(matches!(&error, Error::Corrupt(why) if why.contains("65536")), "{error:?}");
     }
 
     #[test]

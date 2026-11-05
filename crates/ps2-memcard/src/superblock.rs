@@ -1,6 +1,6 @@
 //! The superblock: what the card says about its own geometry.
 
-use crate::{Error, MAGIC, Result};
+use crate::{ENTRY, Error, MAGIC, Result};
 
 /// Where the superblock's last field ends. A console's formatter leaves the rest of the page
 /// erased.
@@ -72,8 +72,16 @@ impl SuperBlock {
 
         let page_size = u16_at(0x28);
         let pages_per_cluster = u16_at(0x2A);
-        if page_size == 0 || pages_per_cluster == 0 {
-            return Err(Error::Corrupt("the superblock states a zero page or cluster size".into()));
+        // A cluster has to hold at least one directory entry, because a directory is read an entry
+        // at a time out of the clusters it occupies. That also keeps the allocation table's
+        // branching factor — how many four-byte entries a cluster holds — off zero, which every
+        // lookup through the table divides by. Every card a console formats has 1024-byte
+        // clusters, two pages of 512; both factors are 16-bit, so the product cannot overflow.
+        if page_size * pages_per_cluster < ENTRY {
+            return Err(Error::Corrupt(format!(
+                "the superblock states {pages_per_cluster} pages of {page_size} bytes to a cluster, which \
+                 does not hold a {ENTRY}-byte directory entry"
+            )));
         }
 
         let ifc_list = (0..32).map(|i| u32_at(0x50 + i * 4)).collect();
@@ -95,12 +103,12 @@ impl SuperBlock {
         };
 
         // A card whose allocated area runs off the end of itself would otherwise be caught one
-        // confusing chain read later.
-        if superblock.alloc_offset + superblock.alloc_end > superblock.clusters_per_card {
+        // confusing chain read later. Both are 32-bit fields, which a 32-bit target cannot add.
+        let alloc_end = superblock.alloc_offset.checked_add(superblock.alloc_end);
+        if alloc_end.is_none_or(|end| end > superblock.clusters_per_card) {
             return Err(Error::Corrupt(format!(
-                "the allocated area runs to cluster {}, past the {} the card has",
-                superblock.alloc_offset + superblock.alloc_end,
-                superblock.clusters_per_card
+                "the allocated area runs {} clusters from cluster {}, past the {} the card has",
+                superblock.alloc_end, superblock.alloc_offset, superblock.clusters_per_card
             )));
         }
         Ok(superblock)

@@ -143,6 +143,21 @@ impl MemoryCard {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let (data, had_spare) = strip_spare(bytes)?;
         let superblock = SuperBlock::parse(&data)?;
+
+        // The card's size is what the superblock says, and that has to be something the image
+        // actually holds: everything sized from it — the capacity, the allocated area inside it,
+        // how much a walk of the tree may read — is otherwise sized from a field nothing checked,
+        // and a card claiming four billion clusters is a few hundred bytes to write. A dump is
+        // exactly the card it says, so this costs a real one nothing.
+        let claimed = superblock.clusters_per_card.checked_mul(superblock.cluster_size());
+        if claimed.is_none_or(|claimed| claimed > data.len()) {
+            return Err(Error::Corrupt(format!(
+                "the superblock states {} clusters of {} bytes, and the image holds {} bytes",
+                superblock.clusters_per_card,
+                superblock.cluster_size(),
+                data.len()
+            )));
+        }
         Ok(MemoryCard { data, had_spare, superblock })
     }
 
@@ -161,7 +176,8 @@ impl MemoryCard {
     /// The card's **data** capacity in bytes: what saves can occupy.
     ///
     /// Never the length of a dump of the card. An 8 MB card holds 8388608 bytes of data and dumps
-    /// to 8650752, and the two are supposed to disagree.
+    /// to 8650752, and the two are supposed to disagree. Never more than the image holds either:
+    /// [`parse`](Self::parse) refuses a superblock that claims more card than that.
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.superblock.clusters_per_card * self.superblock.cluster_size()
@@ -170,10 +186,12 @@ impl MemoryCard {
     /// Every save on the card, in the order the root directory lists them.
     pub fn saves(&self) -> Result<Vec<Save>> {
         let mut saves = Vec::new();
-        // The root has no parent to be counted by, so its own `.` is where the count lives.
+        let mut budget = Budget::new(self.superblock.alloc_end * self.superblock.cluster_size());
+        // The root has no parent to be counted by, so its own `.` is where the count lives. That
+        // entry is read again with the rest of the root just below, so it is not charged for twice.
         let root = self.superblock.rootdir_cluster;
-        let root_count = Entry::parse(&self.read_chain_bytes(root, ENTRY)?)?.length;
-        for entry in self.read_directory(root, root_count)? {
+        let root_count = Entry::parse(&self.read_chain_bytes(root, ENTRY, &mut Budget::new(ENTRY))?)?.length;
+        for entry in self.read_directory(root, root_count, &mut budget)? {
             // Only directories are saves; a bare file in the root is not one, and `.` and `..`
             // are the directory naming itself and its parent.
             if entry.mode & mode::DIRECTORY == 0 || entry.name == "." || entry.name == ".." {
@@ -184,14 +202,14 @@ impl MemoryCard {
             // real card writes that `.` with a length of zero, and reading the count from there
             // returns a directory with nothing in it. A card this crate built sets both, so its
             // own round trips never caught this.
-            for file in self.read_directory(entry.cluster as usize, entry.length)? {
+            for file in self.read_directory(entry.cluster as usize, entry.length, &mut budget)? {
                 if file.mode & mode::FILE == 0 || file.name == "." || file.name == ".." {
                     continue;
                 }
                 files.push(File {
                     name: file.name.clone(),
                     dirent: file.raw.clone(),
-                    data: self.read_chain_bytes(file.cluster as usize, file.length)?,
+                    data: self.read_chain_bytes(file.cluster as usize, file.length, &mut budget)?,
                 });
             }
             saves.push(Save { name: entry.name.clone(), dirent: entry.raw.clone(), files });
@@ -203,12 +221,15 @@ impl MemoryCard {
     ///
     /// The count is the caller's because only the caller knows where it is written: for the root
     /// it is on the root's own `.`, and for a save it is on the parent's entry naming that save.
-    fn read_directory(&self, cluster: usize, count: usize) -> Result<Vec<Entry>> {
+    fn read_directory(&self, cluster: usize, count: usize, budget: &mut Budget) -> Result<Vec<Entry>> {
         if count > self.superblock.alloc_end {
             return Err(Error::Corrupt(format!("a directory claims {count} entries")));
         }
 
-        let bytes = self.read_chain_bytes(cluster, count * ENTRY)?;
+        let length = count
+            .checked_mul(ENTRY)
+            .ok_or_else(|| Error::Corrupt(format!("a directory claims {count} entries")))?;
+        let bytes = self.read_chain_bytes(cluster, length, budget)?;
         let mut entries = Vec::new();
         for entry in bytes.as_chunks::<ENTRY>().0 {
             // Parsed before the filter, so a corrupt entry is an error rather than a free slot.
@@ -220,8 +241,12 @@ impl MemoryCard {
         Ok(entries)
     }
 
-    /// Reads `length` bytes along the cluster chain starting at `start`.
-    fn read_chain_bytes(&self, start: usize, length: usize) -> Result<Vec<u8>> {
+    /// Reads `length` bytes along the cluster chain starting at `start`, out of `budget`.
+    ///
+    /// The length is an entry's, so it is charged to the budget before anything is allocated for
+    /// it: what a budget holds is bounded by the card, and the field is not.
+    fn read_chain_bytes(&self, start: usize, length: usize, budget: &mut Budget) -> Result<Vec<u8>> {
+        budget.take(length)?;
         let cluster_size = self.superblock.cluster_size();
         let mut out = Vec::with_capacity(length);
         let mut cluster = start;
@@ -290,12 +315,49 @@ impl MemoryCard {
     /// Unlike a chain read, this is not relative to `alloc_offset`: the FAT lives in front of the
     /// allocated area, not inside it.
     fn raw_cluster_u32(&self, cluster: usize, index: usize) -> Result<u32> {
-        let offset = cluster * self.superblock.cluster_size() + index * 4;
-        let bytes = self
-            .data
-            .get(offset..offset + 4)
+        // The cluster is a 32-bit number off the card, and so far nothing has checked it against
+        // anything, so the arithmetic is checked rather than trusted to stay in range.
+        let offset =
+            cluster.checked_mul(self.superblock.cluster_size()).and_then(|at| at.checked_add(index * 4));
+        let bytes = offset
+            .and_then(|offset| self.data.get(offset..offset.checked_add(4)?))
             .ok_or_else(|| Error::Corrupt(format!("cluster {cluster} is past the image")))?;
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+}
+
+/// How many bytes a walk of the directory tree has left to read.
+///
+/// Every directory and file is a chain of clusters in the allocated area, and on a card in working
+/// order no cluster belongs to two of them, so what a walk reads comes to at most that area. A
+/// chain only refuses to loop back on itself, though, and nothing stops a hundred directory
+/// entries naming one directory, or a thousand file entries naming one chain that runs the length
+/// of the card: read once per entry, a few kilobytes of card come out as gigabytes of saves.
+///
+/// So the walk is charged for what it reads, against the size of the allocated area. That is the
+/// lenient choice rather than refusing a cluster reached twice: a card damaged into sharing a
+/// cluster or two between files still reads, as long as everything on it could physically exist
+/// on a card that size. What is refused is reading more than the card holds.
+struct Budget {
+    left: usize,
+    area: usize,
+}
+
+impl Budget {
+    fn new(area: usize) -> Self {
+        Budget { left: area, area }
+    }
+
+    /// Takes `length` bytes out of what is left, or says the card has run past itself.
+    fn take(&mut self, length: usize) -> Result<()> {
+        self.left = self.left.checked_sub(length).ok_or_else(|| {
+            Error::Corrupt(format!(
+                "its directories and files come to more than the {} bytes it holds, so some of them \
+                 name the same clusters",
+                self.area
+            ))
+        })?;
+        Ok(())
     }
 }
 
@@ -387,5 +449,104 @@ mod tests {
         let dump = CardBuilder::new(Capacity::Mb8).build_with_spare().unwrap();
         assert_eq!(dump.len(), 8_650_752);
         assert_eq!(MemoryCard::parse(&dump).unwrap().capacity(), 8 * 1024 * 1024);
+    }
+
+    /// A card holding one save of one file, `len` bytes long.
+    fn card_with_one_file(len: usize) -> Vec<u8> {
+        let mut builder = CardBuilder::new(Capacity::Mb8);
+        builder.add(Save {
+            name: "BASLUS-20312".to_owned(),
+            dirent: Vec::new(),
+            files: vec![File { name: "data".to_owned(), dirent: Vec::new(), data: vec![0x5A; len] }],
+        });
+        builder.build().unwrap()
+    }
+
+    /// Where entry `index` of the directory starting at `cluster` sits in a card this crate built.
+    ///
+    /// The builder lays every chain down as a run, so a directory's entries are consecutive.
+    fn entry_at(card: &[u8], cluster: usize, index: usize) -> usize {
+        let superblock = SuperBlock::parse(card).unwrap();
+        (superblock.alloc_offset + cluster) * superblock.cluster_size() + index * ENTRY
+    }
+
+    /// Where the root lists its first save, and where that save's directory lists its first file.
+    fn save_and_file_entries(card: &[u8]) -> (usize, usize) {
+        let save = entry_at(card, 0, 2);
+        let directory = u32::from_le_bytes(card[save + 16..save + 20].try_into().unwrap()) as usize;
+        (save, entry_at(card, directory, 2))
+    }
+
+    #[test]
+    fn a_cluster_too_small_for_a_directory_entry_is_refused() {
+        // One-byte pages, one to a cluster: a cluster of the allocation table then holds no
+        // four-byte entry at all, and finding the next cluster in a chain divided by zero.
+        for (page, per_cluster) in [(1u16, 1u16), (2, 1), (256, 1)] {
+            let mut card = vec![0u8; 8192];
+            card[..MAGIC.len()].copy_from_slice(MAGIC);
+            card[0x28..0x2A].copy_from_slice(&page.to_le_bytes());
+            card[0x2A..0x2C].copy_from_slice(&per_cluster.to_le_bytes());
+            card[0x30..0x34].copy_from_slice(&100u32.to_le_bytes());
+            card[0x34..0x38].copy_from_slice(&10u32.to_le_bytes());
+            card[0x38..0x3C].copy_from_slice(&10u32.to_le_bytes());
+            let error = MemoryCard::parse(&card).err();
+            assert!(matches!(error, Some(Error::Corrupt(_))), "{page} x {per_cluster}: {error:?}");
+        }
+    }
+
+    #[test]
+    fn a_superblock_claiming_more_card_than_the_image_holds_is_refused() {
+        // Four billion clusters on an eight-megabyte image, which would have been the card's
+        // capacity — four terabytes — for anything that sized itself from it.
+        let mut card = CardBuilder::new(Capacity::Mb8).build().unwrap();
+        card[0x30..0x34].copy_from_slice(&u32::MAX.to_le_bytes());
+        card[0x38..0x3C].copy_from_slice(&(u32::MAX - 41).to_le_bytes());
+        let error = MemoryCard::parse(&card).err();
+        assert!(matches!(&error, Some(Error::Corrupt(why)) if why.contains("the image holds")), "{error:?}");
+
+        // One cluster more than the image is enough to be refused.
+        card[0x30..0x34].copy_from_slice(&8193u32.to_le_bytes());
+        card[0x38..0x3C].copy_from_slice(&8135u32.to_le_bytes());
+        assert!(matches!(MemoryCard::parse(&card), Err(Error::Corrupt(_))));
+    }
+
+    #[test]
+    fn a_file_longer_than_the_card_is_refused_before_anything_is_allocated_for_it() {
+        // A 4 GiB length on a file whose chain is one cluster. The read used to reserve the whole
+        // length up front and only then find the chain run out.
+        let mut card = card_with_one_file(100);
+        let (_, file) = save_and_file_entries(&card);
+        card[file + 4..file + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+        let error = MemoryCard::parse(&card).unwrap().saves().expect_err("a file bigger than the card");
+        assert!(matches!(&error, Error::Corrupt(why) if why.contains("more than the")), "{error}");
+    }
+
+    #[test]
+    fn two_entries_on_one_chain_cannot_read_more_than_the_card_holds() {
+        // A five-megabyte file, then a second entry in the same directory naming the same chain:
+        // each is a file an eight-megabyte card could hold, and the two are more than it has. A
+        // directory named from every slot of the root, each holding a thousand entries like that,
+        // is how 22 KB of zip came out as half a gigabyte.
+        let mut card = card_with_one_file(5 * 1024 * 1024);
+        let (save, file) = save_and_file_entries(&card);
+        let twin = file + ENTRY;
+        card.copy_within(file..file + ENTRY, twin);
+        card[twin + 0x40..twin + 0x45].copy_from_slice(b"twin\0");
+        card[save + 4..save + 8].copy_from_slice(&4u32.to_le_bytes());
+
+        let error = MemoryCard::parse(&card).unwrap().saves().expect_err("ten megabytes off eight");
+        assert!(matches!(&error, Error::Corrupt(why) if why.contains("same clusters")), "{error}");
+    }
+
+    #[test]
+    fn a_card_filled_to_its_last_cluster_still_reads() {
+        // The edge of that bound. The root and the save's directory take two clusters each, and
+        // one file takes every cluster after them: everything the card holds, read once.
+        let empty = MemoryCard::parse(&CardBuilder::new(Capacity::Mb8).build().unwrap()).unwrap();
+        let cluster = empty.superblock().cluster_size();
+        let len = (empty.superblock().alloc_end - 4) * cluster;
+
+        let saves = MemoryCard::parse(&card_with_one_file(len)).unwrap().saves().expect("a full card reads");
+        assert_eq!(saves[0].files[0].data.len(), len);
     }
 }

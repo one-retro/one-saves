@@ -169,10 +169,18 @@ pub fn write(bundle: &one_saves::Bundle) -> Result<Vec<u8>> {
     // The reserved region states it outright — the signature repeats to fill block 0 — and that is
     // what the reader kept. Falling back to the capacity is for a bundle some other producer wrote
     // without one, and it is exact wherever it answers at all.
+    //
+    // Either way the result has to be a volume the backup library lays out. The builder allocates
+    // the whole volume before it writes a save, so a capacity taken on trust is an allocation of
+    // whatever size a bundle cares to state — a gigabyte for fifteen kilobytes of bundle.
     let geometry = match card.system_area.as_deref().and_then(saturn_backup::block_size) {
-        Some(block) => Geometry::new(capacity + Geometry::FIRST_DATA_BLOCK * block, block),
+        Some(block) => Geometry::FIRST_DATA_BLOCK
+            .checked_mul(block)
+            .and_then(|reserved| capacity.checked_add(reserved))
+            .and_then(|size| Geometry::new(size, block)),
         None => Geometry::for_data_capacity(capacity),
     }
+    .filter(|g| saturn_backup::GEOMETRIES.contains(&(g.size, g.block)))
     .ok_or_else(|| Error::NotConvertible(format!("no Saturn volume holds {capacity} bytes of saves")))?;
 
     let mut builder = BackupBuilder::new(geometry.size, geometry.block).map_err(into_error)?;
@@ -214,7 +222,9 @@ fn comment_of(inner: &one_saves::Bundle) -> String {
 /// worse written wrong than left at zero.
 fn written_at(extensions: &one_saves::Extensions) -> Option<u32> {
     let seconds = extensions.get::<Dirent>()?.modified_at?.seconds;
-    u32::try_from((seconds - saturn_backup::EPOCH_1980).max(0) / 60).ok()
+    // Saturating, because the reading is any 64-bit second a bundle states: one billions of years
+    // before 1980 is still before it, and lands on zero like every other such reading.
+    u32::try_from(seconds.saturating_sub(saturn_backup::EPOCH_1980).max(0) / 60).ok()
 }
 
 fn into_error(source: saturn_backup::Error) -> Error {
@@ -395,6 +405,78 @@ mod tests {
         card.system_area = None;
         card.capacity = 1234;
         assert!(matches!(write(&odd), Err(Error::NotConvertible(_))));
+    }
+
+    /// The console's own 32 KiB, holding one save.
+    fn internal_volume() -> Vec<u8> {
+        let mut builder = BackupBuilder::new(32_768, 64).expect("a real geometry");
+        builder.add(Save {
+            block: 0,
+            blocks: Vec::new(),
+            name: "PANDRA_3_01".to_owned(),
+            comment: "AZEL#1Lv01".to_owned(),
+            language: 0,
+            date: 24_576_100,
+            data: vec![9u8; 1276],
+            entry: Vec::new(),
+        });
+        builder.build().expect("writes")
+    }
+
+    #[test]
+    fn a_capacity_no_volume_has_is_refused_before_anything_is_allocated_for_it() {
+        // The builder lays the whole volume out before it writes a save, so these were an eight
+        // megabyte volume — a gigabyte, for a bundle that asked — or an overflow working out how
+        // long the volume is. Read off the reserved region's 64-byte blocks first.
+        let mut bundle = read(&internal_volume(), &CardOptions::default()).expect("reads");
+        for capacity in [8 * 1024 * 1024 - 128, u64::MAX] {
+            bundle.header.card.as_mut().expect("a card").capacity = capacity;
+            let error = write(&bundle).expect_err("no such volume");
+            assert!(matches!(error, Error::NotConvertible(_)), "{capacity}: {error:?}");
+        }
+
+        // Then from the capacity alone, which is a search through block sizes. The second is the
+        // largest multiple of every block size there is.
+        bundle.header.card.as_mut().expect("a card").system_area = None;
+        for capacity in [8 * 1024 * 1024 - 1024, u64::MAX - 2047] {
+            bundle.header.card.as_mut().expect("a card").capacity = capacity;
+            let error = write(&bundle).expect_err("no such volume");
+            assert!(matches!(error, Error::NotConvertible(_)), "{capacity}: {error:?}");
+        }
+    }
+
+    #[test]
+    fn a_reserved_region_stating_blocks_too_small_for_an_entry_is_refused() {
+        // A signature twice over states 32-byte blocks, which a builder used to lay a volume out
+        // in — one whose every save then panicked the reader.
+        let mut bundle = read(&internal_volume(), &CardOptions::default()).expect("reads");
+        let card = bundle.header.card.as_mut().expect("a card");
+        let mut area = saturn_backup::MAGIC.repeat(2);
+        area.resize(2 * 32, 0);
+        card.system_area = Some(area);
+        card.capacity = 32_768 - 64;
+        let error = write(&bundle).expect_err("no volume is laid out in 32-byte blocks");
+        assert!(matches!(error, Error::NotConvertible(_)), "{error:?}");
+    }
+
+    #[test]
+    fn a_date_outside_what_the_volume_counts_is_written_as_zero() {
+        let at = |seconds: i64| {
+            let mut extensions = one_saves::Extensions::new();
+            extensions.insert(modified_only(seconds, None));
+            written_at(&extensions)
+        };
+        assert_eq!(at(i64::MIN), Some(0), "before 1980 however long before, which overflowed");
+        assert_eq!(at(saturn_backup::EPOCH_1980 - 60), Some(0));
+        assert_eq!(at(saturn_backup::EPOCH_1980 + 120), Some(2));
+        assert_eq!(at(i64::MAX), None, "past what 32 bits of minutes hold");
+
+        // And a bundle stating the earliest second there is still writes, at zero.
+        let mut bundle = read(&internal_volume(), &CardOptions::default()).expect("reads");
+        bundle.parts[0].extensions.insert(modified_only(i64::MIN, None));
+        bundle.parts[0].dirent = None;
+        let volume = BackupRam::parse(&write(&bundle).expect("writes")).expect("reads");
+        assert_eq!(volume.saves()[0].date, 0);
     }
 
     #[test]

@@ -387,10 +387,10 @@ fn is_system_folder(name: &str) -> bool {
 /// A PS2 save directory is named region code, then the disc's product code, the same way a PS1
 /// save file is: `BASLUS-20312` is `BA` and `SLUS-20312`.
 fn serial_from_name(name: &str) -> Option<String> {
-    if name.len() < 12 {
-        return None;
-    }
-    let serial = &name[2..12];
+    // Not sliced by index: the name is the card's bytes read leniently, so a byte that is not
+    // UTF-8 is a three-byte replacement character, and either end of the serial can land inside
+    // one. A name like that is not shaped like a serial anyway.
+    let serial = name.get(2..12)?;
     let shape = serial.as_bytes();
     let looks_right = shape[..4].iter().all(u8::is_ascii_uppercase)
         && shape[4] == b'-'
@@ -406,6 +406,9 @@ fn into_error(source: &ps2_memcard::Error) -> Error {
         ps2_memcard::Error::TooShort(len) => {
             Error::WrongLength { format: FORMAT, expected: "a whole number of pages", found: *len }
         }
+        // The reason alone, as the other cards pass it: this error already says the card is
+        // corrupt, and the crate's own wording would say so a second time.
+        ps2_memcard::Error::Corrupt(why) => Error::Corrupt { format: FORMAT, why: why.clone() },
         other => Error::Corrupt { format: FORMAT, why: other.to_string() },
     }
 }
@@ -611,5 +614,34 @@ mod tests {
         assert_eq!(serial_from_name("BASLUS-20312").as_deref(), Some("SLUS-20312"));
         assert_eq!(serial_from_name("BESLES-50213").as_deref(), Some("SLES-50213"));
         assert_eq!(serial_from_name("SHORT"), None);
+    }
+
+    #[test]
+    fn a_name_with_a_character_across_where_the_serial_starts_or_ends_names_none() {
+        // What a 0xFF in a directory name reads as: U+FFFD, three bytes of UTF-8, which once put
+        // byte 2 or byte 12 inside a character and panicked slicing there.
+        assert_eq!(serial_from_name("B\u{FFFD}CDEFGHIJKLMNOP"), None);
+        assert_eq!(serial_from_name("BASLUS-2031\u{FFFD}"), None);
+        assert_eq!(serial_from_name("BASLUS-203\u{e9}"), None, "a two-byte character across byte 12");
+    }
+
+    #[test]
+    fn a_card_whose_save_name_is_not_utf8_reads_without_a_serial() {
+        let mut builder = CardBuilder::new(Capacity::Mb8);
+        builder.add(Save {
+            name: String::new(),
+            dirent: Vec::new(),
+            files: vec![File { name: "data".into(), dirent: Vec::new(), data: vec![1u8; 100] }],
+        });
+        let mut card = builder.build().expect("builds");
+        // The save's entry is the third in the root, which a built card starts at cluster 0 of the
+        // allocated area; its name sits at 0x40. A 0xFF there is not UTF-8.
+        let superblock = ps2_memcard::SuperBlock::parse(&card).expect("parses");
+        let entry = superblock.alloc_offset * superblock.cluster_size() + 2 * ps2_memcard::ENTRY;
+        card[entry + 0x40..entry + 0x50].copy_from_slice(b"B\xffCDEFGHIJKLMNO\0");
+
+        let bundle = read(&card, &CardOptions::default()).expect("reads");
+        assert_eq!(bundle.parts[0].path.as_deref(), Some("B\u{FFFD}CDEFGHIJKLMNO"));
+        assert_eq!(bundle.parts[0].game, None);
     }
 }

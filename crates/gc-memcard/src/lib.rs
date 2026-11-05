@@ -230,6 +230,18 @@ impl MemoryCard {
             Error::Corrupt("neither the allocation table nor its mirror checksums".into())
         })?;
 
+        // How many blocks the saves still to come may occupy between them.
+        //
+        // A chain only refuses to loop back on itself, and nothing in one entry knows about any
+        // other's, so every entry in the directory can name the same chain the length of the card:
+        // read once per entry, a sixteen-megabyte card comes out as half a gigabyte of saves. On a
+        // card in working order no block belongs to two saves, so what they occupy comes to at
+        // most the blocks past the reserved five, and each entry is charged its count against that
+        // before its chain is followed. The lenient choice rather than refusing a block two
+        // entries both reach: a card damaged into sharing a block or two still reads, as long as
+        // everything on it could physically exist on a card that size.
+        let mut left = blocks - RESERVED_BLOCKS;
+
         let mut saves = Vec::new();
         for slot in 0..MAX_ENTRIES {
             let entry = &directory[slot * ENTRY_LEN..(slot + 1) * ENTRY_LEN];
@@ -246,6 +258,13 @@ impl MemoryCard {
                     "entry {slot} starts at block {first} for {count} blocks"
                 )));
             }
+            left = left.checked_sub(count).ok_or_else(|| {
+                Error::Corrupt(format!(
+                    "entry {slot} takes the saves past the {} blocks the card has, so some of them \
+                     name the same blocks",
+                    blocks - RESERVED_BLOCKS
+                ))
+            })?;
 
             let chain = follow_chain(table, first, count, blocks)?;
             let data = chain.iter().flat_map(|&b| block(bytes, b)).copied().collect();
@@ -497,6 +516,35 @@ mod tests {
         card[BAT_MIRROR_BLOCK * BLOCK..(BAT_MIRROR_BLOCK + 1) * BLOCK].copy_from_slice(&table);
 
         assert!(matches!(MemoryCard::parse(&card), Err(Error::Corrupt(_))));
+    }
+
+    /// Copies directory entry `from` over entry `to` under another filename, so both name the same
+    /// chain, and restamps both copies of the directory so the card still checksums.
+    fn alias_entry(card: &mut [u8], from: usize, to: usize, filename: &[u8]) {
+        let mut directory = block(card, DIR_BLOCK).to_vec();
+        directory.copy_within(from * ENTRY_LEN..(from + 1) * ENTRY_LEN, to * ENTRY_LEN);
+        directory[to * ENTRY_LEN + 8..][..filename.len()].copy_from_slice(filename);
+        stamp_directory_checksum(&mut directory);
+        card[DIR_BLOCK * BLOCK..(DIR_BLOCK + 1) * BLOCK].copy_from_slice(&directory);
+        card[DIR_MIRROR_BLOCK * BLOCK..(DIR_MIRROR_BLOCK + 1) * BLOCK].copy_from_slice(&directory);
+    }
+
+    #[test]
+    fn entries_sharing_a_chain_cannot_read_more_than_the_card_holds() {
+        // Forty blocks named from two entries on a card of fifty-nine: each is a save the card
+        // could hold, and the pair is more than it has. Every entry of a directory on one chain
+        // the length of the card was half a gigabyte of saves out of sixteen megabytes.
+        let mut card = card_with(64, &[("GAFE01", "first", 40)]);
+        alias_entry(&mut card, 0, 1, b"second");
+        let error = MemoryCard::parse(&card).expect_err("eighty blocks off fifty-nine");
+        assert!(matches!(&error, Error::Corrupt(why) if why.contains("same blocks")), "{error:?}");
+
+        // Two entries on a short chain is damage a card can still be read through.
+        let mut damaged = card_with(64, &[("GAFE01", "first", 2)]);
+        alias_entry(&mut damaged, 0, 1, b"second");
+        let parsed = MemoryCard::parse(&damaged).expect("reads");
+        assert_eq!(parsed.saves().len(), 2);
+        assert_eq!(parsed.saves()[0].data, parsed.saves()[1].data);
     }
 
     #[test]

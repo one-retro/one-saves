@@ -146,6 +146,15 @@ pub const EPOCH_1980: i64 = 315_532_800;
 /// volume states its own block size and this list is never the authority on one.
 pub const BLOCK_SIZES: [usize; 6] = [64, 128, 256, 512, 1024, 2048];
 
+/// The smallest block a volume can be laid out in.
+///
+/// The console's own memory, the smallest medium there is, allocates in 64-byte blocks, and every
+/// cart in larger ones. Not far below that the layout itself gives out: a save's first block holds
+/// its tag, its [`ENTRY_LEN`]-byte entry and at least the terminator of its block list, and a
+/// signature that repeats only once or twice states a 16- or 32-byte block that holds no entry at
+/// all.
+pub const MIN_BLOCK: usize = 64;
+
 /// Every geometry the backup library lays out, as `(size, block)`.
 ///
 /// The console's internal memory, then the four Backup RAM Cart sizes. Taken from the same
@@ -191,11 +200,12 @@ impl Geometry {
     /// The layout of the volume in these bytes, or `None` when they are not one.
     ///
     /// The block size is however many times [`MAGIC`] repeats at the front, times sixteen. A
-    /// volume whose length is not a whole number of those blocks is not one this can lay out.
+    /// volume whose length is not a whole number of those blocks, or whose blocks are smaller than
+    /// [`MIN_BLOCK`], is not one this can lay out.
     #[must_use]
     pub fn of(bytes: &[u8]) -> Option<Self> {
         let block = block_size(bytes)?;
-        if !bytes.len().is_multiple_of(block) {
+        if block < MIN_BLOCK || !bytes.len().is_multiple_of(block) {
             return None;
         }
         let blocks = bytes.len() / block;
@@ -222,8 +232,10 @@ impl Geometry {
             if bytes == 0 || !bytes.is_multiple_of(block) {
                 continue;
             }
+            // The capacity is whatever a caller recorded, so adding the reserved blocks back is
+            // checked: a figure near the top of the range has no volume, rather than a wrapped one.
             let blocks = bytes / block + Geometry::FIRST_DATA_BLOCK;
-            let size = blocks * block;
+            let Some(size) = blocks.checked_mul(block) else { continue };
             if !size.is_power_of_two() {
                 continue;
             }
@@ -236,9 +248,13 @@ impl Geometry {
     }
 
     /// The layout of a volume of this length with this block size, for a builder starting fresh.
+    ///
+    /// `None` for a block that is not a whole number of signatures, or is smaller than
+    /// [`MIN_BLOCK`], or does not divide the length, and for a length that leaves no block for a
+    /// save.
     #[must_use]
     pub const fn new(size: usize, block: usize) -> Option<Self> {
-        if block == 0 || !block.is_multiple_of(MAGIC.len()) || !size.is_multiple_of(block) {
+        if block < MIN_BLOCK || !block.is_multiple_of(MAGIC.len()) || !size.is_multiple_of(block) {
             return None;
         }
         let blocks = size / block;
@@ -370,14 +386,21 @@ impl BackupRam {
         let compressed = inflated.is_some();
         let stored = inflated.as_deref().unwrap_or(bytes);
         let (container, data) = strip_container(stored).ok_or(Error::NotBackupRam)?;
+        if let Some(block) = block_size(&data).filter(|&block| block < MIN_BLOCK) {
+            return Err(Error::Corrupt(format!(
+                "the signature states {block}-byte blocks, and no volume is laid out in blocks under \
+                 {MIN_BLOCK} bytes"
+            )));
+        }
         let geometry = Geometry::of(&data).ok_or(Error::WrongLength(stored.len()))?;
 
+        let mut walk = Walk::new(geometry);
         let mut saves = Vec::new();
         for block in Geometry::FIRST_DATA_BLOCK..geometry.blocks {
             if tag_of(&data, geometry, block) != SAVE_TAG {
                 continue;
             }
-            saves.push(read_save(&data, geometry, block)?);
+            saves.push(read_save(&data, geometry, block, &mut walk)?);
         }
         Ok(BackupRam { image: bytes.to_vec(), data, container, compressed, geometry, saves })
     }
@@ -481,6 +504,24 @@ pub fn strip_container(bytes: &[u8]) -> Option<(Container, Vec<u8>)> {
 /// shape is still recognised, so the refusal names the container rather than blaming the bytes.
 #[cfg(feature = "gzip")]
 fn inflate(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    inflate_at_most(bytes, MAX_INFLATED)
+}
+
+/// The most a gzip member may inflate to: the largest volume the backup library lays out, in the
+/// wide container, which is the longer of the two.
+///
+/// Standalone Mednafen, the one producer seen to gzip a volume, wraps a packed one, so this is
+/// twice what any file seen needs. What it rules out is a member that inflates without end.
+#[cfg(feature = "gzip")]
+const MAX_INFLATED: usize = 2 * GEOMETRIES[GEOMETRIES.len() - 1].0;
+
+/// Inflates a gzip member of no more than `limit` bytes.
+///
+/// Inflation stops one byte past the limit, and a member that gets that far is refused: a few
+/// kilobytes of deflate can otherwise stand for gigabytes of zeros, none of which is a volume, and
+/// every one of which would be inflated before anything looked at them.
+#[cfg(feature = "gzip")]
+fn inflate_at_most(bytes: &[u8], limit: usize) -> Result<Option<Vec<u8>>> {
     use std::io::Read;
 
     if !bytes.starts_with(&GZIP_MAGIC) {
@@ -488,8 +529,14 @@ fn inflate(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
     }
     let mut out = Vec::new();
     flate2::read::GzDecoder::new(bytes)
+        .take(u64::try_from(limit).map_or(u64::MAX, |limit| limit.saturating_add(1)))
         .read_to_end(&mut out)
         .map_err(|e| Error::Corrupt(format!("the gzip member does not inflate: {e}")))?;
+    if out.len() > limit {
+        return Err(Error::Corrupt(format!(
+            "the gzip member inflates past {limit} bytes, which is more than any volume holds"
+        )));
+    }
     Ok(Some(out))
 }
 
@@ -519,12 +566,55 @@ fn content_of(bytes: &[u8], geometry: Geometry, block: usize) -> &[u8] {
     &bytes[block * geometry.block + TAG_LEN..(block + 1) * geometry.block]
 }
 
+/// What reading a volume's saves has seen so far, across all of them.
+///
+/// A save's block list only has to name blocks inside the volume and none of them twice, so on its
+/// own it reads at most the volume. Nothing in one save's list knows about any other's, though, and
+/// a volume of a few hundred kilobytes whose saves all list the same few thousand blocks reads out
+/// as one copy of them per save — hundreds of megabytes, scaling to tens of gigabytes.
+///
+/// So the walk is charged a block for every block a save occupies, against the blocks past the
+/// reserved two. That is the lenient choice rather than refusing a block two saves both name: a
+/// volume damaged into sharing a block or two still reads, as long as everything on it could
+/// physically exist on a volume that size. What is refused is reading more than it holds.
+struct Walk {
+    /// How many more blocks the saves still to come may occupy between them.
+    left: usize,
+    /// Which save last named each block, by the block its entry sits in. That is what tells a
+    /// repeat within one save in constant time, without a fresh table for every save.
+    named_by: Vec<usize>,
+}
+
+impl Walk {
+    fn new(geometry: Geometry) -> Self {
+        // Zero names no save: an entry sits at `FIRST_DATA_BLOCK` or after it.
+        Walk { left: geometry.blocks - Geometry::FIRST_DATA_BLOCK, named_by: vec![0; geometry.blocks] }
+    }
+
+    /// Charges the save whose entry sits in `first` for `block`, which it names.
+    fn take(&mut self, first: usize, block: usize) -> Result<()> {
+        // A repeat would otherwise be an unbounded read, and a volume with one is broken whatever
+        // it was meant to say.
+        if std::mem::replace(&mut self.named_by[block], first) == first {
+            return Err(Error::Corrupt(format!("the save in block {first} names block {block} twice")));
+        }
+        self.left = self.left.checked_sub(1).ok_or_else(|| {
+            Error::Corrupt(format!(
+                "the save in block {first} takes the volume's saves past the {} blocks it has, so some \
+                 of them name the same blocks",
+                self.named_by.len() - Geometry::FIRST_DATA_BLOCK
+            ))
+        })?;
+        Ok(())
+    }
+}
+
 /// Reads the save whose entry sits in this block.
 ///
 /// The block list is read from the same stream the data is, because the two are continuous: the
 /// list runs until its terminator and the data starts at the next byte, wherever in whichever
 /// block that lands.
-fn read_save(bytes: &[u8], geometry: Geometry, first: usize) -> Result<Save> {
+fn read_save(bytes: &[u8], geometry: Geometry, first: usize, walk: &mut Walk) -> Result<Save> {
     let entry = &bytes[first * geometry.block..];
     let name = text(&entry[TAG_LEN..TAG_LEN + NAME_LEN]);
     let language = entry[0x0F];
@@ -535,6 +625,7 @@ fn read_save(bytes: &[u8], geometry: Geometry, first: usize) -> Result<Save> {
     // The stream is this block's content from the end of the entry, then each listed block's
     // content in turn. Blocks join it as the list names them, which is what lets the list run
     // past the end of the block holding its own first half.
+    walk.take(first, first)?;
     let mut stream = content_of(bytes, geometry, first)[ENTRY_LEN - TAG_LEN..].to_vec();
     let mut listed = vec![first];
     let mut at = 0usize;
@@ -557,19 +648,17 @@ fn read_save(bytes: &[u8], geometry: Geometry, first: usize) -> Result<Save> {
         if next < Geometry::FIRST_DATA_BLOCK || next >= geometry.blocks {
             return Err(Error::Corrupt(format!("the save in block {first} reaches block {next}")));
         }
-        // A repeat would otherwise be an unbounded read, and a volume with one is broken whatever
-        // it was meant to say.
-        if listed.contains(&next) {
-            return Err(Error::Corrupt(format!("the save in block {first} names block {next} twice")));
-        }
+        walk.take(first, next)?;
         listed.push(next);
         stream.extend_from_slice(content_of(bytes, geometry, next));
     }
 
-    if at + size > stream.len() {
+    // `at` is never past the end of the stream, which the list's own bound above sees to, so this
+    // is the comparison that cannot overflow on a target whose `usize` is the field's own width.
+    if size > stream.len() - at {
         return Err(Error::Corrupt(format!(
             "the save in block {first} states {size} bytes and its blocks hold {}",
-            stream.len().saturating_sub(at)
+            stream.len() - at
         )));
     }
     Ok(Save {
@@ -679,6 +768,65 @@ mod tests {
         assert_eq!(g.blocks_for(29), 2);
         // The real save: 1276 bytes over 23 blocks, which is what the console allocated.
         assert_eq!(g.blocks_for(1276), 23);
+    }
+
+    #[test]
+    fn a_signature_stating_blocks_too_small_for_an_entry_is_not_a_volume() {
+        // The signature once or twice over states a 16- or 32-byte block, which holds no entry: a
+        // save's first block that size was sliced past its end. A Saturn volume is weighed up
+        // before any other format, so that was any file that happened to open this way. Three
+        // times over is 48 bytes, which would hold one, and is still no volume's.
+        for repeats in [1usize, 2, 3] {
+            let block = repeats * MAGIC.len();
+            let mut volume = MAGIC.repeat(repeats);
+            volume.resize(Geometry::FIRST_DATA_BLOCK * block, 0);
+            let mut first = vec![0u8; block];
+            first[..TAG_LEN].copy_from_slice(&SAVE_TAG);
+            volume.extend_from_slice(&first);
+
+            assert_eq!(Geometry::of(&volume), None, "{block}-byte blocks");
+            assert!(!detect(&volume), "{block}-byte blocks");
+            let error = BackupRam::parse(&volume).expect_err("not a volume");
+            assert!(
+                matches!(&error, Error::Corrupt(why) if why.contains("blocks under")),
+                "{block}: {error:?}"
+            );
+            // Nor will a builder lay one out, wherever the block size came from.
+            assert_eq!(Geometry::new(block * 512, block), None, "{block}-byte blocks");
+            assert!(matches!(BackupBuilder::new(block * 512, block), Err(Error::WrongLength(_))));
+        }
+    }
+
+    #[test]
+    fn a_capacity_near_the_top_of_the_range_names_no_volume() {
+        // Adding the reserved blocks back to these used to overflow rather than find nothing.
+        assert_eq!(Geometry::for_data_capacity(usize::MAX & !63), None);
+        assert_eq!(Geometry::for_data_capacity(usize::MAX & !2047), None);
+    }
+
+    #[test]
+    #[cfg(feature = "gzip")]
+    fn a_gzip_member_that_inflates_past_the_cap_is_refused() {
+        use std::io::Write;
+
+        // Sixty-four kilobytes of zeros against a one-kilobyte cap: the shape of a member that
+        // goes on to a gigabyte — which is what a 1 MB file once inflated to, twice over — at a
+        // size a test can afford to inflate.
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&vec![0u8; 64 * 1024]).expect("deflates");
+        let member = encoder.finish().expect("deflates");
+
+        let error = inflate_at_most(&member, 1024).expect_err("more than the cap");
+        assert!(matches!(&error, Error::Corrupt(why) if why.contains("inflates past 1024")), "{error:?}");
+        // A member of exactly the cap is not past it.
+        let inflated = inflate_at_most(&member, 64 * 1024).expect("inflates").expect("a gzip member");
+        assert_eq!(inflated.len(), 64 * 1024);
+
+        // And the cap the parser uses is room for every volume there is, in either container: a
+        // wide one is twice the length of the volume it holds.
+        for (size, _) in GEOMETRIES {
+            assert!(2 * size <= MAX_INFLATED, "{size}");
+        }
     }
 
     /// A formatted volume of `size` bytes with this block size, and nothing saved on it.
