@@ -114,6 +114,13 @@ lint:
 lint-fix:
     cargo clippy --workspace --all-targets --all-features --fix --allow-dirty
 
+# Needs `cargo install cargo-audit` and the network, which is why `check` leaves it out. A
+# vulnerability fails it; an unmaintained or unsound crate is listed and does not.
+#
+# Check the locked dependencies against the RustSec advisory database.
+audit:
+    cargo audit
+
 # Build the documentation.
 doc:
     cargo doc --workspace --no-deps
