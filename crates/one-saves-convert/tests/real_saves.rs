@@ -2,10 +2,11 @@
 //!
 //! Everything here came off an actual emulator or FPGA core rather than being constructed, which
 //! is the point: a synthetic fixture proves the code agrees with itself, and these prove it
-//! agrees with the thing it has to interoperate with. Between them they cover four producers and
-//! four on-disk shapes of the Game Boy's clock across two cartridges, the GBA's Seiko clock off
-//! two more, and six Sega CD backup RAMs off another two — both sockets, both of the filesystem's
-//! storage modes, a volume with nothing on it, and one save sitting on two volumes at once.
+//! agrees with the thing it has to interoperate with. Between them they cover nine producers and
+//! seven on-disk shapes of the Game Boy's clock across two cartridges (four of them the `.rtc`
+//! RetroArch writes beside a libretro core's save), the GBA's Seiko clock off three more, and six
+//! Sega CD backup RAMs off another two — both sockets, both of the filesystem's storage modes, a
+//! volume with nothing on it, and one save sitting on two volumes at once.
 //!
 //! The expected clock values are recorded here rather than beside the files. They are assertions,
 //! not data, and the Gambatte capture instant in particular **cannot** be left to its default,
@@ -17,7 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use one_saves::Bundle;
-use one_saves::extension::{Rtc, RtcS3511a};
+use one_saves::extension::{Rtc, RtcHuc3, RtcS3511a};
 use one_saves_convert::{Format, detect, profile, raw, rtc};
 
 /// The workspace's fixtures, which are not packaged with the crate — see this file's header.
@@ -33,6 +34,9 @@ struct Fixture {
     file: &'static str,
     /// The `--from` name, which is also what picks the shape it is written back in.
     producer: &'static str,
+    /// The app that ran the core, where the shape depends on it: RetroArch writes a clock beside
+    /// the save where the mGBA app appends it.
+    app: Option<&'static str>,
     /// The system slug, which tells a 16-byte GBA footer from a 16-byte Game Boy one.
     system: &'static str,
     /// Bytes on disk, so a truncated or replaced fixture is caught before anything is decoded.
@@ -49,11 +53,18 @@ struct Fixture {
     reading: i64,
     /// A sidecar clock file beside the save, and the instant it was written.
     sidecar: Option<(&'static str, i64)>,
+    /// Bytes of the sidecar no bundle keeps, which come back zero: SameBoy's count of the cycles
+    /// into the current second.
+    unkept: Option<std::ops::Range<usize>>,
 }
 
 const CRYSTAL: &str = "Pokemon - Crystal Version (USA, Europe) (Rev 1).sav";
+/// The same game's save memory as RetroArch names it, and the clock it writes beside it.
+const CRYSTAL_SRM: &str = "Pokemon - Crystal Version (USA, Europe) (Rev 1).srm";
+const CRYSTAL_RTC: &str = "Pokemon - Crystal Version (USA, Europe) (Rev 1).rtc";
 const GOLD: &str = "Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible).sav";
 
+#[allow(clippy::too_many_lines, reason = "a table, one fixture to an entry")]
 fn fixtures() -> Vec<Fixture> {
     vec![
         // Appended, 48 bytes: ten little-endian registers and a write time.
@@ -61,24 +72,28 @@ fn fixtures() -> Vec<Fixture> {
             path: "retroarch/sameboy",
             file: CRYSTAL,
             producer: "sameboy",
+            app: None,
             system: "gb",
             len: 32_816,
             clock: (0, 0, 2, 13),
             anchor: 1_786_559_074,
             reading: 133,
             sidecar: None,
+            unkept: None,
         },
         // Appended, one 512-byte SD block: a write time and the registers bit-packed.
         Fixture {
             path: "mister/gameboy-mister",
             file: CRYSTAL,
             producer: "gameboy-mister",
+            app: None,
             system: "gb",
             len: 33_280,
             clock: (0, 0, 2, 17),
             anchor: 1_786_533_688,
             reading: 137,
             sidecar: None,
+            unkept: None,
         },
         // The same core on another cartridge, with the moment known to the second: Gold's clock
         // set at about 11:38:48 PDT on 2026-10-21, which zeroes the counters, and the save
@@ -88,24 +103,28 @@ fn fixtures() -> Vec<Fixture> {
             path: "mister/gameboy-mister",
             file: GOLD,
             producer: "gameboy-mister",
+            app: None,
             system: "gb",
             len: 33_280,
             clock: (0, 0, 2, 12),
             anchor: 1_792_579_260,
             reading: 132,
             sidecar: None,
+            unkept: None,
         },
         // The same packing as MiSTer, in a 16-byte reserved region.
         Fixture {
             path: "analogue-pocket/budude2-gbc",
             file: CRYSTAL,
             producer: "budude2-gbc",
+            app: None,
             system: "gb",
             len: 32_784,
             clock: (2, 19, 49, 7),
             anchor: 1_786_532_469,
             reading: 244_147,
             sidecar: None,
+            unkept: None,
         },
         // A sidecar holding an origin rather than a reading. The instant is stated because the
         // file does not record it, and the moment of reading moves on every run.
@@ -113,12 +132,90 @@ fn fixtures() -> Vec<Fixture> {
             path: "openemu/gambatte",
             file: CRYSTAL,
             producer: "gambatte",
+            app: Some("openemu"),
             system: "gb",
             len: 32_768,
             clock: (0, 0, 4, 54),
             anchor: 1_786_558_622,
             reading: 294,
             sidecar: Some(("Pokemon - Crystal Version (USA, Europe) (Rev 1).rtc", 1_786_558_622)),
+            unkept: None,
+        },
+        // The four libretro cores below ran the same play of Crystal and RetroArch wrote each
+        // one's save memory to the `.srm` and its clock to the `.rtc`, a different record each.
+        // The clock is seconds in, since a headless run is far faster than real time.
+        //
+        // mGBA: the forty-eight bytes its app appends, in a file of their own.
+        Fixture {
+            path: "retroarch/mgba",
+            file: CRYSTAL_SRM,
+            producer: "mgba",
+            app: Some("retroarch"),
+            system: "gbc",
+            len: 32_768,
+            clock: (0, 0, 0, 1),
+            anchor: 1_793_777_489,
+            reading: 1,
+            sidecar: Some((CRYSTAL_RTC, 0)),
+            unkept: None,
+        },
+        // VBA-M: the same record.
+        Fixture {
+            path: "retroarch/vba-m",
+            file: CRYSTAL_SRM,
+            producer: "vba-m",
+            app: Some("retroarch"),
+            system: "gbc",
+            len: 32_768,
+            clock: (0, 0, 0, 1),
+            anchor: 1_793_777_490,
+            reading: 1,
+            sidecar: Some((CRYSTAL_RTC, 0)),
+            unkept: None,
+        },
+        // Gambatte: its origin, eight bytes little-endian where OpenEmu's build writes four the
+        // other way round. The instant is stated, as for OpenEmu's: 73 seconds after the origin.
+        Fixture {
+            path: "retroarch/gambatte",
+            file: CRYSTAL_SRM,
+            producer: "gambatte",
+            app: Some("retroarch"),
+            system: "gbc",
+            len: 32_768,
+            clock: (0, 0, 1, 13),
+            anchor: 1_793_777_560,
+            reading: 73,
+            sidecar: Some((CRYSTAL_RTC, 1_793_777_560)),
+            unkept: None,
+        },
+        // SameBoy: its own record, the clock section of its machine state, whose count of cycles
+        // into the second nothing keeps.
+        Fixture {
+            path: "retroarch/sameboy",
+            file: CRYSTAL_SRM,
+            producer: "sameboy",
+            app: Some("retroarch"),
+            system: "gbc",
+            len: 32_768,
+            clock: (0, 0, 0, 9),
+            anchor: 1_793_777_498,
+            reading: 9,
+            sidecar: Some((CRYSTAL_RTC, 0)),
+            unkept: Some(24..28),
+        },
+        // The mGBA app, run on from the libretro core's state of that play: the record appended.
+        Fixture {
+            path: "mgba/mgba",
+            file: CRYSTAL,
+            producer: "mgba",
+            app: Some("mgba"),
+            system: "gbc",
+            len: 32_816,
+            clock: (0, 0, 0, 4),
+            anchor: 1_793_779_606,
+            reading: 4,
+            sidecar: None,
+            unkept: None,
         },
     ]
 }
@@ -160,13 +257,13 @@ impl Fixture {
             (std::fs::read(path).expect("read sidecar"), captured_at)
         });
 
+        let source = profile(self.producer)
+            .unwrap_or_else(|| panic!("{} is a known producer", self.producer))
+            .source()
+            .app(self.app.and_then(|app| one_saves::Name::parse(app).ok()));
         let options = raw::RawOptions {
             system: Some(self.system.to_owned()),
-            source: Some(
-                profile(self.producer)
-                    .unwrap_or_else(|| panic!("{} is a known producer", self.producer))
-                    .source(),
-            ),
+            source: Some(source),
             rtc_sidecar: sidecar,
             ..raw::RawOptions::default()
         };
@@ -232,7 +329,10 @@ fn every_real_save_round_trips_byte_for_byte() {
         // clean rather than gaining a footer it never had.
         if let Some((name, _)) = fixture.sidecar {
             let path = fixtures_root().join(fixture.path).join(name);
-            let expected = std::fs::read(path).expect("read sidecar");
+            let mut expected = std::fs::read(path).expect("read sidecar");
+            if let Some(unkept) = fixture.unkept.clone() {
+                expected[unkept].fill(0);
+            }
             assert_eq!(
                 rtc::sidecar_of(&reread).expect("rebuilds the sidecar"),
                 expected,
@@ -378,7 +478,7 @@ fn a_real_mincer_save_reads_its_clock_from_the_sidecar_and_round_trips() {
     // and the Pocket's epoch both count its wall clock.
     assert_eq!(reading_of(&bundle), Some(1_792_590_016));
 
-    assert_eq!(rtc::form_of(&bundle), rtc::ClockForm::S3511aSidecar);
+    assert_eq!(rtc::form_of(&bundle), rtc::ClockForm::Sidecar(rtc::SidecarRecord::PackedSeiko));
     assert_eq!(raw::unwrap(&bundle).expect("unwraps"), save, "the save, with nothing appended");
     assert_eq!(rtc::sidecar_of(&bundle), Some(sidecar), "and the record, byte for byte");
 }
@@ -398,6 +498,184 @@ fn a_real_mincer_save_with_no_clock_carries_none() {
         assert!(bundle.header.extensions.get::<Rtc>().is_none(), "{game}: no reading");
         assert!(bundle.header.extensions.get::<RtcS3511a>().is_none(), "{game}: no chip");
         assert_eq!(raw::unwrap(&bundle).expect("unwraps"), save, "{game}: round trips");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The Game Boy's HuC-3.
+// ---------------------------------------------------------------------------------------------
+
+/// Robopon Sun, a HuC-3 cartridge, saved in the same play by four libretro cores, as RetroArch
+/// writes each one's files.
+const ROBOPON: &str = "Robopon - Sun Version (USA) (SGB Enhanced) (GB Compatible)";
+
+/// The save memory and the `.rtc` beside it, where the core had RetroArch write one.
+fn robopon(core: &str) -> (Vec<u8>, Option<Vec<u8>>) {
+    let folder = fixtures_root().join("retroarch").join(core);
+    let save = std::fs::read(folder.join(format!("{ROBOPON}.srm"))).expect("read save");
+    (save, std::fs::read(folder.join(format!("{ROBOPON}.rtc"))).ok())
+}
+
+/// The save wrapped as RetroArch's `core` wrote it, the clock read as a HuC-3's, as the cartridge's
+/// header says it is, at `captured_at` where it is an origin.
+fn wrap_robopon(core: &str, captured_at: i64) -> (Vec<u8>, Option<Vec<u8>>, Bundle) {
+    let (save, beside) = robopon(core);
+    let options = raw::RawOptions {
+        system: Some("gbc".to_owned()),
+        source: Some(profile("retroarch").expect("an app").source().core(one_saves::Name::parse(core).ok())),
+        rtc_sidecar: beside.clone().map(|bytes| (bytes, captured_at)),
+        clock_chip: Some("x.1sav.rtc.huc3".to_owned()),
+        ..raw::RawOptions::default()
+    };
+    let bundle = raw::wrap(&save, &options).expect("wraps");
+    (save, beside, bundle)
+}
+
+#[test]
+fn real_huc3_origins_read_as_the_time_since_them_and_go_back_unchanged() {
+    if skip_if_absent() {
+        return;
+    }
+    // Gambatte's origin is 07:31:33 UTC on 2026-11-04 and VBA-M's five seconds later, the moment
+    // each started the cartridge's clock. Read a day, an hour and seven minutes after Gambatte's,
+    // each has run that long less its own head start.
+    let at = 1_793_777_493 + 86_400 + 3_600 + 7 * 60;
+    for (core, seconds_in) in [("gambatte", 0), ("vba-m", 5)] {
+        let (save, beside, bundle) = wrap_robopon(core, at);
+        let chip = bundle.header.extensions.get::<RtcHuc3>().unwrap_or_else(|| panic!("{core}: a HuC-3"));
+        let elapsed = 86_400 + 3_600 + 7 * 60 - seconds_in;
+        assert_eq!(chip.days(), Some(1), "{core}");
+        assert_eq!(chip.minutes(), Some(u16::try_from(elapsed / 60 % 1440).unwrap()), "{core}");
+        assert_eq!(chip.seconds, Some(u8::try_from(elapsed % 60).unwrap()), "{core}");
+        assert!(bundle.header.extensions.get::<one_saves::extension::RtcMbc3>().is_none(), "{core}: no MBC3");
+
+        // Back out for the same core: the save as it was, and the same origin beside it.
+        let form = rtc::form_of(&bundle);
+        let (file, rebuilt) = raw::unwrap_for(&bundle, form).expect("unwraps");
+        assert_eq!((file, rebuilt), (save, beside), "{core}: byte for byte");
+    }
+}
+
+#[test]
+fn a_huc3_game_under_a_core_that_keeps_no_clock_carries_none() {
+    if skip_if_absent() {
+        return;
+    }
+    // SameBoy's `.rtc` beside a HuC-3 game is its MBC3 section with nothing in the registers, and
+    // mGBA writes none at all: neither keeps the HuC-3's clock, so there is none to read.
+    for core in ["sameboy", "mgba"] {
+        let (save, beside, bundle) = wrap_robopon(core, 1_793_777_600);
+        assert_eq!(beside.is_some(), core == "sameboy", "{core}: a .rtc only from SameBoy");
+        assert!(bundle.header.extensions.is_empty(), "{core}: no clock");
+        assert_eq!(raw::unwrap(&bundle).expect("unwraps"), save, "{core}");
+    }
+}
+
+#[test]
+fn a_real_huc3_goes_to_every_reader_that_keeps_one() {
+    use one_saves_registry::{apps, cores};
+    if skip_if_absent() {
+        return;
+    }
+    let at = 1_793_777_493 + 86_400 + 3_600 + 7 * 60;
+    let (save, beside, bundle) = wrap_robopon("gambatte", at);
+    let beside = beside.expect("Gambatte's origin");
+
+    // MiSTer packs the counters and the seconds behind the host clock, in an SD block.
+    let form = rtc::form_in(&bundle, &cores::GAMEBOY_MISTER, None);
+    let (file, none) = raw::unwrap_for(&bundle, form).expect("unwraps");
+    assert_eq!((file.len(), none), (33_280, None));
+    let packed = rtc::parse_packed_huc3(&file[32_768..]).expect("MiSTer's HuC-3");
+    assert_eq!((packed.days, packed.minutes, packed.seconds, packed.taken_at), (1, 67, 0, at));
+
+    // VBA-M under RetroArch keeps the same origin Gambatte does.
+    let form = rtc::form_in(&bundle, &cores::VBA_M, Some(&apps::RETROARCH));
+    assert_eq!(raw::unwrap_for(&bundle, form).expect("unwraps"), (save.clone(), Some(beside)));
+
+    // The mGBA app the counters in its window, latched at the anchor; RetroArch's mGBA nothing.
+    let form = rtc::form_in(&bundle, &cores::MGBA, Some(&apps::MGBA));
+    let (file, _) = raw::unwrap_for(&bundle, form).expect("unwraps");
+    let window = rtc::parse_huc3_memory(&file[32_768..]).expect("the app's record");
+    assert_eq!((window.days, window.minutes, window.taken_at), (1, 67, at));
+    let form = rtc::form_in(&bundle, &cores::MGBA, Some(&apps::RETROARCH));
+    assert_eq!(raw::unwrap_for(&bundle, form).expect("unwraps"), (save, None));
+}
+
+/// The mGBA app's save of Emerald, run on from the libretro core's state of a play: the flash,
+/// then the sixteen bytes the app appends for the Seiko chip.
+const EMERALD_MGBA: &str = "mgba/mgba/Pokemon - Emerald Version (USA, Europe).sav";
+
+#[test]
+fn a_real_mgba_app_save_keeps_its_seiko_clock_on_the_end() {
+    if skip_if_absent() {
+        return;
+    }
+    let bytes = std::fs::read(fixtures_root().join(EMERALD_MGBA)).expect("read fixture");
+    assert_eq!(bytes.len(), 131_088, "128 KiB of flash and sixteen bytes");
+    let wrap_from = |app: Option<&str>| {
+        let source = profile("mgba")
+            .expect("a listed core")
+            .source()
+            .app(app.and_then(|app| one_saves::Name::parse(app).ok()));
+        let options = raw::RawOptions {
+            system: Some("gba".to_owned()),
+            source: Some(source),
+            ..raw::RawOptions::default()
+        };
+        raw::wrap(&bytes, &options).expect("wraps")
+    };
+
+    // 2026-11-04, a Wednesday, 00:08:26 on the 24-hour clock. The app had not latched the chip
+    // since it started, so the instant it keeps beside the calendar is zero.
+    let bundle = wrap_from(Some("mgba"));
+    let chip = bundle.header.extensions.get::<RtcS3511a>().expect("the chip");
+    assert_eq!(chip.components, [0x26, 0x11, 0x04, 0x03, 0x00, 0x08, 0x26]);
+    assert_eq!(chip.control, 0x40);
+    assert_eq!(rtc::form_of(&bundle), rtc::ClockForm::S3511a);
+    assert_eq!(raw::unwrap(&bundle).expect("unwraps"), bytes, "the app's file, byte for byte");
+
+    // `--from mgba` names no app, and the clock still goes back where the file had it: the libretro
+    // core keeps no Seiko clock, so this one came off the end of the app's file.
+    assert_eq!(raw::unwrap(&wrap_from(None)).expect("unwraps"), bytes);
+
+    // For RetroArch's mGBA there is no clock to write: a GBA game there reads the host's.
+    let form = rtc::form_for(
+        &bundle,
+        one_saves_registry::cores::MGBA.clock_in(Some(&one_saves_registry::apps::RETROARCH)),
+    );
+    let (file, beside) = raw::unwrap_for(&bundle, form).expect("unwraps");
+    assert_eq!((file.as_slice(), beside), (&bytes[..131_072], None));
+}
+
+#[test]
+fn a_mister_save_goes_to_retroarch_with_its_clock_beside_it() {
+    use one_saves_registry::{apps, cores};
+    if skip_if_absent() {
+        return;
+    }
+    // What a player taking a MiSTer save to RetroArch needs: the MiSTer core packs its clock into
+    // an SD block after the save, and every libretro core reads the save memory alone from the
+    // `.srm` and its own record of the clock from the `.rtc`.
+    let mister = fixtures().into_iter().find(|f| f.path == "mister/gameboy-mister" && f.file == CRYSTAL);
+    let (original, bundle) = mister.expect("the MiSTer Crystal save").wrap();
+    let clock =
+        rtc::parse_mbc3(&rtc::footer_of_form(&bundle, rtc::ClockForm::Mbc3Appended(8)).expect("a clock"))
+            .expect("parses");
+
+    for core in [&cores::MGBA, &cores::VBA_M, &cores::GAMBATTE, &cores::SAMEBOY] {
+        let form = rtc::form_for(&bundle, core.clock_in(Some(&apps::RETROARCH)));
+        let (file, beside) = raw::unwrap_for(&bundle, form).expect("unwraps");
+        assert_eq!(file, original[..32_768], "{}: the save memory alone", core.slug);
+
+        // Each core's own record, read back as that core's, holds the MiSTer's clock.
+        let beside = beside.unwrap_or_else(|| panic!("{}: a clock beside the save", core.slug));
+        let rtc::ClockForm::Sidecar(record) = form else { panic!("{}: a sidecar", core.slug) };
+        let rtc::Clock::Mbc3(back) =
+            rtc::parse_sidecar_as(&beside, record, clock.taken_at).expect("reads back")
+        else {
+            panic!("{}: an MBC3", core.slug)
+        };
+        assert_eq!((back.live(), back.taken_at), (clock.live(), clock.taken_at), "{}", core.slug);
     }
 }
 

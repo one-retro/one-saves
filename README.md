@@ -219,20 +219,39 @@ split a real-time-clock footer off the save, so its bytes hash the same over tim
     [0]   save       primary              32768 bytes  fb495f5a287b3ac5
 ```
 
-Where the clock lives varies by emulator, and the bundle hides that: mGBA and SameBoy append it to
-the save, the MiSTer Gameboy and GBA cores and the Gameboy core's Analogue Pocket ports append it
-bit-packed, Gambatte and mincer_ray's Pocket GBA core keep it in a `.rtc` file beside it. All of them arrive as the same two
-keys, and `extract` puts each back in the shape its producer writes — down to the reserved size,
-which is a whole 512-byte SD block on MiSTer and sixteen bytes on the Pocket. `convert` picks up a
-`.rtc` named after the save on its own, as long as it is a plain file and not a link; `--rtc-file`
-names one anywhere, and `extract --rtc-file` writes one.
+Where the clock lives varies by emulator, and by what ran it, and the bundle hides that. The mGBA
+app and standalone SameBoy and VBA-M append it to the save; the MiSTer Gameboy and GBA cores and the
+Gameboy core's Analogue Pocket ports append it bit-packed. RetroArch appends nothing: it writes a
+libretro core's save memory to the `.srm` and whatever the core keeps of its clock to a `.rtc`
+beside it, a record of the core's own, so mGBA there keeps the forty-eight bytes its app appends,
+SameBoy thirty-two of its own and Gambatte the eight-byte instant its clock counts from.
+mincer_ray's Pocket GBA core keeps a `.rtc` too. All of them arrive as the same two keys, and
+`extract` puts each back in the shape its producer writes — down to the reserved size, which is a
+whole 512-byte SD block on MiSTer and sixteen bytes on the Pocket, and the `.rtc` beside the save
+where that is where the clock was. `convert` picks up a `.rtc` named after the save on its own, as
+long as it is a plain file and not a link, and reads it as the core that `--from` and `--core` name
+keeps it; `--rtc-file` names one anywhere.
 
-Gambatte's sidecar is a special case worth knowing about. It stores the instant the clock counts
-*from* rather than what it reads. The cartridge clock follows the host's, so `1saves` takes the
-counters as they stand when it reads the file, and carries that moment as the anchor. Pass
-`--rtc-captured-at <epoch>` to read them at another moment. The choice moves the reading, never the
-bytes: writing the sidecar back computes `captured_at − elapsed`, which cancels the instant out.
-mincer_ray's records the instant itself, so it needs none of this.
+To hand the save to something else, name it with `--to`: an app, a core, or an app and the core it
+runs. Each gets its own file and its own clock layout, and its own `.rtc` where it keeps one.
+
+```console
+$ 1saves extract crystal.1saves --to retroarch --core mgba
+crystal.1saves -> crystal.srm (save for mGBA in RetroArch, 32768 bytes)
+clock -> crystal.rtc (48 bytes)
+$ 1saves extract crystal.1saves --to mgba
+crystal.1saves -> crystal.sav (save for mGBA, 32816 bytes)
+```
+
+Gambatte's `.rtc` is a special case worth knowing about. It stores the instant the clock counts
+*from* rather than what it reads, in eight little-endian bytes under libretro and four big-endian
+ones in OpenEmu's build (`--from openemu --core gambatte`). The cartridge clock follows the host's,
+so `1saves` takes the counters as they stand when it reads the file, and carries that moment as the
+anchor. Pass `--rtc-captured-at <epoch>` to read them at another moment. The choice moves the
+reading, never the bytes: writing the sidecar back computes `captured_at − elapsed`, which cancels
+the instant out. Every other `.rtc` records the instant itself, so it needs none of this. SameBoy's
+also counts the CPU cycles into the current second, which no bundle keeps, so its clock comes back
+up to a second behind where it was.
 
 Two keys go on together, as `x.1sav.rtc` prescribes: that key for the portable reading anyone can
 read, and `x.1sav.rtc.mbc3` or `x.1sav.rtc.s3511a` for the chip's own state, from which the footer
@@ -242,27 +261,96 @@ restores the naive behaviour.
 
 The reading is the chip's own clock on the Unix scale: an MBC3's counters as that long after 1970,
 a Seiko chip's calendar as though it were UTC. It is never the host time stored beside them, which
-is what the emulator advances the clock from and is on its own scale — MiSTer's is local standard
-time counted as though it were UTC. That host time goes in the chip's key, where rebuilding the
-footer needs it.
+is what the emulator advances the clock from and is on its own scale. That host time goes in the
+chip's key, where rebuilding the footer needs it.
+
+Most emulators stamp it in UTC. A MiSTer stamps it in local standard time counted as though it were
+UTC, the zone's standard offset summer and winter alike, so a clock moved from a MiSTer to RetroArch
+as it is runs a zone's worth of hours fast or slow. `--utc-offset` says how far a MiSTer's time is
+from UTC, and the bundle keeps it in `source`, as the specification's `utc_offset`. Writing the
+clock for an emulator on another scale then moves its anchor by the difference:
+
+```console
+$ 1saves convert crystal.sav --from gameboy-mister --system gbc --utc-offset -08:00
+$ 1saves extract crystal.1saves --to retroarch --core mgba
+crystal.1saves -> crystal.srm (save for mGBA in RetroArch, 32768 bytes)
+clock -> crystal.rtc (48 bytes)
+moved the clock's anchor +8 h, from the scale it was stamped on to mGBA in RetroArch's
+```
+
+Without it the clock goes as it always has, and `convert` and `extract` say what that costs. A
+MiSTer save going back to a MiSTer needs nothing: it runs on the scale the bundle records. To write
+for a MiSTer in another zone than the one the save came from, pass `--utc-offset` to `extract`.
 
 A source that keeps less than the chip holds says so with null rather than a made-up value.
-Gambatte's sidecar and the MiSTer core's packed footer keep no latched copy of the MBC3's
+Gambatte's `.rtc` and the MiSTer core's packed footer keep no latched copy of the MBC3's
 registers, and none of the GBA producers keeps the Seiko chip's alarm. A rebuild fills each null
 the way the chip's page says to: the live registers for the latched copy, the power-on value for
 the alarm.
 
-The MiSTer Gameboy cores and their Pocket ports keep a HuC-3 in the footer they keep an MBC3 in,
-packed differently, and nothing in the bytes says which chip wrote it. The cartridge does: pass the
-game's ROM with `--rom` and its header names the chip, so `convert` reads a HuC-3's counters and
-seconds into `x.1sav.rtc.huc3` and `extract` packs them back. Without the ROM, such a footer is read
-as an MBC3 where its bits allow, and left in the save where they do not.
+A HuC-3 (Robopon, Pocket Family) is kept differently again, by every core that keeps one at all.
+The MiSTer Gameboy cores and their Pocket ports pack its counters into the footer they keep an MBC3
+in; Gambatte and VBA-M under RetroArch keep the instant its clock counts from in the `.rtc`, eight
+bytes, the shape Gambatte keeps for an MBC3 too; the mGBA app appends the controller's whole
+window, 136 bytes; the SameBoy app appends seventeen of its own, the counters and the alarm, and
+VisualBoyAdvance-M 24, its origin first (read at a moment, as Gambatte's is, with
+`--rtc-captured-at`). RetroArch's mGBA and SameBoy keep none, and OpenEmu's Gambatte will not load
+a HuC-3 cartridge at all. Nothing in any of those bytes says
+which chip wrote them. The cartridge does: pass the game's ROM with `--rom` and its header names the
+chip, so `convert` reads a HuC-3's counters into `x.1sav.rtc.huc3` and `extract` puts them back
+where each reader keeps them. Without the ROM, a clock is read as an MBC3's where its bits allow,
+and a footer left in the save where they do not.
+
+```console
+$ 1saves convert robopon.srm --from retroarch --core gambatte --rom robopon.gbc
+read the clock from robopon.rtc, using the time it was read
+robopon.srm -> robopon.1saves (flat cartridge save, 1 part(s), 33292 bytes)
+$ 1saves extract robopon.1saves --to mister
+robopon.1saves -> robopon.sav (save for MiSTer, 33280 bytes)
+```
+
+`--to mister` needs no `--core`: the save's system says which cores, and MiSTer's Gameboy and SGB
+cores lay a Game Boy save out alike. Any app that runs several cores for a system is taken at its
+word the same way when they would all write the save alike, as every core RetroArch runs does for a
+save with no clock.
 
 The specification keys every other cartridge clock too: TPP1 and TAMA5 on the Game Boy, the Epson
 and Sharp chips on the Super Famicom, and the N64's Joybus clock. `one-saves` has a type for each,
 so `inspect` shows them and a producer can write them, but `convert` reads none of their emulators'
-files yet, nor any other emulator's HuC-3. A footer for one of them stays in the save, as any tail
-this crate cannot identify does.
+files yet. A footer for one of them stays in the save, as any tail this crate cannot identify does.
+
+## Save memory layouts
+
+A bundle holds the cartridge's save memory and nothing else, in the order the console addresses it.
+Cores keep it in files of their own shapes, and for two systems the shapes stop a save moving:
+
+- **Mega Drive.** Most cartridges put their SRAM on the odd byte lane of the 16-bit bus. Genesis
+  Plus GX, PicoDrive and clownmdemu keep the whole address window with the other lane filled;
+  BlastEm and MiSTer keep the SRAM's own bytes. A MiSTer handed Genesis Plus GX's file sees no save,
+  and Genesis Plus GX handed a MiSTer's sees garbage. Every core keeps an EEPROM as its own bytes.
+- **GBA.** gpSP and SkyEmu pad every save to 128 KiB, SkyEmu keeps an EEPROM's eight-byte blocks
+  back to front, VBA Next keeps an EEPROM 128 KiB into its file, and a MiSTer reads a 4 Kbit EEPROM
+  only from a file of 8 KiB.
+
+`convert` takes the memory out of the file its core keeps, and `extract` lays it out as the reader
+keeps it, from `one-saves-registry`'s record of each core. Each core gets its own file back byte for
+byte, and a save goes from any of them to any other:
+
+```console
+$ 1saves convert psiv.srm --from retroarch --core genesis-plus-gx --system genesis
+$ 1saves extract psiv.1saves --to mister
+psiv.1saves -> psiv.sav (save for MegaDrive_MiSTer in MiSTer, 65536 bytes)
+```
+
+Spreading a Mega Drive save out for Genesis Plus GX or PicoDrive needs to know whether the cartridge
+has SRAM or an EEPROM, which its header says and the save does not. Pass the ROM with `--rom`, to
+`convert` or to `extract`. Without it, a save of 256 bytes or less is taken for an EEPROM, which
+covers the 128- and 256-byte chips nearly every EEPROM cartridge has, and anything longer for SRAM,
+and `extract` says so; Frank Thomas Big Hurt Baseball's 8 KiB EEPROM is one that needs the ROM. A
+GBA ROM says which chip it links the library of, which is what cuts gpSP's and SkyEmu's padding off.
+
+A bundle written before this kept Genesis Plus GX's file as it was. `extract` recognises one by the
+lane its core fills and lays it out like any other.
 
 ## Conformance
 
@@ -331,7 +419,7 @@ is what CI checks. Nothing at build time needs either form.
 
 ## Status
 
-Tracking version 0.7 of the specification, which is **not yet stabilized**. Until the spec reaches
+Tracking version 0.8 of the specification, which is **not yet stabilized**. Until the spec reaches
 1.0, breaking changes happen in place under the same bundle tag.
 
 ## License

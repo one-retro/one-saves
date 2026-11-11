@@ -5,10 +5,16 @@
     "from files real cores wrote, or the core's own source where no file has been sampled, cross-checked",
     "against one-saves-convert's rtc module. A core absent from this file records no clock convention,",
     "which is also what a core gets whose source is unpublished and whose files nobody has sampled.",
+    "A core's entry is the core as its kind hosts it. A libretro frontend writes a libretro core's save",
+    "memory to <name>.srm and the clock it exposes to <name>.rtc, so every libretro core here is a sidecar,",
+    "whatever its standalone build does. An app that ships a build of its own and lays the clock out",
+    "differently is listed under the core's `apps`, keyed by app slug.",
     "Layouts: appended | packed | sidecar. A footer (appended or packed) states timestamp_width, the",
-    "bytes its host clock takes; a sidecar has none. Which chip the state belongs to is the save's own",
-    "business: mostly the system, but the MiSTer Game Boy cores also keep a HuC-3 in the same footer,",
-    "packed differently, so for those it is the cartridge type.",
+    "bytes its host clock takes. A sidecar states its `record`: origin (timestamp_width, byte_order),",
+    "registers (timestamp_width), sameboy, or packed-seiko. Which chip the state belongs to is the save's",
+    "own business: mostly the system, but the MiSTer Game Boy cores also keep a HuC-3 in the same footer,",
+    "packed differently, so for those it is the cartridge type. A chip a sidecar's record cannot hold is",
+    "one the core keeps no clock for.",
     "Each entry's `evidence` says where its facts were read: a file, or the source at a commit."
   ],
   "cores": {
@@ -18,26 +24,69 @@
       "timestamp_width": 4,
       "evidence": "agg23/openfpga-wonderswan 073213a: one GBA_MiSTer-style record cut to 12 bytes, appended to every save (src/fpga/core/wonderswan.sv:621-622, 681-683; core_top.v:693-694)"
     },
+    "bgb": {
+      "layout": "appended",
+      "timestamp_width": 8,
+      "evidence": "BGB is closed source. SameBoy v1.0.3 Core/gb.c reads the 48-byte record as 'Used by BGB and VBA versions with 64-bit timestamp' (rtc_save_t.vba64), and the specification's x.1sav.rtc.mbc3 names BGB among the producers of that footer. Its HuC-3 is unrecorded."
+    },
     "budude2-gb": {
       "layout": "packed",
       "reserved": 16,
       "timestamp_width": 4,
+      "huc3": {
+        "layout": "packed",
+        "reserved": 16,
+        "evidence": "budude2/openfpga-GBC 864253c: the Gameboy core's mappers and footer, cut to 16 bytes as its MBC3 is; no HuC-3 file sampled"
+      },
       "evidence": "budude2/openfpga-GBC 864253c, shared with budude2-gbc (src/gb/save_handler.sv:103-107, 137-150)"
     },
     "budude2-gbc": {
       "layout": "packed",
       "reserved": 16,
       "timestamp_width": 4,
+      "huc3": {
+        "layout": "packed",
+        "reserved": 16,
+        "evidence": "budude2/openfpga-GBC 864253c: the Gameboy core's mappers and footer, cut to 16 bytes as its MBC3 is; no HuC-3 file sampled"
+      },
       "evidence": "two real Pokemon Crystal saves under data/saves/analogue-pocket/budude2-gbc; budude2/openfpga-GBC 864253c (src/gb/save_handler.sv:103-107, 137-150)"
     },
     "gambatte": {
       "layout": "sidecar",
-      "evidence": "a real Pokemon Crystal .rtc under data/saves/openemu/gambatte"
+      "record": "origin",
+      "timestamp_width": 8,
+      "byte_order": "little",
+      "huc3": {
+        "layout": "sidecar",
+        "record": "origin",
+        "timestamp_width": 8,
+        "byte_order": "little",
+        "evidence": "a real Robopon Sun .srm and .rtc under data/saves/retroarch/gambatte; gambatte-libretro 77f2567, where RETRO_MEMORY_RTC is the HuC-3's own uint64_t base time (libgambatte/src/mem/cartridge_libretro.cpp:66-88) and the counters are the time since it (huc3.cpp:41-47)"
+      },
+      "evidence": "a real Pokemon Crystal .srm and .rtc under data/saves/retroarch/gambatte, written by the libretro core v0.5.0-netlink 77f2567 as RetroArch writes them: the .rtc is the core's time_t base, so eight bytes on a 64-bit host",
+      "apps": {
+        "openemu": {
+          "layout": "sidecar",
+          "record": "origin",
+          "timestamp_width": 4,
+          "byte_order": "big",
+          "evidence": "a real Pokemon Crystal .rtc under data/saves/openemu/gambatte",
+          "huc3": {
+            "layout": "none",
+            "evidence": "OpenEmu 2.4.1's Gambatte.oecoreplugin 0.5.1, loaded by a harness that calls its own -[GBGameCore loadFileAtPath:error:]: Robopon Sun (cartridge type 0xFE) is refused (NO), Pokemon Crystal loads and writes .sav + a 4-byte big-endian .rtc (2026-11-10). The plugin has HuC-1 and no HuC-3 code at all."
+          }
+        }
+      }
     },
     "gameboy-mister": {
       "layout": "packed",
       "reserved": 512,
       "timestamp_width": 4,
+      "huc3": {
+        "layout": "packed",
+        "reserved": 512,
+        "evidence": "a real Robopon Sun save under data/saves/mister/gameboy-mister; MiSTer-devel/Gameboy_MiSTer f6796f3 (rtl/mappers/huc3.v:166-167): the minute and day counters and the seconds, packed into the footer the core keeps an MBC3 in"
+      },
       "evidence": "a real Pokemon Gold save under data/saves/mister/gameboy-mister; MiSTer-devel/Gameboy_MiSTer f6796f3 (Gameboy.sv:1086-1113, rtl/mappers/mbc3.v:187-190, huc3.v:166-167)"
     },
     "gba-mister": {
@@ -47,29 +96,88 @@
       "evidence": "a real save under data/saves/mister/gba-mister; MiSTer-devel/GBA_MiSTer 93790a0 (GBA.sv:882-886, 1241-1274; rtl/gba_gpioRTCSolarGyro.vhd:400-421)"
     },
     "mgba": {
-      "layout": "appended",
+      "layout": "sidecar",
+      "record": "registers",
       "timestamp_width": 8,
-      "evidence": "a real Pokemon Ruby footer in one-saves-convert's rtc tests; its source types the Game Boy footer's timestamp uint64_t and stores it with STORE_64LE"
+      "huc3": {
+        "layout": "none",
+        "evidence": "real Robopon Sun and Pocket Family GB saves from the libretro core 0.11-212-7a12d6d have no .rtc; mgba-emu/mgba 662dada exposes RETRO_MEMORY_RTC for an MBC3 alone (src/platform/libretro/libretro.c:1131-1192)"
+      },
+      "evidence": "a real Pokemon Crystal .srm and .rtc under data/saves/retroarch/mgba, written by the libretro core 0.11-212-7a12d6d as RetroArch writes them: the .srm is the save memory alone and the .rtc the 48 bytes the app appends. For a GBA cartridge the core exposes no clock (a game there reads the host's), and for a HuC-3 none",
+      "apps": {
+        "mgba": {
+          "layout": "appended",
+          "timestamp_width": 8,
+          "huc3": {
+            "layout": "appended",
+            "record": "memory",
+            "evidence": "mgba-emu/mgba 0.10.5 and 662dada: GBMBCHuC3Write appends GBMBCHuC3SaveBuffer, the 256 nybbles two to a byte and the latch time eight bytes little-endian, right after the save memory (src/gb/mbc.c:2205-2218, 2285-2300); no file sampled"
+          },
+          "evidence": "real Pokemon Crystal and Emerald saves under data/saves/mgba/mgba, written by mGBA.app 0.10.5: the MBC3 record and the 16-byte Seiko record appended to the .sav; a real Pokemon Ruby footer in one-saves-convert's rtc tests; its source types the Game Boy footer's timestamp uint64_t and stores it with STORE_64LE"
+        }
+      }
     },
     "mincer-ray-gba": {
       "layout": "sidecar",
+      "record": "packed-seiko",
       "evidence": "a real Pokemon Emerald .rtc under data/saves/analogue-pocket/mincer-ray-gba; mincer-ray/openfpga-GBA 8bd32b5 (rtc_export.sv:77-86)"
     },
     "sameboy": {
-      "layout": "appended",
-      "timestamp_width": 8,
-      "evidence": "a real Pokemon Crystal save under data/saves/retroarch/sameboy"
+      "layout": "sidecar",
+      "record": "sameboy",
+      "huc3": {
+        "layout": "none",
+        "evidence": "a real Robopon Sun .srm and .rtc under data/saves/retroarch/sameboy: the .rtc is the MBC3 section with nothing in its registers, since the HuC-3's counters live outside it (LIJI32/SameBoy ea667ad, Core/gb.h huc3, outside GB_SECTION(rtc))"
+      },
+      "evidence": "a real Pokemon Crystal .srm and .rtc under data/saves/retroarch/sameboy, written by the libretro core 1.0.5 90e2899 as RetroArch writes them; LIJI32/SameBoy ea667ad, where RETRO_MEMORY_RTC is the machine state's rtc section (libretro/libretro.c:1783-1789, 1856-1858; Core/gb.h:558-563). Its own battery save appends VBA-M's 48 bytes instead (Core/gb.c), which is what the .sav in that folder holds",
+      "apps": {
+        "sameboy": {
+          "layout": "appended",
+          "timestamp_width": 8,
+          "huc3": {
+            "layout": "appended",
+            "record": "sameboy",
+            "evidence": "SameBoy v1.0.3 Core/gb.c GB_save_battery_to_buffer: a HuC-3 appends GB_huc3_rtc_time_t (gb.h), packed: u64 LE last_rtc_second, u16 LE minutes, days, alarm_minutes, alarm_days, u8 alarm_enabled, 17 bytes"
+          },
+          "evidence": "SameBoy v1.0.3 Core/gb.c GB_save_battery_to_buffer: an MBC3 with a timer appends rtc_save.vba64, the live and latched registers as five u32 each and time(NULL) as a u64 LE, 48 bytes; GB_load_battery_from_buffer also reads the 44-byte vba32 and its own legacy record"
+        }
+      }
     },
     "sgb-mister": {
       "layout": "packed",
       "reserved": 512,
       "timestamp_width": 4,
+      "huc3": {
+        "layout": "packed",
+        "reserved": 512,
+        "evidence": "MiSTer-devel/SGB_MiSTer 128954b: the Gameboy core's mappers and footer, unchanged"
+      },
       "evidence": "MiSTer-devel/SGB_MiSTer 128954b: the Gameboy core's mappers and footer, unchanged (SGB.sv:909-920, 985-995)"
     },
     "vba-m": {
-      "layout": "appended",
+      "layout": "sidecar",
+      "record": "registers",
       "timestamp_width": 8,
-      "evidence": "its source, which unions the timestamp with a uint64_t so 32- and 64-bit builds agree; older 32-bit builds wrote 4, which key 3 of x.1sav.rtc.mbc3 keeps per file"
+      "huc3": {
+        "layout": "sidecar",
+        "record": "origin",
+        "timestamp_width": 8,
+        "byte_order": "little",
+        "evidence": "a real Robopon Sun .srm and .rtc under data/saves/retroarch/vba-m; visualboyadvance-m aad5da4, where RETRO_MEMORY_RTC for a HuC-3 is mapperLastTime alone (src/libretro/libretro.cpp:179-213) and the counters are the time since it (src/core/gb/gbMemory.cpp:984-999)"
+      },
+      "evidence": "a real Pokemon Crystal .srm and .rtc under data/saves/retroarch/vba-m, written by the libretro core 115defb as RetroArch writes them: the record its standalone build appends, whose timestamp its source unions with a uint64_t so 32- and 64-bit builds agree. For a HuC-3 the .rtc is the eight-byte timestamp alone, which is not read",
+      "apps": {
+        "visualboyadvance-m": {
+          "layout": "appended",
+          "timestamp_width": 8,
+          "huc3": {
+            "layout": "appended",
+            "record": "vba-m",
+            "evidence": "visualboyadvance-m v2.2.3 src/core/gb/gb.cpp: a HuC-3's battery IO vectors are gbRAM then gbRTCHuC3 from mapperLastTime, HUC3_RTC_DATA_SIZE = 4 ints + a u64 (gbMemory.h): the u64 origin, mapperDateTime, mapperWritingTime, memoryTimerRead, mapperClockShift, 24 bytes, 20 read too"
+          },
+          "evidence": "visualboyadvance-m v2.2.3 src/core/gb/gb.cpp: an MBC3 with a timer's battery IO vectors are gbRAM then gbDataMBC3 from mapperSeconds, MBC3_RTC_DATA_SIZE = 10 ints + a u64: the live and latched registers and mapperLastTime, 48 bytes, 44 read too (leeway -4)"
+        }
+      }
     },
     "wonderswan-mister": {
       "layout": "packed",

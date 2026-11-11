@@ -177,7 +177,7 @@ pub(crate) static SYSTEMS: [System; 50] = [
 /// A named const per listed core, so a producer that knows which core it is can say so
 /// without a lookup — and without linking the whole table.
 pub mod cores {
-    use crate::{ClockLayout, Core, CoreKind};
+    use crate::{Core, CoreKind, ExpandedLength, SaveLayout, SystemLayout};
 
     /// 3DO_MiSTer — 3do.
     pub const _3DO_MISTER: Core = Core {
@@ -187,6 +187,8 @@ pub mod cores {
         systems: &["3do"],
         aliases: &["3DO"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// 4DO — 3do.
     pub const _4DO: Core = Core {
@@ -196,6 +198,8 @@ pub mod cores {
         systems: &["3do"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// a5200 — atari-5200.
     pub const A5200: Core = Core {
@@ -205,6 +209,8 @@ pub mod cores {
         systems: &["atari-5200"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// agg23.NES — nes.
     pub const AGG23_NES: Core = Core {
@@ -214,6 +220,8 @@ pub mod cores {
         systems: &["nes"],
         aliases: &["RndMnkIII.NES_Analogizer"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// agg23.PC Engine — pcengine, supergrafx.
     pub const AGG23_PC_ENGINE: Core = Core {
@@ -223,6 +231,8 @@ pub mod cores {
         systems: &["pcengine", "supergrafx"],
         aliases: &["agg23.PC Engine_Analogizer"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// agg23.SNES — snes.
     pub const AGG23_SNES: Core = Core {
@@ -232,6 +242,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &["agg23.SNES_Analogizer"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// agg23.WonderSwan — wonderswan, wonderswan-color.
     pub const AGG23_WONDERSWAN: Core = Core {
@@ -240,7 +252,9 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["wonderswan", "wonderswan-color"],
         aliases: &[],
-        clock: Some(ClockLayout::Packed { reserved: 12, timestamp_width: 4 }),
+        clock: Some(crate::ClockLayout::Packed { reserved: 12, timestamp_width: 4 }),
+        huc3: None,
+        layouts: &[],
     };
     /// ARMSX2 — ps2.
     pub const ARMSX2: Core = Core {
@@ -250,6 +264,8 @@ pub mod cores {
         systems: &["ps2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Atari7800_MiSTer — atari-7800, atari-2600.
     pub const ATARI7800_MISTER: Core = Core {
@@ -259,6 +275,8 @@ pub mod cores {
         systems: &["atari-7800", "atari-2600"],
         aliases: &["ATARI7800"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Atari800 — atari-5200.
     pub const ATARI800: Core = Core {
@@ -268,6 +286,8 @@ pub mod cores {
         systems: &["atari-5200"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Atari800_MiSTer — atari-5200.
     pub const ATARI800_MISTER: Core = Core {
@@ -277,6 +297,8 @@ pub mod cores {
         systems: &["atari-5200"],
         aliases: &["ATARI5200"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// AtariLynx_MiSTer — atari-lynx.
     pub const ATARILYNX_MISTER: Core = Core {
@@ -286,6 +308,8 @@ pub mod cores {
         systems: &["atari-lynx"],
         aliases: &["AtariLynx"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Azahar — 3ds.
     pub const AZAHAR: Core = Core {
@@ -295,6 +319,8 @@ pub mod cores {
         systems: &["3ds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle GBA — gba.
     pub const BEETLE_GBA: Core = Core {
@@ -304,6 +330,8 @@ pub mod cores {
         systems: &["gba"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle Lynx — atari-lynx.
     pub const BEETLE_LYNX: Core = Core {
@@ -313,6 +341,8 @@ pub mod cores {
         systems: &["atari-lynx"],
         aliases: &["Mednafen Lynx"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle NeoPop — ngp, ngpc.
     pub const BEETLE_NEOPOP: Core = Core {
@@ -322,6 +352,8 @@ pub mod cores {
         systems: &["ngp", "ngpc"],
         aliases: &["Mednafen NeoPop"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle PC-FX — pcfx.
     pub const BEETLE_PC_FX: Core = Core {
@@ -331,6 +363,8 @@ pub mod cores {
         systems: &["pcfx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle PCE — pcengine, pcenginecd.
     pub const BEETLE_PCE: Core = Core {
@@ -340,6 +374,8 @@ pub mod cores {
         systems: &["pcengine", "pcenginecd"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle PCE Fast — pcengine, pcenginecd.
     pub const BEETLE_PCE_FAST: Core = Core {
@@ -349,6 +385,8 @@ pub mod cores {
         systems: &["pcengine", "pcenginecd"],
         aliases: &["Mednafen PCE Fast"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle PSX — psx.
     pub const BEETLE_PSX: Core = Core {
@@ -358,6 +396,8 @@ pub mod cores {
         systems: &["psx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle PSX HW — psx.
     pub const BEETLE_PSX_HW: Core = Core {
@@ -367,6 +407,8 @@ pub mod cores {
         systems: &["psx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle Saturn — saturn.
     pub const BEETLE_SATURN: Core = Core {
@@ -376,6 +418,8 @@ pub mod cores {
         systems: &["saturn"],
         aliases: &["Mednafen Saturn"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle Supafaust — snes.
     pub const BEETLE_SUPAFAUST: Core = Core {
@@ -385,6 +429,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle SuperGrafx — supergrafx, pcengine.
     pub const BEETLE_SUPERGRAFX: Core = Core {
@@ -394,6 +440,8 @@ pub mod cores {
         systems: &["supergrafx", "pcengine"],
         aliases: &["Mednafen SuperGrafx"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle VB — virtualboy.
     pub const BEETLE_VB: Core = Core {
@@ -403,6 +451,8 @@ pub mod cores {
         systems: &["virtualboy"],
         aliases: &["Mednafen VB"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Beetle WonderSwan — wonderswan, wonderswan-color.
     pub const BEETLE_WONDERSWAN: Core = Core {
@@ -412,6 +462,19 @@ pub mod cores {
         systems: &["wonderswan", "wonderswan-color"],
         aliases: &["Mednafen WonderSwan"],
         clock: None,
+        huc3: None,
+        layouts: &[],
+    };
+    /// BGB — gb, gbc.
+    pub const BGB: Core = Core {
+        slug: "bgb",
+        name: "BGB",
+        kind: CoreKind::Standalone,
+        systems: &["gb", "gbc"],
+        aliases: &[],
+        clock: Some(crate::ClockLayout::Appended { timestamp_width: 8 }),
+        huc3: None,
+        layouts: &[],
     };
     /// BlastEm — genesis.
     pub const BLASTEM: Core = Core {
@@ -421,6 +484,8 @@ pub mod cores {
         systems: &["genesis"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout { system: "genesis", layout: SaveLayout::Packed { length: None } }],
     };
     /// Bliss — intellivision.
     pub const BLISS: Core = Core {
@@ -430,6 +495,8 @@ pub mod cores {
         systems: &["intellivision"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// blueMSX — msx, msx2, colecovision, sg-1000.
     pub const BLUEMSX: Core = Core {
@@ -439,6 +506,8 @@ pub mod cores {
         systems: &["msx", "msx2", "colecovision", "sg-1000"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// bnes — nes.
     pub const BNES: Core = Core {
@@ -448,6 +517,8 @@ pub mod cores {
         systems: &["nes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// boogermann.msx — msx.
     pub const BOOGERMANN_MSX: Core = Core {
@@ -457,6 +528,8 @@ pub mod cores {
         systems: &["msx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Boytacean — gb, gbc.
     pub const BOYTACEAN: Core = Core {
@@ -466,6 +539,8 @@ pub mod cores {
         systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// bsnes — snes.
     pub const BSNES: Core = Core {
@@ -475,6 +550,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// bsnes-hd beta — snes.
     pub const BSNES_HD_BETA: Core = Core {
@@ -484,6 +561,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// bsnes-jg — snes.
     pub const BSNES_JG: Core = Core {
@@ -493,6 +572,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// bsnes-mercury — snes.
     pub const BSNES_MERCURY: Core = Core {
@@ -502,6 +583,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// bsnes2014 — snes.
     pub const BSNES2014: Core = Core {
@@ -511,6 +594,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// budude2.GB — gb.
     pub const BUDUDE2_GB: Core = Core {
@@ -519,7 +604,9 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gb"],
         aliases: &["budude2.GB_Analogizer"],
-        clock: Some(ClockLayout::Packed { reserved: 16, timestamp_width: 4 }),
+        clock: Some(crate::ClockLayout::Packed { reserved: 16, timestamp_width: 4 }),
+        huc3: Some(crate::Huc3Layout::Packed { reserved: 16 }),
+        layouts: &[],
     };
     /// budude2.GBC — gbc.
     pub const BUDUDE2_GBC: Core = Core {
@@ -528,7 +615,9 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gbc"],
         aliases: &["budude2.GBC_Analogizer"],
-        clock: Some(ClockLayout::Packed { reserved: 16, timestamp_width: 4 }),
+        clock: Some(crate::ClockLayout::Packed { reserved: 16, timestamp_width: 4 }),
+        huc3: Some(crate::Huc3Layout::Packed { reserved: 16 }),
+        layouts: &[],
     };
     /// budude2.Lynx — atari-lynx.
     pub const BUDUDE2_LYNX: Core = Core {
@@ -538,6 +627,8 @@ pub mod cores {
         systems: &["atari-lynx"],
         aliases: &["budude2.Lynx_Analogizer"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// C64_MiSTer — c64.
     pub const C64_MISTER: Core = Core {
@@ -547,6 +638,8 @@ pub mod cores {
         systems: &["c64"],
         aliases: &["C64"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// ChimeraSNES — snes.
     pub const CHIMERASNES: Core = Core {
@@ -556,6 +649,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Citra — 3ds.
     pub const CITRA: Core = Core {
@@ -565,6 +660,8 @@ pub mod cores {
         systems: &["3ds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Citra Canary — 3ds.
     pub const CITRA_CANARY: Core = Core {
@@ -574,6 +671,8 @@ pub mod cores {
         systems: &["3ds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Citra2018 — 3ds.
     pub const CITRA2018: Core = Core {
@@ -583,6 +682,8 @@ pub mod cores {
         systems: &["3ds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// ClownMDEmu — genesis, sega-cd.
     pub const CLOWNMDEMU: Core = Core {
@@ -592,6 +693,15 @@ pub mod cores {
         systems: &["genesis", "sega-cd"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout {
+            system: "genesis",
+            layout: SaveLayout::Expanded {
+                fill: 0x00,
+                length: ExpandedLength::Fixed(65_536),
+                eeprom_length: None,
+            },
+        }],
     };
     /// ColecoVision_MiSTer — colecovision, sg-1000.
     pub const COLECOVISION_MISTER: Core = Core {
@@ -601,6 +711,8 @@ pub mod cores {
         systems: &["colecovision", "sg-1000"],
         aliases: &["Coleco"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// CrabEmu — mastersystem, sg-1000, colecovision.
     pub const CRABEMU: Core = Core {
@@ -610,6 +722,8 @@ pub mod cores {
         systems: &["mastersystem", "sg-1000", "colecovision"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// DeSmuME — nds.
     pub const DESMUME: Core = Core {
@@ -619,6 +733,8 @@ pub mod cores {
         systems: &["nds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// DeSmuME 2015 — nds.
     pub const DESMUME_2015: Core = Core {
@@ -628,6 +744,8 @@ pub mod cores {
         systems: &["nds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// dolphin-emu — gc, wii.
     pub const DOLPHIN_EMU: Core = Core {
@@ -637,6 +755,8 @@ pub mod cores {
         systems: &["gc", "wii"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// DoubleCherryGB — gb, gbc.
     pub const DOUBLECHERRYGB: Core = Core {
@@ -646,6 +766,8 @@ pub mod cores {
         systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// drizzt.GG — sega-gg.
     pub const DRIZZT_GG: Core = Core {
@@ -655,6 +777,8 @@ pub mod cores {
         systems: &["sega-gg"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// drizzt.MegaDrive — genesis.
     pub const DRIZZT_MEGADRIVE: Core = Core {
@@ -664,6 +788,8 @@ pub mod cores {
         systems: &["genesis"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// drizzt.SG-1000 — sg-1000.
     pub const DRIZZT_SG_1000: Core = Core {
@@ -673,6 +799,8 @@ pub mod cores {
         systems: &["sg-1000"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// drizzt.SMS — mastersystem.
     pub const DRIZZT_SMS: Core = Core {
@@ -682,6 +810,8 @@ pub mod cores {
         systems: &["mastersystem"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// DuckStation — psx.
     pub const DUCKSTATION: Core = Core {
@@ -691,6 +821,8 @@ pub mod cores {
         systems: &["psx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// emuThreeDS — 3ds.
     pub const EMUTHREEDS: Core = Core {
@@ -700,6 +832,8 @@ pub mod cores {
         systems: &["3ds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// emux (gb) — gb, gbc.
     pub const EMUX_GB: Core = Core {
@@ -709,6 +843,8 @@ pub mod cores {
         systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// emux (nes) — nes.
     pub const EMUX_NES: Core = Core {
@@ -718,6 +854,8 @@ pub mod cores {
         systems: &["nes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// emux (sms) — mastersystem.
     pub const EMUX_SMS: Core = Core {
@@ -727,6 +865,8 @@ pub mod cores {
         systems: &["mastersystem"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// ericlewis.Genesis — genesis.
     pub const ERICLEWIS_GENESIS: Core = Core {
@@ -736,6 +876,8 @@ pub mod cores {
         systems: &["genesis"],
         aliases: &["ericlewis.Genesis_Analogizer"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// FB Alpha — neogeo, mame.
     pub const FB_ALPHA: Core = Core {
@@ -745,6 +887,8 @@ pub mod cores {
         systems: &["neogeo", "mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// FCEUmm — nes.
     pub const FCEUMM: Core = Core {
@@ -754,6 +898,8 @@ pub mod cores {
         systems: &["nes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// FCEUX — nes, fds.
     pub const FCEUX: Core = Core {
@@ -763,6 +909,8 @@ pub mod cores {
         systems: &["nes", "fds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// FinalBurn Neo — neogeo, mame.
     pub const FINALBURN_NEO: Core = Core {
@@ -772,6 +920,8 @@ pub mod cores {
         systems: &["neogeo", "mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// FinalBurn Neo (cps12 subset) — mame.
     pub const FINALBURN_NEO_CPS12_SUBSET: Core = Core {
@@ -781,6 +931,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// FinalBurn Neo (neogeo subset) — neogeo.
     pub const FINALBURN_NEO_NEOGEO_SUBSET: Core = Core {
@@ -790,6 +942,8 @@ pub mod cores {
         systems: &["neogeo"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// fixGB — gb, gbc.
     pub const FIXGB: Core = Core {
@@ -799,6 +953,8 @@ pub mod cores {
         systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// fixNES — nes, fds.
     pub const FIXNES: Core = Core {
@@ -808,6 +964,8 @@ pub mod cores {
         systems: &["nes", "fds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Flycast — dreamcast.
     pub const FLYCAST: Core = Core {
@@ -817,6 +975,8 @@ pub mod cores {
         systems: &["dreamcast"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// fMSX — msx, msx2.
     pub const FMSX: Core = Core {
@@ -826,6 +986,8 @@ pub mod cores {
         systems: &["msx", "msx2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// FreeIntv — intellivision.
     pub const FREEINTV: Core = Core {
@@ -835,6 +997,8 @@ pub mod cores {
         systems: &["intellivision"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Frodo — c64.
     pub const FRODO: Core = Core {
@@ -844,6 +1008,8 @@ pub mod cores {
         systems: &["c64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Gambatte — gb, gbc.
     pub const GAMBATTE: Core = Core {
@@ -852,7 +1018,12 @@ pub mod cores {
         kind: CoreKind::Libretro,
         systems: &["gb", "gbc"],
         aliases: &[],
-        clock: Some(ClockLayout::Sidecar),
+        clock: Some(crate::ClockLayout::Sidecar(crate::SidecarRecord::Origin {
+            timestamp_width: 8,
+            big_endian: false,
+        })),
+        huc3: Some(crate::Huc3Layout::Origin { timestamp_width: 8, big_endian: false }),
+        layouts: &[],
     };
     /// Gameboy_MiSTer — gb, gbc.
     pub const GAMEBOY_MISTER: Core = Core {
@@ -861,7 +1032,9 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["gb", "gbc"],
         aliases: &["GAMEBOY", "GAMEBOY2P", "GBC"],
-        clock: Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
+        clock: Some(crate::ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
+        huc3: Some(crate::Huc3Layout::Packed { reserved: 512 }),
+        layouts: &[],
     };
     /// GBA_MiSTer — gba.
     pub const GBA_MISTER: Core = Core {
@@ -870,7 +1043,9 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["gba"],
         aliases: &["GBA", "GBA2P"],
-        clock: Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
+        clock: Some(crate::ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
+        huc3: None,
+        layouts: &[SystemLayout { system: "gba", layout: SaveLayout::Chip { eeprom_min: 8192 } }],
     };
     /// Gearboy — gb, gbc.
     pub const GEARBOY: Core = Core {
@@ -880,6 +1055,8 @@ pub mod cores {
         systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Gearcoleco — colecovision.
     pub const GEARCOLECO: Core = Core {
@@ -889,6 +1066,8 @@ pub mod cores {
         systems: &["colecovision"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Geargrafx — pcengine, pcenginecd, supergrafx.
     pub const GEARGRAFX: Core = Core {
@@ -898,6 +1077,8 @@ pub mod cores {
         systems: &["pcengine", "pcenginecd", "supergrafx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Gearlynx — atari-lynx.
     pub const GEARLYNX: Core = Core {
@@ -907,6 +1088,8 @@ pub mod cores {
         systems: &["atari-lynx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Gearsystem — mastersystem, sega-gg, sg-1000.
     pub const GEARSYSTEM: Core = Core {
@@ -916,6 +1099,8 @@ pub mod cores {
         systems: &["mastersystem", "sega-gg", "sg-1000"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Genesis Plus GX — genesis, mastersystem, sega-gg, sg-1000, sega-cd.
     pub const GENESIS_PLUS_GX: Core = Core {
@@ -925,6 +1110,11 @@ pub mod cores {
         systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout {
+            system: "genesis",
+            layout: SaveLayout::Expanded { fill: 0xFF, length: ExpandedLength::Trimmed, eeprom_length: None },
+        }],
     };
     /// Genesis Plus GX Wide — genesis, mastersystem, sega-gg, sg-1000, sega-cd.
     pub const GENESIS_PLUS_GX_WIDE: Core = Core {
@@ -934,6 +1124,11 @@ pub mod cores {
         systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout {
+            system: "genesis",
+            layout: SaveLayout::Expanded { fill: 0xFF, length: ExpandedLength::Trimmed, eeprom_length: None },
+        }],
     };
     /// Geolith — neogeo.
     pub const GEOLITH: Core = Core {
@@ -943,6 +1138,8 @@ pub mod cores {
         systems: &["neogeo"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// gpSP — gba.
     pub const GPSP: Core = Core {
@@ -952,6 +1149,11 @@ pub mod cores {
         systems: &["gba"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout {
+            system: "gba",
+            layout: SaveLayout::Padded { length: 131_072, reversed_eeprom: false },
+        }],
     };
     /// Handy — atari-lynx.
     pub const HANDY: Core = Core {
@@ -961,6 +1163,8 @@ pub mod cores {
         systems: &["atari-lynx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// higan (Super Famicom) — snes, gb, gbc.
     pub const HIGAN_SUPER_FAMICOM: Core = Core {
@@ -970,6 +1174,8 @@ pub mod cores {
         systems: &["snes", "gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// higan (Super Famicom Balanced) — snes, gb, gbc.
     pub const HIGAN_SUPER_FAMICOM_BALANCED: Core = Core {
@@ -979,6 +1185,8 @@ pub mod cores {
         systems: &["snes", "gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Intv_MiSTer — intellivision.
     pub const INTV_MISTER: Core = Core {
@@ -988,6 +1196,8 @@ pub mod cores {
         systems: &["intellivision"],
         aliases: &["Intellivision"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// IroGB — gb, gbc.
     pub const IROGB: Core = Core {
@@ -997,6 +1207,8 @@ pub mod cores {
         systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Ishiiruka — gc, wii.
     pub const ISHIIRUKA: Core = Core {
@@ -1006,6 +1218,8 @@ pub mod cores {
         systems: &["gc", "wii"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// jeremy.MegaCD — sega-cd.
     pub const JEREMY_MEGACD: Core = Core {
@@ -1015,6 +1229,8 @@ pub mod cores {
         systems: &["sega-cd"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// JollyCV — colecovision.
     pub const JOLLYCV: Core = Core {
@@ -1024,6 +1240,8 @@ pub mod cores {
         systems: &["colecovision"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// jotego.jtngp — ngp.
     pub const JOTEGO_JTNGP: Core = Core {
@@ -1033,6 +1251,8 @@ pub mod cores {
         systems: &["ngp"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// jotego.jtngpc — ngpc.
     pub const JOTEGO_JTNGPC: Core = Core {
@@ -1042,6 +1262,8 @@ pub mod cores {
         systems: &["ngpc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Kronos — saturn.
     pub const KRONOS: Core = Core {
@@ -1051,6 +1273,8 @@ pub mod cores {
         systems: &["saturn"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// LRPS2 — ps2.
     pub const LRPS2: Core = Core {
@@ -1060,6 +1284,8 @@ pub mod cores {
         systems: &["ps2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME — mame.
     pub const MAME: Core = Core {
@@ -1069,6 +1295,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME 2000 — mame.
     pub const MAME_2000: Core = Core {
@@ -1078,6 +1306,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME 2003 (0.78) — mame.
     pub const MAME_2003_0_78: Core = Core {
@@ -1087,6 +1317,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME 2003 Midway — mame.
     pub const MAME_2003_MIDWAY: Core = Core {
@@ -1096,6 +1328,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME 2003-Plus — mame.
     pub const MAME_2003_PLUS: Core = Core {
@@ -1105,6 +1339,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME 2009 — mame.
     pub const MAME_2009: Core = Core {
@@ -1114,6 +1350,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME 2010 — mame.
     pub const MAME_2010: Core = Core {
@@ -1123,6 +1361,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME 2015 — mame.
     pub const MAME_2015: Core = Core {
@@ -1132,6 +1372,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MAME 2016 — mame.
     pub const MAME_2016: Core = Core {
@@ -1141,6 +1383,8 @@ pub mod cores {
         systems: &["mame"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// markus-zzz.MyC64 — c64.
     pub const MARKUS_ZZZ_MYC64: Core = Core {
@@ -1150,6 +1394,8 @@ pub mod cores {
         systems: &["c64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Mazamars312.NeoGeo — neogeo.
     pub const MAZAMARS312_NEOGEO: Core = Core {
@@ -1159,6 +1405,8 @@ pub mod cores {
         systems: &["neogeo"],
         aliases: &["Mazamars312.NeoGeo_Analogizer"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Mazamars312.PC Engine CD — pcenginecd.
     pub const MAZAMARS312_PC_ENGINE_CD: Core = Core {
@@ -1168,6 +1416,8 @@ pub mod cores {
         systems: &["pcenginecd"],
         aliases: &["Mazamars312.PC Engine CD_Analogizer"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Mednafen — atari-lynx, fds, gb, gba, gbc, genesis, mastersystem, nes, ngp, ngpc, pcengine, pcenginecd, pcfx, psx, saturn, sega-gg, snes, supergrafx, virtualboy, wonderswan, wonderswan-color.
     pub const MEDNAFEN: Core = Core {
@@ -1199,6 +1449,8 @@ pub mod cores {
         ],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Mednafen bSNES — snes.
     pub const MEDNAFEN_BSNES: Core = Core {
@@ -1208,6 +1460,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MegaCD_MiSTer — sega-cd.
     pub const MEGACD_MISTER: Core = Core {
@@ -1217,6 +1471,8 @@ pub mod cores {
         systems: &["sega-cd"],
         aliases: &["MegaCD"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MegaDrive_MiSTer — genesis, mastersystem.
     pub const MEGADRIVE_MISTER: Core = Core {
@@ -1226,6 +1482,8 @@ pub mod cores {
         systems: &["genesis", "mastersystem"],
         aliases: &["Genesis_MiSTer", "MegaDrive", "Genesis"],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout { system: "genesis", layout: SaveLayout::Packed { length: Some(65_536) } }],
     };
     /// melonDS — nds.
     pub const MELONDS: Core = Core {
@@ -1235,6 +1493,8 @@ pub mod cores {
         systems: &["nds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// melonDS DS — nds.
     pub const MELONDS_DS: Core = Core {
@@ -1244,6 +1504,8 @@ pub mod cores {
         systems: &["nds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Mesen — nes.
     pub const MESEN: Core = Core {
@@ -1253,6 +1515,8 @@ pub mod cores {
         systems: &["nes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Mesen-S — snes.
     pub const MESEN_S: Core = Core {
@@ -1262,6 +1526,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// mGBA — gba, gbc, gb.
     pub const MGBA: Core = Core {
@@ -1270,7 +1536,9 @@ pub mod cores {
         kind: CoreKind::Libretro,
         systems: &["gba", "gbc", "gb"],
         aliases: &[],
-        clock: Some(ClockLayout::Appended { timestamp_width: 8 }),
+        clock: Some(crate::ClockLayout::Sidecar(crate::SidecarRecord::Registers { timestamp_width: 8 })),
+        huc3: Some(crate::Huc3Layout::NotKept),
+        layouts: &[],
     };
     /// mincer_ray.GBA — gba.
     pub const MINCER_RAY_GBA: Core = Core {
@@ -1279,7 +1547,9 @@ pub mod cores {
         kind: CoreKind::OpenFpga,
         systems: &["gba"],
         aliases: &[],
-        clock: Some(ClockLayout::Sidecar),
+        clock: Some(crate::ClockLayout::Sidecar(crate::SidecarRecord::PackedSeiko)),
+        huc3: None,
+        layouts: &[],
     };
     /// MSX_MiSTer — msx, msx2.
     pub const MSX_MISTER: Core = Core {
@@ -1289,6 +1559,8 @@ pub mod cores {
         systems: &["msx", "msx2"],
         aliases: &["MSX"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// MSX1_MiSTer — msx.
     pub const MSX1_MISTER: Core = Core {
@@ -1298,6 +1570,8 @@ pub mod cores {
         systems: &["msx"],
         aliases: &["MSX1"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Mupen64Plus — n64.
     pub const MUPEN64PLUS: Core = Core {
@@ -1307,6 +1581,8 @@ pub mod cores {
         systems: &["n64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Mupen64Plus-Next — n64.
     pub const MUPEN64PLUS_NEXT: Core = Core {
@@ -1316,6 +1592,8 @@ pub mod cores {
         systems: &["n64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// N64_MiSTer — n64.
     pub const N64_MISTER: Core = Core {
@@ -1325,6 +1603,8 @@ pub mod cores {
         systems: &["n64"],
         aliases: &["N64"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// NeoCD — neogeo-cd.
     pub const NEOCD: Core = Core {
@@ -1334,6 +1614,8 @@ pub mod cores {
         systems: &["neogeo-cd"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// NeoGeo_MiSTer — neogeo, neogeo-cd.
     pub const NEOGEO_MISTER: Core = Core {
@@ -1343,6 +1625,8 @@ pub mod cores {
         systems: &["neogeo", "neogeo-cd"],
         aliases: &["NEOGEO"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// NES_MiSTer — nes, fds.
     pub const NES_MISTER: Core = Core {
@@ -1352,6 +1636,8 @@ pub mod cores {
         systems: &["nes", "fds"],
         aliases: &["NES"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Nestopia — nes.
     pub const NESTOPIA: Core = Core {
@@ -1361,6 +1647,8 @@ pub mod cores {
         systems: &["nes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// NooDS — nds.
     pub const NOODS: Core = Core {
@@ -1370,6 +1658,8 @@ pub mod cores {
         systems: &["nds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// O2EM — odyssey2.
     pub const O2EM: Core = Core {
@@ -1379,6 +1669,8 @@ pub mod cores {
         systems: &["odyssey2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// obsidian.Vectrex — vectrex.
     pub const OBSIDIAN_VECTREX: Core = Core {
@@ -1388,6 +1680,8 @@ pub mod cores {
         systems: &["vectrex"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Odyssey2_MiSTer — odyssey2.
     pub const ODYSSEY2_MISTER: Core = Core {
@@ -1397,6 +1691,8 @@ pub mod cores {
         systems: &["odyssey2"],
         aliases: &["ODYSSEY2"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Opera — 3do.
     pub const OPERA: Core = Core {
@@ -1406,6 +1702,8 @@ pub mod cores {
         systems: &["3do"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Panda3DS — 3ds.
     pub const PANDA3DS: Core = Core {
@@ -1415,6 +1713,8 @@ pub mod cores {
         systems: &["3ds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// ParaLLEl N64 — n64.
     pub const PARALLEL_N64: Core = Core {
@@ -1424,6 +1724,8 @@ pub mod cores {
         systems: &["n64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// PCEE2 — ps2.
     pub const PCEE2: Core = Core {
@@ -1433,6 +1735,8 @@ pub mod cores {
         systems: &["ps2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// PCSX-ReARMed — psx.
     pub const PCSX_REARMED: Core = Core {
@@ -1442,6 +1746,8 @@ pub mod cores {
         systems: &["psx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// PCSX1 — psx.
     pub const PCSX1: Core = Core {
@@ -1451,6 +1757,8 @@ pub mod cores {
         systems: &["psx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// PCSX2 — ps2.
     pub const PCSX2: Core = Core {
@@ -1460,6 +1768,8 @@ pub mod cores {
         systems: &["ps2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// PicoDrive — genesis, sega-32x, sega-cd, mastersystem.
     pub const PICODRIVE: Core = Core {
@@ -1469,6 +1779,15 @@ pub mod cores {
         systems: &["genesis", "sega-32x", "sega-cd", "mastersystem"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout {
+            system: "genesis",
+            layout: SaveLayout::Expanded {
+                fill: 0x00,
+                length: ExpandedLength::Doubled,
+                eeprom_length: Some(8192),
+            },
+        }],
     };
     /// Play! — ps2.
     pub const PLAY: Core = Core {
@@ -1478,6 +1797,8 @@ pub mod cores {
         systems: &["ps2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// PPSSPP — psp.
     pub const PPSSPP: Core = Core {
@@ -1487,6 +1808,8 @@ pub mod cores {
         systems: &["psp"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// ProSystem — atari-7800.
     pub const PROSYSTEM: Core = Core {
@@ -1496,6 +1819,8 @@ pub mod cores {
         systems: &["atari-7800"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// PSX_MiSTer — psx.
     pub const PSX_MISTER: Core = Core {
@@ -1505,6 +1830,8 @@ pub mod cores {
         systems: &["psx"],
         aliases: &["PSX"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// QuickNES — nes.
     pub const QUICKNES: Core = Core {
@@ -1514,6 +1841,8 @@ pub mod cores {
         systems: &["nes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// RACE — ngp, ngpc.
     pub const RACE: Core = Core {
@@ -1523,6 +1852,8 @@ pub mod cores {
         systems: &["ngp", "ngpc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Rustation — psx.
     pub const RUSTATION: Core = Core {
@@ -1532,6 +1863,8 @@ pub mod cores {
         systems: &["psx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// RustyNES — nes, fds.
     pub const RUSTYNES: Core = Core {
@@ -1541,6 +1874,8 @@ pub mod cores {
         systems: &["nes", "fds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// S32X_MiSTer — sega-32x.
     pub const S32X_MISTER: Core = Core {
@@ -1550,6 +1885,8 @@ pub mod cores {
         systems: &["sega-32x"],
         aliases: &["S32X"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// SameBoy — gb, gbc.
     pub const SAMEBOY: Core = Core {
@@ -1558,7 +1895,9 @@ pub mod cores {
         kind: CoreKind::Libretro,
         systems: &["gb", "gbc"],
         aliases: &[],
-        clock: Some(ClockLayout::Appended { timestamp_width: 8 }),
+        clock: Some(crate::ClockLayout::Sidecar(crate::SidecarRecord::SameBoy)),
+        huc3: Some(crate::Huc3Layout::NotKept),
+        layouts: &[],
     };
     /// Saturn_MiSTer — saturn.
     pub const SATURN_MISTER: Core = Core {
@@ -1568,6 +1907,8 @@ pub mod cores {
         systems: &["saturn"],
         aliases: &["Saturn"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// SGB_MiSTer — gb.
     pub const SGB_MISTER: Core = Core {
@@ -1576,7 +1917,9 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["gb"],
         aliases: &["SGB"],
-        clock: Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
+        clock: Some(crate::ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
+        huc3: Some(crate::Huc3Layout::Packed { reserved: 512 }),
+        layouts: &[],
     };
     /// SkyEmu — gb, gba, nds.
     pub const SKYEMU: Core = Core {
@@ -1586,6 +1929,11 @@ pub mod cores {
         systems: &["gb", "gba", "nds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout {
+            system: "gba",
+            layout: SaveLayout::Padded { length: 131_072, reversed_eeprom: true },
+        }],
     };
     /// SMS_MiSTer — mastersystem, sega-gg, sg-1000.
     pub const SMS_MISTER: Core = Core {
@@ -1595,6 +1943,8 @@ pub mod cores {
         systems: &["mastersystem", "sega-gg", "sg-1000"],
         aliases: &["SMS"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// SMS Plus GX — mastersystem, sega-gg.
     pub const SMS_PLUS_GX: Core = Core {
@@ -1604,6 +1954,8 @@ pub mod cores {
         systems: &["mastersystem", "sega-gg"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// SNES_MiSTer — snes.
     pub const SNES_MISTER: Core = Core {
@@ -1613,6 +1965,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &["SNES"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Snes9x — snes.
     pub const SNES9X: Core = Core {
@@ -1622,6 +1976,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Snes9x 2002 — snes.
     pub const SNES9X_2002: Core = Core {
@@ -1631,6 +1987,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Snes9x 2005 — snes.
     pub const SNES9X_2005: Core = Core {
@@ -1640,6 +1998,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Snes9x 2005 Plus — snes.
     pub const SNES9X_2005_PLUS: Core = Core {
@@ -1649,6 +2009,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Snes9x 2010 — snes.
     pub const SNES9X_2010: Core = Core {
@@ -1658,6 +2020,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.2600 — atari-2600.
     pub const SPIRITUALIZED_2600: Core = Core {
@@ -1667,6 +2031,8 @@ pub mod cores {
         systems: &["atari-2600"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.7800 — atari-7800.
     pub const SPIRITUALIZED_7800: Core = Core {
@@ -1676,6 +2042,8 @@ pub mod cores {
         systems: &["atari-7800"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.Coleco — colecovision.
     pub const SPIRITUALIZED_COLECO: Core = Core {
@@ -1685,6 +2053,8 @@ pub mod cores {
         systems: &["colecovision"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.GB — gb.
     pub const SPIRITUALIZED_GB: Core = Core {
@@ -1694,6 +2064,8 @@ pub mod cores {
         systems: &["gb"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.GBA — gba.
     pub const SPIRITUALIZED_GBA: Core = Core {
@@ -1703,6 +2075,8 @@ pub mod cores {
         systems: &["gba"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.GBC — gbc.
     pub const SPIRITUALIZED_GBC: Core = Core {
@@ -1712,6 +2086,8 @@ pub mod cores {
         systems: &["gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.Genesis — genesis.
     pub const SPIRITUALIZED_GENESIS: Core = Core {
@@ -1721,6 +2097,8 @@ pub mod cores {
         systems: &["genesis"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.GG — sega-gg.
     pub const SPIRITUALIZED_GG: Core = Core {
@@ -1730,6 +2108,8 @@ pub mod cores {
         systems: &["sega-gg"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.Intv — intellivision.
     pub const SPIRITUALIZED_INTV: Core = Core {
@@ -1739,6 +2119,8 @@ pub mod cores {
         systems: &["intellivision"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.NES — nes, fds.
     pub const SPIRITUALIZED_NES: Core = Core {
@@ -1748,6 +2130,8 @@ pub mod cores {
         systems: &["nes", "fds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.Odyssey2 — odyssey2.
     pub const SPIRITUALIZED_ODYSSEY2: Core = Core {
@@ -1757,6 +2141,8 @@ pub mod cores {
         systems: &["odyssey2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.SG-1000 — sg-1000.
     pub const SPIRITUALIZED_SG_1000: Core = Core {
@@ -1766,6 +2152,8 @@ pub mod cores {
         systems: &["sg-1000"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.SMS — mastersystem.
     pub const SPIRITUALIZED_SMS: Core = Core {
@@ -1775,6 +2163,8 @@ pub mod cores {
         systems: &["mastersystem"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Spiritualized.SuperGB — gb.
     pub const SPIRITUALIZED_SUPERGB: Core = Core {
@@ -1784,6 +2174,8 @@ pub mod cores {
         systems: &["gb"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Stella — atari-2600.
     pub const STELLA: Core = Core {
@@ -1793,6 +2185,8 @@ pub mod cores {
         systems: &["atari-2600"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Stella 2014 — atari-2600.
     pub const STELLA_2014: Core = Core {
@@ -1802,6 +2196,8 @@ pub mod cores {
         systems: &["atari-2600"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Stella 2023 — atari-2600.
     pub const STELLA_2023: Core = Core {
@@ -1811,6 +2207,8 @@ pub mod cores {
         systems: &["atari-2600"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// SwanStation — psx.
     pub const SWANSTATION: Core = Core {
@@ -1820,6 +2218,8 @@ pub mod cores {
         systems: &["psx"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// TempGBA — gba.
     pub const TEMPGBA: Core = Core {
@@ -1829,6 +2229,8 @@ pub mod cores {
         systems: &["gba"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// TGB Dual — gb, gbc.
     pub const TGB_DUAL: Core = Core {
@@ -1838,6 +2240,8 @@ pub mod cores {
         systems: &["gb", "gbc"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// tia — atari-2600.
     pub const TIA: Core = Core {
@@ -1847,6 +2251,8 @@ pub mod cores {
         systems: &["atari-2600"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// timboettiger.Pro Action Replay — snes.
     pub const TIMBOETTIGER_PRO_ACTION_REPLAY: Core = Core {
@@ -1856,6 +2262,8 @@ pub mod cores {
         systems: &["snes"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Trident — 3ds.
     pub const TRIDENT: Core = Core {
@@ -1865,6 +2273,8 @@ pub mod cores {
         systems: &["3ds"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// TurboGrafx16_MiSTer — pcengine, supergrafx, pcenginecd.
     pub const TURBOGRAFX16_MISTER: Core = Core {
@@ -1874,6 +2284,8 @@ pub mod cores {
         systems: &["pcengine", "supergrafx", "pcenginecd"],
         aliases: &["TGFX16", "TGFX16-CD"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// VBA-M — gba, gbc, gb.
     pub const VBA_M: Core = Core {
@@ -1882,7 +2294,9 @@ pub mod cores {
         kind: CoreKind::Libretro,
         systems: &["gba", "gbc", "gb"],
         aliases: &[],
-        clock: Some(ClockLayout::Appended { timestamp_width: 8 }),
+        clock: Some(crate::ClockLayout::Sidecar(crate::SidecarRecord::Registers { timestamp_width: 8 })),
+        huc3: Some(crate::Huc3Layout::Origin { timestamp_width: 8, big_endian: false }),
+        layouts: &[],
     };
     /// VBA Next — gba.
     pub const VBA_NEXT: Core = Core {
@@ -1892,6 +2306,8 @@ pub mod cores {
         systems: &["gba"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[SystemLayout { system: "gba", layout: SaveLayout::VbaNext }],
     };
     /// Vectrex_MiSTer — vectrex.
     pub const VECTREX_MISTER: Core = Core {
@@ -1901,6 +2317,8 @@ pub mod cores {
         systems: &["vectrex"],
         aliases: &["VECTREX"],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// vecx — vectrex.
     pub const VECX: Core = Core {
@@ -1910,6 +2328,8 @@ pub mod cores {
         systems: &["vectrex"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// VICE x128 — c64.
     pub const VICE_X128: Core = Core {
@@ -1919,6 +2339,8 @@ pub mod cores {
         systems: &["c64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// VICE x64 — c64.
     pub const VICE_X64: Core = Core {
@@ -1928,6 +2350,8 @@ pub mod cores {
         systems: &["c64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// VICE x64dtv — c64.
     pub const VICE_X64DTV: Core = Core {
@@ -1937,6 +2361,8 @@ pub mod cores {
         systems: &["c64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// VICE x64sc — c64.
     pub const VICE_X64SC: Core = Core {
@@ -1946,6 +2372,8 @@ pub mod cores {
         systems: &["c64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// VICE xscpu64 — c64.
     pub const VICE_XSCPU64: Core = Core {
@@ -1955,6 +2383,8 @@ pub mod cores {
         systems: &["c64"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Virtual Jaguar — atari-jaguar.
     pub const VIRTUAL_JAGUAR: Core = Core {
@@ -1964,6 +2394,8 @@ pub mod cores {
         systems: &["atari-jaguar"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Vita3K — psvita.
     pub const VITA3K: Core = Core {
@@ -1973,6 +2405,8 @@ pub mod cores {
         systems: &["psvita"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// WonderSwan_MiSTer — wonderswan, wonderswan-color.
     pub const WONDERSWAN_MISTER: Core = Core {
@@ -1981,7 +2415,9 @@ pub mod cores {
         kind: CoreKind::MiSTer,
         systems: &["wonderswan", "wonderswan-color"],
         aliases: &["WonderSwan"],
-        clock: Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
+        clock: Some(crate::ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
+        huc3: None,
+        layouts: &[],
     };
     /// YabaSanshiro — saturn.
     pub const YABASANSHIRO: Core = Core {
@@ -1991,6 +2427,8 @@ pub mod cores {
         systems: &["saturn"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// Yabause — saturn.
     pub const YABAUSE: Core = Core {
@@ -2000,6 +2438,8 @@ pub mod cores {
         systems: &["saturn"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// yaps2 — ps2.
     pub const YAPS2: Core = Core {
@@ -2009,11 +2449,13 @@ pub mod cores {
         systems: &["ps2"],
         aliases: &[],
         clock: None,
+        huc3: None,
+        layouts: &[],
     };
 }
 
 /// Every known emulator core, sorted by slug.
-pub(crate) static CORES: [Core; 201] = [
+pub(crate) static CORES: [Core; 202] = [
     cores::_3DO_MISTER,
     cores::_4DO,
     cores::A5200,
@@ -2040,6 +2482,7 @@ pub(crate) static CORES: [Core; 201] = [
     cores::BEETLE_SUPERGRAFX,
     cores::BEETLE_VB,
     cores::BEETLE_WONDERSWAN,
+    cores::BGB,
     cores::BLASTEM,
     cores::BLISS,
     cores::BLUEMSX,
@@ -2230,6 +2673,11 @@ pub mod apps {
     /// Azahar.
     pub const AZAHAR: App =
         App { slug: "azahar", name: "Azahar", cores: AppCores { kind: None, builds: &["azahar"] } };
+    /// BGB.
+    pub const BGB: App = App { slug: "bgb", name: "BGB", cores: AppCores { kind: None, builds: &["bgb"] } };
+    /// CrabEmu.
+    pub const CRABEMU: App =
+        App { slug: "crabemu", name: "CrabEmu", cores: AppCores { kind: None, builds: &["crabemu"] } };
     /// Delta.
     pub const DELTA: App = App {
         slug: "delta",
@@ -2248,6 +2696,9 @@ pub mod apps {
             ],
         },
     };
+    /// DeSmuME.
+    pub const DESMUME: App =
+        App { slug: "desmume", name: "DeSmuME", cores: AppCores { kind: None, builds: &["desmume"] } };
     /// Dolphin.
     pub const DOLPHIN: App =
         App { slug: "dolphin", name: "Dolphin", cores: AppCores { kind: None, builds: &["dolphin-emu"] } };
@@ -2257,6 +2708,9 @@ pub mod apps {
         name: "DuckStation",
         cores: AppCores { kind: None, builds: &["duckstation"] },
     };
+    /// FCEUX.
+    pub const FCEUX: App =
+        App { slug: "fceux", name: "FCEUX", cores: AppCores { kind: None, builds: &["fceux"] } };
     /// Flycast.
     pub const FLYCAST: App =
         App { slug: "flycast", name: "Flycast", cores: AppCores { kind: None, builds: &["flycast"] } };
@@ -2272,6 +2726,12 @@ pub mod apps {
     /// MiSTer.
     pub const MISTER: App =
         App { slug: "mister", name: "MiSTer", cores: AppCores { kind: Some(CoreKind::MiSTer), builds: &[] } };
+    /// Mupen64Plus.
+    pub const MUPEN64PLUS: App = App {
+        slug: "mupen64plus",
+        name: "Mupen64Plus",
+        cores: AppCores { kind: None, builds: &["mupen64plus"] },
+    };
     /// OpenEmu.
     pub const OPENEMU: App = App {
         slug: "openemu",
@@ -2344,33 +2804,80 @@ pub mod apps {
         name: "RetroArch",
         cores: AppCores { kind: Some(CoreKind::Libretro), builds: &[] },
     };
+    /// SameBoy.
+    pub const SAMEBOY: App =
+        App { slug: "sameboy", name: "SameBoy", cores: AppCores { kind: None, builds: &["sameboy"] } };
     /// Snes9x.
     pub const SNES9X: App =
         App { slug: "snes9x", name: "Snes9x", cores: AppCores { kind: None, builds: &["snes9x"] } };
+    /// VisualBoyAdvance-M.
+    pub const VISUALBOYADVANCE_M: App = App {
+        slug: "visualboyadvance-m",
+        name: "VisualBoyAdvance-M",
+        cores: AppCores { kind: None, builds: &["vba-m"] },
+    };
     /// Vita3K.
     pub const VITA3K: App =
         App { slug: "vita3k", name: "Vita3K", cores: AppCores { kind: None, builds: &["vita3k"] } };
 }
 
 /// Every known app, sorted by slug.
-pub(crate) static APPS: [App; 17] = [
+pub(crate) static APPS: [App; 24] = [
     apps::ANALOGUE_POCKET,
     apps::AZAHAR,
+    apps::BGB,
+    apps::CRABEMU,
     apps::DELTA,
+    apps::DESMUME,
     apps::DOLPHIN,
     apps::DUCKSTATION,
+    apps::FCEUX,
     apps::FLYCAST,
     apps::MEDNAFEN,
     apps::MELONDS,
     apps::MGBA,
     apps::MISTER,
+    apps::MUPEN64PLUS,
     apps::OPENEMU,
     apps::PCSX2,
     apps::PPSSPP,
     apps::PROVENANCE,
     apps::RETROARCH,
+    apps::SAMEBOY,
     apps::SNES9X,
+    apps::VISUALBOYADVANCE_M,
     apps::VITA3K,
+];
+
+/// Apps' own builds of a core that lay its clock out differently, sorted by core and then app.
+pub(crate) static APP_CLOCKS: [crate::AppClock; 4] = [
+    crate::AppClock {
+        core: "gambatte",
+        app: "openemu",
+        layout: Some(crate::ClockLayout::Sidecar(crate::SidecarRecord::Origin {
+            timestamp_width: 4,
+            big_endian: true,
+        })),
+        huc3: Some(crate::Huc3Layout::NotKept),
+    },
+    crate::AppClock {
+        core: "mgba",
+        app: "mgba",
+        layout: Some(crate::ClockLayout::Appended { timestamp_width: 8 }),
+        huc3: Some(crate::Huc3Layout::Memory),
+    },
+    crate::AppClock {
+        core: "sameboy",
+        app: "sameboy",
+        layout: Some(crate::ClockLayout::Appended { timestamp_width: 8 }),
+        huc3: Some(crate::Huc3Layout::SameBoy),
+    },
+    crate::AppClock {
+        core: "vba-m",
+        app: "visualboyadvance-m",
+        layout: Some(crate::ClockLayout::Appended { timestamp_width: 8 }),
+        huc3: Some(crate::Huc3Layout::Vbam),
+    },
 ];
 
 /// A named const per listed platform, for a producer that knows which one it runs on.

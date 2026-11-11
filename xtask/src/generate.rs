@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crate::registry::{App, Clocks, Registries};
+use crate::registry::{App, Clock, Clocks, Layout, Layouts, Registries};
 
 /// A Rust string literal.
 fn lit(text: &str) -> String {
@@ -51,25 +51,251 @@ fn const_names<'a>(slugs: impl Iterator<Item = &'a str>) -> Result<Vec<String>, 
     Ok(out)
 }
 
-/// The `ClockLayout` expression for one core, or `None` where the file records nothing.
-fn clock(slug: &str, clocks: &Clocks) -> Result<String, String> {
-    let Some(entry) = clocks.cores.get(slug) else { return Ok("None".to_owned()) };
-    // A footer stores the host clock at a width the core chose, and a sidecar is no footer.
-    match (entry.layout.as_str(), entry.reserved, entry.timestamp_width) {
-        ("appended", None, Some(width)) => {
-            Ok(format!("Some(ClockLayout::Appended {{ timestamp_width: {width} }})"))
+/// The `ClockLayout` and `Huc3Layout` expressions for one core, each `None` where the file
+/// records nothing.
+fn clock(slug: &str, clocks: &Clocks) -> Result<(String, String), String> {
+    let Some(entry) = clocks.cores.get(slug) else { return Ok(("None".to_owned(), "None".to_owned())) };
+    Ok((layout(slug, entry)?, huc3(slug, entry)?))
+}
+
+/// The `Option<ClockLayout>` expression for one entry: a core's, or an app's build of it, which
+/// `who` names.
+fn layout(who: &str, entry: &Clock) -> Result<String, String> {
+    let Some(kind) = entry.layout.as_deref() else {
+        if entry.reserved.is_some() || entry.timestamp_width.is_some() || entry.record.is_some() {
+            return Err(format!("clocks.json: {who:?} describes a clock but names no layout"));
         }
-        ("sidecar", None, None) => Ok("Some(ClockLayout::Sidecar)".to_owned()),
-        ("packed", Some(n), Some(width)) => {
-            Ok(format!("Some(ClockLayout::Packed {{ reserved: {n}, timestamp_width: {width} }})"))
-        }
-        ("packed", None, _) => Err(format!("clocks.json: {slug:?} is packed but sets no reserved length")),
-        ("appended" | "packed", _, None) => {
-            Err(format!("clocks.json: {slug:?} is a footer but sets no timestamp width"))
-        }
-        ("sidecar", _, Some(_)) => Err(format!("clocks.json: {slug:?} is a sidecar, which has no width")),
-        (other, _, _) => Err(format!("clocks.json: {slug:?} has unknown layout {other:?}")),
+        return Ok("None".to_owned());
+    };
+    if kind != "sidecar" && (entry.record.is_some() || entry.byte_order.is_some()) {
+        return Err(format!("clocks.json: {who:?} names a record, which only a sidecar holds"));
     }
+    // A footer stores the host clock at a width the core chose. A sidecar's record may have a
+    // width of its own, and the record says whether it does.
+    let layout = match (kind, entry.reserved, entry.timestamp_width) {
+        ("appended", None, Some(width)) => {
+            Ok(format!("crate::ClockLayout::Appended {{ timestamp_width: {width} }}"))
+        }
+        ("sidecar", None, width) => {
+            Ok(format!("crate::ClockLayout::Sidecar({})", record(who, entry, width)?))
+        }
+        ("packed", Some(n), Some(width)) => {
+            Ok(format!("crate::ClockLayout::Packed {{ reserved: {n}, timestamp_width: {width} }}"))
+        }
+        ("packed", None, _) => Err(format!("clocks.json: {who:?} is packed but sets no reserved length")),
+        ("appended" | "packed", _, None) => {
+            Err(format!("clocks.json: {who:?} is a footer but sets no timestamp width"))
+        }
+        ("sidecar", Some(_), _) => Err(format!("clocks.json: {who:?} is a sidecar, which reserves nothing")),
+        (other, _, _) => Err(format!("clocks.json: {who:?} has unknown layout {other:?}")),
+    }?;
+    Ok(format!("Some({layout})"))
+}
+
+/// The `Option<Huc3Layout>` expression for one entry's `huc3`.
+///
+/// Every HuC-3 layout is its own, so each spelling admits exactly the fields it has and no other:
+/// a packed footer its reserved length (the host clock in it is MiSTer's four bytes), an origin
+/// its width and byte order, the mGBA app's memory and nothing kept nothing at all.
+fn huc3(who: &str, entry: &Clock) -> Result<String, String> {
+    let Some(huc3) = entry.huc3.as_deref() else { return Ok("None".to_owned()) };
+    let who = format!("{who}'s huc3");
+    if huc3.huc3.is_some() || !huc3.apps.is_empty() {
+        return Err(format!("clocks.json: {who:?} nests what only a core's entry has"));
+    }
+    let fields = (huc3.reserved, huc3.timestamp_width, huc3.record.as_deref(), huc3.byte_order.as_deref());
+    let layout = match (huc3.layout.as_deref(), fields) {
+        (Some("packed"), (Some(reserved), None, None, None)) => {
+            format!("crate::Huc3Layout::Packed {{ reserved: {reserved} }}")
+        }
+        (
+            Some("sidecar"),
+            (None, Some(width @ (4 | 8)), Some("origin"), Some(order @ ("big" | "little"))),
+        ) => {
+            format!(
+                "crate::Huc3Layout::Origin {{ timestamp_width: {width}, big_endian: {} }}",
+                order == "big"
+            )
+        }
+        (Some("appended"), (None, None, Some("memory"), None)) => "crate::Huc3Layout::Memory".to_owned(),
+        (Some("appended"), (None, None, Some("sameboy"), None)) => "crate::Huc3Layout::SameBoy".to_owned(),
+        (Some("appended"), (None, None, Some("vba-m"), None)) => "crate::Huc3Layout::Vbam".to_owned(),
+        (Some("none"), (None, None, None, None)) => "crate::Huc3Layout::NotKept".to_owned(),
+        (layout, _) => {
+            return Err(format!(
+                "clocks.json: {who:?} is not one of the HuC-3 layouts: packed with a reserved length, a sidecar \
+                 origin with a width of 4 or 8 and a byte order, an appended memory, sameboy or vba-m record, or \
+                 none (got {layout:?})"
+            ));
+        }
+    };
+    Ok(format!("Some({layout})"))
+}
+
+/// Refuses a layout for a core nobody listed, for a system the core does not run, or with no word
+/// of where it was read.
+fn check_layouts(data: &Registries, layouts: &Layouts) -> Result<(), String> {
+    for (slug, entry) in &layouts.cores {
+        let Some(core) = data.cores.iter().find(|c| &c.slug == slug) else {
+            return Err(format!("layouts.json: {slug:?} is not a listed core"));
+        };
+        if entry.evidence.trim().is_empty() {
+            return Err(format!("layouts.json: {slug:?} says nothing of where its layouts were read"));
+        }
+        for system in entry.systems.keys() {
+            if !core.systems.contains(system) {
+                return Err(format!("layouts.json: {slug:?} does not run {system:?}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A number of bytes as a Rust literal, a long one's digits in threes as clippy asks.
+fn separated(n: u32) -> String {
+    let digits = n.to_string();
+    if digits.len() <= 4 {
+        return digits;
+    }
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push('_');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// The `&[SystemLayout]` expression for one core.
+fn save_layouts(slug: &str, layouts: &Layouts) -> Result<String, String> {
+    let Some(entry) = layouts.cores.get(slug) else { return Ok("&[]".to_owned()) };
+    let mut items = Vec::new();
+    for (system, layout) in &entry.systems {
+        let layout = save_layout(&format!("{slug}'s {system}"), layout)?;
+        items.push(format!("SystemLayout {{ system: {}, layout: {layout} }}", lit(system)));
+    }
+    Ok(format!("&[{}]", items.join(", ")))
+}
+
+/// The `SaveLayout` expression for one entry, refusing a field its layout does not have.
+fn save_layout(who: &str, entry: &Layout) -> Result<String, String> {
+    use serde_json::Value;
+    let length = entry.length.as_ref();
+    let fields = (entry.fill, length, entry.eeprom_length, entry.reversed_eeprom, entry.eeprom_min);
+    let number = |value: &Value| {
+        value.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|&n| n > 0).ok_or_else(|| {
+            format!("layouts.json: {who:?} gives a length that is not a number of bytes: {value}")
+        })
+    };
+    let option =
+        |value: Option<u32>| value.map_or_else(|| "None".to_owned(), |n| format!("Some({})", separated(n)));
+    match (entry.kind.as_str(), fields) {
+        ("expanded", (Some(fill), Some(length), eeprom_length, None, None)) => {
+            let length = match length {
+                Value::String(text) if text == "trimmed" => "ExpandedLength::Trimmed".to_owned(),
+                Value::String(text) if text == "doubled" => "ExpandedLength::Doubled".to_owned(),
+                other => format!("ExpandedLength::Fixed({})", separated(number(other)?)),
+            };
+            Ok(format!(
+                "SaveLayout::Expanded {{ fill: {fill:#04X}, length: {length}, eeprom_length: {} }}",
+                option(eeprom_length)
+            ))
+        }
+        ("packed", (None, length, None, None, None)) => {
+            Ok(format!("SaveLayout::Packed {{ length: {} }}", option(length.map(number).transpose()?)))
+        }
+        ("padded", (None, Some(length), None, reversed, None)) => Ok(format!(
+            "SaveLayout::Padded {{ length: {}, reversed_eeprom: {} }}",
+            separated(number(length)?),
+            reversed.unwrap_or(false)
+        )),
+        ("vba-next", (None, None, None, None, None)) => Ok("SaveLayout::VbaNext".to_owned()),
+        ("chip", (None, None, None, None, Some(min))) => {
+            Ok(format!("SaveLayout::Chip {{ eeprom_min: {} }}", separated(min)))
+        }
+        (layout, _) => Err(format!(
+            "layouts.json: {who:?} is not one of the layouts: expanded with a fill and a length (and an \
+             EEPROM length), packed (with a length), padded with a length (and reversed_eeprom), vba-next, \
+             or chip with an eeprom_min (got {layout:?} with other fields)"
+        )),
+    }
+}
+
+/// The `SidecarRecord` expression for a sidecar entry.
+fn record(who: &str, entry: &Clock, width: Option<u8>) -> Result<String, String> {
+    let width_of = |record: &str| match width {
+        Some(width @ (4 | 8)) => Ok(width),
+        Some(other) => Err(format!("clocks.json: {who:?} gives its {record} a {other}-byte timestamp")),
+        None => Err(format!("clocks.json: {who:?} keeps a {record} but sets no timestamp width")),
+    };
+    let fixed = |record: &str, expression: &str| match (width, &entry.byte_order) {
+        (None, None) => Ok(expression.to_owned()),
+        _ => Err(format!("clocks.json: {who:?} keeps a {record}, whose layout is fixed")),
+    };
+    match entry.record.as_deref() {
+        Some("origin") => {
+            let width = width_of("origin")?;
+            let big_endian = match entry.byte_order.as_deref() {
+                Some("big") => true,
+                Some("little") => false,
+                _ => return Err(format!("clocks.json: {who:?} keeps an origin but says no byte order")),
+            };
+            Ok(format!(
+                "crate::SidecarRecord::Origin {{ timestamp_width: {width}, big_endian: {big_endian} }}"
+            ))
+        }
+        Some("registers") if entry.byte_order.is_none() => {
+            Ok(format!("crate::SidecarRecord::Registers {{ timestamp_width: {} }}", width_of("registers")?))
+        }
+        Some("registers") => Err(format!("clocks.json: {who:?}'s registers are little-endian by definition")),
+        Some("sameboy") => fixed("sameboy", "crate::SidecarRecord::SameBoy"),
+        Some("packed-seiko") => fixed("packed-seiko", "crate::SidecarRecord::PackedSeiko"),
+        Some(other) => Err(format!("clocks.json: {who:?} keeps an unknown record {other:?}")),
+        None => Err(format!("clocks.json: {who:?} is a sidecar but says nothing of what it holds")),
+    }
+}
+
+/// The table of apps' own builds, a row per build that lays its clock out differently, sorted by
+/// core and then app so `Core::clock_in` can binary-search it.
+///
+/// An entry names an app that ships a build of the core. One for an app that loads the core as
+/// its kind would contradict the core's own entry, and one for an app that does not run it at all
+/// is a typo.
+fn emit_app_clocks(w: &mut String, data: &Registries, clocks: &Clocks) -> Result<(), String> {
+    let mut rows = Vec::new();
+    for (core, entry) in &clocks.cores {
+        for (app_slug, build) in &entry.apps {
+            let who = format!("{core} in {app_slug}");
+            if !build.apps.is_empty() {
+                return Err(format!("clocks.json: {who:?} nests apps, which an app's build cannot have"));
+            }
+            let app = data
+                .apps
+                .iter()
+                .find(|a| &a.slug == app_slug)
+                .ok_or_else(|| format!("clocks.json: {app_slug:?} is not a listed app"))?;
+            if !app.cores.iter().any(|c| c == core) {
+                return Err(format!("clocks.json: {app_slug:?} ships no build of {core:?} of its own"));
+            }
+            rows.push(format!(
+                "crate::AppClock {{ core: {}, app: {}, layout: {}, huc3: {} }}",
+                lit(core),
+                lit(app_slug),
+                layout(&who, build)?,
+                huc3(&who, build)?
+            ));
+        }
+    }
+    table(
+        w,
+        "Apps' own builds of a core that lay its clock out differently, sorted by core and then app.",
+        "APP_CLOCKS",
+        "crate::AppClock",
+        &rows,
+        Clone::clone,
+    );
+    Ok(())
 }
 
 fn core_kind(kind: &str) -> Result<&'static str, String> {
@@ -112,7 +338,7 @@ fn app_cores(app: &App, data: &Registries) -> Result<String, String> {
 ///
 /// The per-registry emitters are separate functions below; the seams are where one registry ends
 /// and the next begins, which is the one place the data does have one.
-pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(), String> {
+pub fn write_rust(data: &Registries, clocks: &Clocks, layouts: &Layouts, path: &Path) -> Result<(), String> {
     // A clock layout naming a core that is not listed is a typo rather than a new core, and it
     // would otherwise vanish silently: nothing downstream reads this file by any other route.
     for slug in clocks.cores.keys() {
@@ -120,6 +346,8 @@ pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(),
             return Err(format!("clocks.json: {slug:?} is not a listed core"));
         }
     }
+
+    check_layouts(data, layouts)?;
 
     // A core kind that is not one of the four is a registry change this generator has not been
     // taught, so it is checked before anything is written rather than producing a file that will
@@ -142,8 +370,9 @@ pub fn write_rust(data: &Registries, clocks: &Clocks, path: &Path) -> Result<(),
     writeln!(w).unwrap();
 
     emit_systems(w, data)?;
-    emit_cores(w, data, clocks, kinds)?;
+    emit_cores(w, data, clocks, layouts, kinds)?;
     emit_apps(w, data)?;
+    emit_app_clocks(w, data, clocks)?;
     emit_platforms(w, data)?;
     table(
         w,
@@ -265,7 +494,13 @@ fn emit_systems(w: &mut String, data: &Registries) -> Result<(), String> {
 /// The same shape as the systems above: a const each, then the table built out of them. It
 /// costs nothing — a const has no symbol of its own, so a consumer naming one materialises that
 /// core alone and leaves the table dead.
-fn emit_cores(w: &mut String, data: &Registries, clocks: &Clocks, kinds: Vec<&str>) -> Result<(), String> {
+fn emit_cores(
+    w: &mut String,
+    data: &Registries,
+    clocks: &Clocks,
+    layouts: &Layouts,
+    kinds: Vec<&str>,
+) -> Result<(), String> {
     // The same shape as the systems above: a const each, then the table built out of them. It
     // costs nothing — a const has no symbol of its own, so a consumer naming one materialises that
     // core alone and leaves the table dead.
@@ -275,18 +510,19 @@ fn emit_cores(w: &mut String, data: &Registries, clocks: &Clocks, kinds: Vec<&st
         .unwrap();
     writeln!(w, "/// without a lookup — and without linking the whole table.").unwrap();
     writeln!(w, "pub mod cores {{").unwrap();
-    writeln!(w, "    use crate::{{ClockLayout, Core, CoreKind}};\n").unwrap();
+    writeln!(w, "    use crate::{{Core, CoreKind, ExpandedLength, SaveLayout, SystemLayout}};\n").unwrap();
     for ((c, kind), name) in &cores {
+        let (clock, huc3) = clock(&c.slug, clocks)?;
+        let layouts = save_layouts(&c.slug, layouts)?;
         writeln!(w, "    /// {} — {}.", c.name, c.systems.join(", ")).unwrap();
         writeln!(
             w,
             "    pub const {name}: Core = Core {{ slug: {}, name: {}, kind: CoreKind::{kind}, \
-             systems: {}, aliases: {}, clock: {} }};",
+             systems: {}, aliases: {}, clock: {clock}, huc3: {huc3}, layouts: {layouts} }};",
             lit(&c.slug),
             lit(&c.name),
             lits(&c.systems),
             lits(&c.aliases),
-            clock(&c.slug, clocks)?,
         )
         .unwrap();
     }
@@ -380,4 +616,70 @@ fn write_and_format(path: &Path, out: &str) -> Result<(), String> {
         return Err(format!("rustfmt failed on {}", path.display()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One `clocks.json` entry, as the file spells it.
+    fn entry(json: &str) -> Clock {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn every_layout_admits_the_fields_it_has_and_no_others() {
+        let layout_of = |json| layout("core", &entry(json));
+        assert_eq!(
+            layout_of(r#"{"layout": "appended", "timestamp_width": 8}"#).unwrap(),
+            "Some(crate::ClockLayout::Appended { timestamp_width: 8 })"
+        );
+        assert_eq!(
+            layout_of(
+                r#"{"layout": "sidecar", "record": "origin", "timestamp_width": 4, "byte_order": "big"}"#
+            )
+            .unwrap(),
+            "Some(crate::ClockLayout::Sidecar(crate::SidecarRecord::Origin { timestamp_width: 4, big_endian: true }))"
+        );
+        assert_eq!(layout_of(r#"{"huc3": {"layout": "none"}}"#).unwrap(), "None", "a HuC-3 alone");
+        for wrong in [
+            r#"{"layout": "sidecar"}"#,
+            r#"{"layout": "sidecar", "record": "origin", "timestamp_width": 8}"#,
+            r#"{"layout": "sidecar", "record": "origin", "timestamp_width": 6, "byte_order": "big"}"#,
+            r#"{"layout": "sidecar", "record": "registers", "timestamp_width": 8, "byte_order": "big"}"#,
+            r#"{"layout": "sidecar", "record": "sameboy", "timestamp_width": 8}"#,
+            r#"{"layout": "sidecar", "record": "nonesuch"}"#,
+            r#"{"layout": "appended", "record": "registers", "timestamp_width": 8}"#,
+            r#"{"layout": "packed", "timestamp_width": 4}"#,
+            r#"{"timestamp_width": 4}"#,
+        ] {
+            assert!(layout_of(wrong).is_err(), "{wrong}");
+        }
+    }
+
+    #[test]
+    fn every_huc3_layout_admits_the_fields_it_has_and_no_others() {
+        let huc3_of = |json: &str| huc3("core", &entry(&format!(r#"{{"huc3": {json}}}"#)));
+        assert_eq!(
+            huc3_of(r#"{"layout": "packed", "reserved": 16}"#).unwrap(),
+            "Some(crate::Huc3Layout::Packed { reserved: 16 })"
+        );
+        assert_eq!(
+            huc3_of(r#"{"layout": "appended", "record": "memory"}"#).unwrap(),
+            "Some(crate::Huc3Layout::Memory)"
+        );
+        assert_eq!(huc3_of(r#"{"layout": "none"}"#).unwrap(), "Some(crate::Huc3Layout::NotKept)");
+        assert_eq!(huc3("core", &entry("{}")).unwrap(), "None");
+        for wrong in [
+            r#"{"layout": "packed"}"#,
+            r#"{"layout": "packed", "reserved": 16, "timestamp_width": 4}"#,
+            r#"{"layout": "sidecar", "record": "registers", "timestamp_width": 8}"#,
+            r#"{"layout": "sidecar", "record": "origin", "timestamp_width": 8}"#,
+            r#"{"layout": "appended"}"#,
+            r#"{"layout": "none", "reserved": 1}"#,
+            r#"{"layout": "none", "huc3": {"layout": "none"}}"#,
+        ] {
+            assert!(huc3_of(wrong).is_err(), "{wrong}");
+        }
+    }
 }

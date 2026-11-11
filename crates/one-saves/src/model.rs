@@ -626,11 +626,22 @@ pub struct Source {
     pub platform: Option<Name>,
     /// The version of `platform`, in whatever scheme that platform uses.
     pub platform_version: Option<String>,
+    /// How far the scale this producer's clock anchors are on runs ahead of UTC, in seconds: an
+    /// anchor minus this is the instant.
+    ///
+    /// Most producers stamp an anchor with the host's own Unix time and leave this out. MiSTer
+    /// hands its cores local standard time counted as though it were UTC, so a save from a MiSTer
+    /// in Pacific time carries -28800, in summer as in winter. Never zero for a scale nobody knows,
+    /// since zero claims UTC.
+    pub utc_offset: Option<i32>,
     /// Integer keys from a later minor version.
     pub unknown: UnknownKeys,
 }
 
 impl Source {
+    /// The offsets real zones occupy, -12:00 through +14:00.
+    pub const UTC_OFFSETS: std::ops::RangeInclusive<i64> = -43_200..=50_400;
+
     /// Whether every field is absent.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -642,6 +653,7 @@ impl Source {
             && self.core_version.is_none()
             && self.platform.is_none()
             && self.platform_version.is_none()
+            && self.utc_offset.is_none()
             && self.unknown.is_empty()
     }
 
@@ -698,6 +710,13 @@ impl Source {
     #[must_use]
     pub fn platform_version(mut self, platform_version: impl Into<String>) -> Self {
         self.platform_version = Some(platform_version.into());
+        self
+    }
+
+    /// Sets how far the scale this producer's clock anchors are on runs ahead of UTC.
+    #[must_use]
+    pub fn utc_offset(mut self, utc_offset: impl Into<Option<i32>>) -> Self {
+        self.utc_offset = utc_offset.into();
         self
     }
 }

@@ -1,10 +1,10 @@
 {
   "corpus": "Universal Saves Format conformance cases",
-  "spec_version": "0.7",
+  "spec_version": "0.8",
   "generated_from": "test/bundles.js",
   "counts": {
-    "valid": 39,
-    "invalid": 103
+    "valid": 40,
+    "invalid": 104
   },
   "cases": [
     {
@@ -195,6 +195,13 @@
       "file": "valid/source-provenance.cbor",
       "sha256": "04a6f66e387dc3b89536758b84b04e0fac323a45fcc27ccc459b8cd70fd0a7b3",
       "note": "Provenance at both levels: a cartridge reader assembled the bundle, and one part came from an emulator instead, so it carries its own source. Note the split inside one map: `device_kind` is a spec slug nobody may mint into, while `app` beside it is the producer's own name, here reverse-DNS for the reader and an Apps registry slug for the emulator. The reader runs no core; the emulator names the one it ran in `core`, and the firmware it ran on in `platform`."
+    },
+    {
+      "name": "source-utc-offset",
+      "expect": "valid",
+      "file": "valid/source-utc-offset.cbor",
+      "sha256": "48448615f6d37c82fb33a737e505ac2211f5240c1acd1b70828086f8f9e75c2e",
+      "note": "A MiSTer stamps a clock's anchor in local standard time counted as though it were UTC, and says how far that is from UTC: Pacific time, eight hours west, a negative integer on the wire."
     },
     {
       "name": "game-ids",
@@ -551,6 +558,14 @@
       "file": "invalid/platform-as-display-name.cbor",
       "sha256": "7f408524114f45aa4f75e6576af75bd0272a0bebedf6a5a7295df4c6e057ec7a",
       "note": "The same for a platform written the way it writes its own name. `muOS` is a display name, not a slug, and has no dot to be a minted one."
+    },
+    {
+      "name": "utc-offset-out-of-range",
+      "expect": "invalid",
+      "rejected_by": "schema",
+      "file": "invalid/utc-offset-out-of-range.cbor",
+      "sha256": "56ec492071651e16afd8b6c17dd71151653dd724bb95097b4f327793627c003e",
+      "note": "An offset is the span real zones occupy, -12:00 through +14:00. A day east is no zone at all, and one a consumer would move a clock by."
     },
     {
       "name": "role-reverse-dns",

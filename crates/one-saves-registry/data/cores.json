@@ -296,6 +296,17 @@
     "family": "WonderSwan and Neo Geo Pocket"
   },
   {
+    "slug": "bgb",
+    "name": "BGB",
+    "kind": "standalone",
+    "systems": [
+      "gb",
+      "gbc"
+    ],
+    "aliases": [],
+    "family": "Game Boy family"
+  },
+  {
     "slug": "blastem",
     "name": "BlastEm",
     "kind": "libretro",

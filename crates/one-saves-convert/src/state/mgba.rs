@@ -272,9 +272,13 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
         if index == 0 {
             let mut save = item(save)?;
             // The Game Boy core takes its save back with the clock footer on it, as its file has
-            // it; the GBA core keeps its clock elsewhere.
+            // it; the GBA core keeps its clock elsewhere. The footer is the one mGBA's save memory
+            // holds whichever app ran it: under libretro the frontend writes the same bytes to a
+            // file of their own, but in a state they are where the core keeps them.
+            let form =
+                crate::rtc::ClockForm::Mbc3Appended(one_saves::extension::RtcMbc3::DEFAULT_TIMESTAMP_WIDTH);
             if Machine::of(&data) == Some(Machine::Gb)
-                && let Some(footer) = crate::rtc::footer_of(bundle)
+                && let Some(footer) = crate::rtc::footer_of_form(bundle, form)
             {
                 save.extend_from_slice(&footer);
             }

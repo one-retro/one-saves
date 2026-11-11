@@ -57,7 +57,7 @@ fn cases() -> Vec<Case> {
 /// The corpus is run at [`Strictness::Schema`].
 ///
 /// Two invalid cases — `header-unknown-integer-key` and `part-unknown-integer-key` — are invalid
-/// against the version 0.7 schema and *accepted* by a shipped decoder, which ignores and
+/// against the version 0.8 schema and *accepted* by a shipped decoder, which ignores and
 /// round-trips an integer key it does not know. Running the corpus in decoder mode would fail
 /// those two for being right. A shape a later version assigned is the same asymmetry; see
 /// `a_decoder_round_trips_a_shape_a_later_version_defined` for why the corpus cannot show it.
@@ -68,7 +68,7 @@ fn corpus() {
 
     // A manifest this harness failed to read would otherwise pass by testing nothing.
     let (valid, invalid): (Vec<_>, Vec<_>) = cases.iter().partition(|c| c.expect_valid);
-    assert_eq!((valid.len(), invalid.len()), (39, 103), "the corpus is not the size it should be");
+    assert_eq!((valid.len(), invalid.len()), (40, 104), "the corpus is not the size it should be");
 
     for case in cases {
         let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
@@ -240,6 +240,21 @@ fn a_source_names_its_core_and_platform_apart_from_its_app() {
         let bytes = fs::read(corpus_dir().join(format!("invalid/{name}.cbor"))).expect("read case");
         assert!(Bundle::from_slice(&bytes).is_err(), "{name}: a display name is not a slug in either mode");
     }
+}
+
+/// A source says how far its clock anchors are from UTC in key 8, which a 0.7 decoder carried as
+/// an unknown key and a 0.8 one reads.
+#[test]
+fn a_source_says_how_far_its_clock_anchors_are_from_utc() {
+    let bytes = fs::read(corpus_dir().join("valid/source-utc-offset.cbor")).expect("read case");
+    let bundle = Bundle::from_slice(&bytes).expect("source-utc-offset is valid");
+    let source = bundle.header.source.as_ref().expect("a header source");
+    assert_eq!(source.utc_offset, Some(-28_800), "a MiSTer in Pacific time, eight hours west");
+    assert!(source.unknown.is_empty(), "key 8 is a field now, not a later version's");
+    assert_eq!(bundle.to_vec().expect("encodes"), bytes, "and it goes back as it came");
+
+    let bytes = fs::read(corpus_dir().join("invalid/utc-offset-out-of-range.cbor")).expect("read case");
+    assert!(Bundle::from_slice(&bytes).is_err(), "a day east is no zone");
 }
 
 /// What each shape may hold, which is what replaced the depth cap in 0.2.

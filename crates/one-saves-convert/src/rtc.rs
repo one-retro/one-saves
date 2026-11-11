@@ -1,29 +1,40 @@
 //! Real-time clock state that emulators append to a save file.
 //!
 //! A cartridge with a clock chip — Pokémon Crystal, Pokémon Ruby and friends — has state the save
-//! memory does not hold, and emulators disagree about where to put it. Three arrangements are
+//! memory does not hold, and emulators disagree about where to put it. These arrangements are
 //! handled here, all confirmed against files real emulators wrote:
 //!
 //! | producer | where | what it holds |
 //! | -------- | ----- | ------------- |
-//! | mGBA, GBA | appended, 16 bytes | latched BCD, a control register, a latch instant |
-//! | SameBoy, Game Boy | appended, 48 bytes | ten MBC3 registers and a write time |
+//! | the mGBA app, GBA | appended, 16 bytes | latched BCD, a control register, a latch instant |
+//! | the mGBA app, standalone SameBoy and VBA-M, Game Boy | appended, 48 bytes | ten MBC3 registers and a write time |
 //! | MiSTer Gameboy, SGB | appended, 512 bytes | a 4-byte host clock, **bit-packed** registers, an MBC3's or a HuC-3's |
 //! | budude2's Pocket port | appended, 16 bytes | the same ten bytes, a smaller reserved region |
-//! | Gambatte, Game Boy | a `.rtc` file, 4 bytes | an **origin**, big-endian |
+//! | mGBA and VBA-M under libretro, Game Boy | a `.rtc` file, 48 bytes | the ten registers and the write time the app appends |
+//! | SameBoy under libretro, Game Boy | a `.rtc` file, 32 bytes | the registers a byte each, a write time, the cycles into the second |
+//! | Gambatte under libretro, Game Boy | a `.rtc` file, 8 bytes | an **origin**, little-endian |
+//! | Gambatte in OpenEmu, Game Boy | a `.rtc` file, 4 bytes | an **origin**, big-endian |
 //! | mincer_ray, GBA | a `.rtc` file, 16 bytes | an instant and the calendar **bit-packed** |
 //! | GBA_MiSTer, GBA | appended, 512 bytes | the same two, the other way round, **repeated** |
+//! | Gambatte and VBA-M under libretro, a HuC-3 | a `.rtc` file, 8 bytes | an **origin**, as Gambatte keeps for an MBC3 |
+//! | the mGBA app, a HuC-3 | appended, 136 bytes | the controller's 256 nybbles and a latch instant |
+//!
+//! mGBA's and SameBoy's libretro cores keep no HuC-3 clock at all: mGBA writes no `.rtc` for one, and
+//! SameBoy's is its MBC3 section with nothing in it.
 //!
 //! Two of the appended forms are sixteen bytes and two are 512, and each pair means entirely
-//! different things by them, so the system is what tells them apart. Which shape a clock goes back into is decided by
-//! [`form_of`] from the bundle's `source`, since the encoding belongs to the producer rather than
-//! to the cartridge.
+//! different things by them, so the system is what tells them apart. Which shape a clock goes back
+//! into is decided by [`form_of`] from the bundle's `source`, since the encoding belongs to the
+//! producer rather than to the cartridge: and to the app as well as the core, because a libretro
+//! frontend writes the clock its core exposes to a file of its own, where the same engine run as an
+//! app of its own appends it. [`form_for`] makes the same choice for a core about to read the save.
 //!
 //! The appended forms say nothing about where the save memory ends, so they are found by length.
-//! The two sidecars are told apart by length too, and Gambatte's is a different problem: it stores
-//! the instant the clock counts *from*, which is the other operand of a reading rather than a
-//! reading, and turning one into the other needs an instant the file does not record. See
-//! [`parse_gambatte_sidecar`]. mincer_ray's records its own instant; see [`parse_mincer_sidecar`].
+//! The sidecars are told apart by the record the producer's registry entry names, and by length
+//! where nobody named the producer. Gambatte's is a different problem from the rest: it stores the
+//! instant the clock counts *from*, which is the other operand of a reading rather than a reading,
+//! and turning one into the other needs an instant the file does not record. See [`parse_origin`].
+//! The others record their own instant; see [`parse_sidecar_as`].
 //!
 //! Left inline, that footer is a problem rather than a curiosity: it carries a **live timestamp**,
 //! so two dumps of the same save minutes apart hash differently, and a
@@ -74,9 +85,12 @@
 //!
 //! That includes most other cartridge clocks. The specification gives each one a key — the HuC-3,
 //! TPP1 and TAMA5 on the Game Boy, the two Super Famicom chips, the N64's Joybus clock — and
-//! [`one_saves::extension`] has a type for each. Of those, only the HuC-3 the MiSTer cores pack is
-//! read here, and only when the caller says the cartridge has one; see [`split_for`]. No other
-//! producer's file for them is read here yet.
+//! [`one_saves::extension`] has a type for each. Of those, only the HuC-3 is read here, and only
+//! when the caller says the cartridge has one, since nothing in any producer's bytes tells it from
+//! an MBC3: the MiSTer cores' packed footer, the mGBA app's, and the origin Gambatte and VBA-M keep
+//! beside the save (see [`split_for`] and [`parse_huc3_sidecar`]). Standalone SameBoy and VBA-M
+//! append records of their own for one, which are not read, since the registry lists neither as an
+//! app. No producer's file for the other chips is read here yet.
 //!
 //! [`x.1sav.rtc`]: https://docs.1retro.com/specifications/extensions/x.1sav.rtc/
 //! [`io.mgba.rtc`]: https://docs.1retro.com/specifications/extensions/io.mgba.rtc/
@@ -85,6 +99,10 @@
 use one_saves::extension::{Rtc, RtcHuc3, RtcMbc3, RtcS3511a, S3511aAlarm};
 use one_saves::{Extension, Extensions};
 use one_saves_registry::ClockLayout;
+/// How a core keeps a HuC-3's clock, as the registry names it.
+pub use one_saves_registry::Huc3Layout;
+/// What a clock kept in a file of its own holds, as the registry names it.
+pub use one_saves_registry::SidecarRecord;
 
 /// The footer mGBA appends for a GBA cartridge clock: seven BCD bytes, a control register, and an
 /// eight-byte little-endian instant.
@@ -132,6 +150,10 @@ pub struct Split {
 
 /// The state of whichever clock a footer turned out to hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a HuC-3 carries the controller's whole window where the producer keeps it; one clock is read per save, and copying it is cheaper than the boxing that would cost every caller"
+)]
 pub enum Clock {
     /// A Game Boy MBC3 cartridge's clock.
     Mbc3(Mbc3Clock),
@@ -242,7 +264,7 @@ fn s3511a_of(bundle: &one_saves::Bundle) -> Option<(RtcS3511a, i64)> {
 }
 
 /// The host clock, in epoch seconds.
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -347,11 +369,58 @@ impl From<Mbc3Clock> for RtcMbc3 {
 /// four of days, least significant first.
 const HUC3_COUNTERS: usize = 0x10;
 
-/// A HuC-3's clock as the MiSTer Game Boy cores keep it: its two counters and the seconds counted
-/// into the minute, with the host clock they were taken at.
+/// Where a HuC-3 keeps the time its alarm goes off at, laid out as the counters are, and the
+/// address after it whose low bit turns the alarm on.
+const HUC3_ALARM: usize = 0x58;
+
+/// A HuC-3's alarm, where a producer keeps it apart from the rest of the controller: the time it
+/// goes off, as a minute of the day and a day count, and whether it is on. SameBoy keeps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Huc3Alarm {
+    /// The minute of the day, three nybbles at 0x58.
+    pub minutes: u16,
+    /// The day count, four nybbles at 0x5B.
+    pub days: u16,
+    /// Bit 0 of 0x5F.
+    pub enabled: bool,
+}
+
+impl Huc3Alarm {
+    /// The eight nybbles it occupies from 0x58, least significant first.
+    fn nybbles(self) -> [u8; 8] {
+        let nybble = |value: u16, at: u16| u8::try_from((value >> (4 * at)) & 0x0F).expect("a nybble");
+        [
+            nybble(self.minutes, 0),
+            nybble(self.minutes, 1),
+            nybble(self.minutes, 2),
+            nybble(self.days, 0),
+            nybble(self.days, 1),
+            nybble(self.days, 2),
+            nybble(self.days, 3),
+            u8::from(self.enabled),
+        ]
+    }
+
+    /// The alarm out of a whole window, filled as the specification fills a null.
+    fn of(memory: &[u8; 256]) -> Self {
+        let value = |at: usize, len: usize| {
+            memory[at..at + len].iter().rev().fold(0u16, |value, &nybble| value << 4 | u16::from(nybble))
+        };
+        Huc3Alarm {
+            minutes: value(HUC3_ALARM, 3),
+            days: value(HUC3_ALARM + 3, 4),
+            enabled: memory[HUC3_ALARM + 7] & 1 != 0,
+        }
+    }
+}
+
+/// A HuC-3's clock: its two counters and the seconds counted into the minute, with the host clock
+/// they were taken at, and the rest of the controller where the producer keeps it.
 ///
-/// The cartridge's controller has 256 addresses a game reads a nybble at a time. The cores keep
-/// the counters and nothing else of them, so the key has every other address null.
+/// The cartridge's controller has 256 addresses a game reads a nybble at a time. The MiSTer Game
+/// Boy cores keep the counters and the seconds and nothing else of them, Gambatte and VBA-M the
+/// instant the counters count from, and the mGBA app every address, so the key has the addresses
+/// the producer did not keep null.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Huc3Clock {
     /// Seconds counted into the current minute, 0 to 59: key 2 of `x.1sav.rtc.huc3`.
@@ -362,6 +431,11 @@ pub struct Huc3Clock {
     pub days: u16,
     /// The host clock the core advances the counters from, in epoch seconds: key 1.
     pub taken_at: i64,
+    /// The controller's whole window, a nybble to an element, where the producer keeps it. Its
+    /// counters are the ones above.
+    pub memory: Option<[u8; 256]>,
+    /// The alarm, where the producer keeps it and not the whole window.
+    pub alarm: Option<Huc3Alarm>,
 }
 
 impl Huc3Clock {
@@ -375,14 +449,26 @@ impl Huc3Clock {
 }
 
 impl From<Huc3Clock> for RtcHuc3 {
-    /// The counters go at their addresses, and every other address is null, since the cores do
-    /// not keep it.
+    /// The whole window where the producer kept it. Otherwise the counters go at their addresses,
+    /// and every other address is null, since the producer did not keep it.
     fn from(clock: Huc3Clock) -> Self {
+        if let Some(memory) = clock.memory {
+            return RtcHuc3 {
+                memory: memory.map(Some),
+                taken_at: Some(clock.taken_at),
+                seconds: Some(clock.seconds),
+            };
+        }
         let minutes = (0..3).map(|at| clock.minutes >> (4 * at));
         let days = (0..4).map(|at| clock.days >> (4 * at));
         let mut memory = [None; 256];
         for (slot, nybble) in memory[HUC3_COUNTERS..].iter_mut().zip(minutes.chain(days)) {
             *slot = Some(u8::try_from(nybble & 0x0F).expect("a nybble"));
+        }
+        if let Some(alarm) = clock.alarm {
+            for (slot, nybble) in memory[HUC3_ALARM..].iter_mut().zip(alarm.nybbles()) {
+                *slot = Some(nybble);
+            }
         }
         RtcHuc3 { memory, taken_at: Some(clock.taken_at), seconds: Some(clock.seconds) }
     }
@@ -401,6 +487,11 @@ fn huc3_of(bundle: &one_saves::Bundle) -> Option<Huc3Clock> {
         minutes: value(HUC3_COUNTERS, 3),
         days: value(HUC3_COUNTERS + 3, 4),
         taken_at: chip.taken_at.unwrap_or_else(now),
+        memory: chip.memory.iter().all(Option::is_some).then_some(memory),
+        alarm: chip.memory[HUC3_ALARM..HUC3_ALARM + 8]
+            .iter()
+            .all(Option::is_some)
+            .then(|| Huc3Alarm::of(&memory)),
     })
 }
 
@@ -424,10 +515,20 @@ pub fn split(bytes: &[u8], system: Option<&str>) -> Option<Split> {
 /// It matters where two chips share a footer. The MiSTer Game Boy cores keep a HuC-3 in the
 /// footer they keep an MBC3 in, packed another way, and nothing in the bytes says which. So a
 /// packed footer is read as a HuC-3 only when `chip` says the cartridge has one, and then as
-/// nothing else; a footer of any other length is left in the save, since no other producer's
-/// HuC-3 is read here. With no chip, or another one, this is [`split`].
+/// nothing else. The mGBA app's footer for one, the controller's whole window, is read the same
+/// way: no other footer is its length, but nothing in its bytes is checkable enough to find it by
+/// without the cartridge saying. A footer of any other length is left in the save, since no other
+/// producer's HuC-3 is read here. With no chip, or another one, this is [`split`].
 #[must_use]
 pub fn split_for(bytes: &[u8], system: Option<&str>, chip: Option<&str>) -> Option<Split> {
+    split_at(bytes, system, chip, now())
+}
+
+/// [`split_for`], reading a footer that holds an origin rather than the counters at `captured_at`:
+/// the VisualBoyAdvance-M app's for a HuC-3, which counts from an instant as Gambatte does. Every
+/// other footer records its own instant and ignores this one.
+#[must_use]
+pub fn split_at(bytes: &[u8], system: Option<&str>, chip: Option<&str>, captured_at: i64) -> Option<Split> {
     let huc3 = chip == Some(RtcHuc3::KEY.as_str());
     let sizes: &[usize] = match system {
         // An unstated system could be either family, and the two size tables overlap almost
@@ -453,6 +554,9 @@ pub fn split_for(bytes: &[u8], system: Option<&str>, chip: Option<&str>) -> Opti
         let gba = system == Some("gba");
         let parsed = match footer.len() {
             PACKED_LEN_POCKET | PACKED_LEN_MISTER if huc3 => parse_packed_huc3(footer).map(Clock::Huc3),
+            HUC3_MEMORY_LEN if huc3 => parse_huc3_memory(footer).map(Clock::Huc3),
+            SAMEBOY_HUC3_LEN if huc3 => parse_sameboy_huc3(footer).map(Clock::Huc3),
+            VBAM_HUC3_LEN if huc3 => parse_vbam_huc3(footer, captured_at).map(Clock::Huc3),
             _ if huc3 => None,
             MBC3_LEN_32 | MBC3_LEN_64 if !gba => parse_mbc3(footer).map(Clock::Mbc3),
             PACKED_LEN_POCKET if gba => parse_s3511a(footer).map(Clock::S3511a),
@@ -550,18 +654,19 @@ impl Split {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClockForm {
     /// Appended to the save: ten little-endian registers and an instant this many bytes wide.
-    /// VBA, BGB, mGBA, SameBoy.
+    /// VBA, BGB, the mGBA app, standalone SameBoy.
     Mbc3Appended(u8),
     /// Appended to the save: an instant four bytes wide and the registers bit-packed, padded to a
     /// reserved size. The MiSTer Gameboy and SGB cores and the Gameboy core's openFPGA ports.
     Packed(usize),
-    /// A separate file holding the instant the clock counts from. Gambatte.
-    Sidecar,
+    /// Nothing appended, and a file of its own beside the save holding the record: every libretro
+    /// core that keeps a clock, and mincer_ray's GBA core.
+    ///
+    /// A clock of a chip the record does not hold writes no file, since the core keeps no clock
+    /// for it: mGBA's libretro core keeps an MBC3's and none for a GBA cartridge.
+    Sidecar(SidecarRecord),
     /// Appended to the save: latched BCD and a control register. A GBA cartridge's Seiko chip.
     S3511a,
-    /// A separate file holding an instant and the Seiko chip's calendar, bit-packed. mincer_ray's
-    /// GBA core.
-    S3511aSidecar,
     /// Appended to the save: the Seiko chip's calendar and an instant, bit-packed behind a magic
     /// word and repeated to fill a reserved size, or cut to it. GBA_MiSTer.
     S3511aPacked(usize),
@@ -569,69 +674,240 @@ pub enum ClockForm {
     /// bit-packed, padded to a reserved size. The MiSTer Gameboy and SGB cores and the Gameboy
     /// core's openFPGA ports, for a HuC-3 cartridge.
     Huc3Packed(usize),
+    /// Appended to the save: a HuC-3 controller's whole window, two nybbles to a byte, and the
+    /// host clock it was latched at. The mGBA app, for a HuC-3 cartridge.
+    Huc3Memory,
+    /// Appended to the save: SameBoy's seventeen bytes, the anchor, the counters and the alarm.
+    /// The SameBoy app, for a HuC-3 cartridge.
+    Huc3SameBoy,
+    /// Appended to the save: VBA-M's 24 bytes, the origin and the controller's state. The
+    /// VisualBoyAdvance-M app, for a HuC-3 cartridge.
+    Huc3Vbam,
+    /// Nothing written anywhere: the reader keeps no clock for this cartridge, and a game run there
+    /// starts its clock over. mGBA's and SameBoy's libretro cores, for a HuC-3 cartridge.
+    None,
+}
+
+/// Whether a core stamps the anchors of the clocks it keeps in its host's local standard time,
+/// counted as though it were UTC, rather than in UTC: every MiSTer core. Main_MiSTer hands them all
+/// one timestamp, `t + (t - mktime(gmtime(t)))` (`user_io.cpp`, `send_rtc`), which is the zone's
+/// standard offset in summer as in winter. Its MBC3, HuC-3 and Seiko anchors are all on that scale.
+#[must_use]
+pub fn stamps_local_time(core: &one_saves_registry::Core) -> bool {
+    core.kind == one_saves_registry::CoreKind::MiSTer
+}
+
+/// The offset from UTC of the scale a bundle's clock anchors are on, as far as it is known: what
+/// its `source` says, else zero for a producer that stamps UTC. `None` for a producer that stamps
+/// local time and did not say which, whose anchors cannot be moved to another scale.
+#[must_use]
+pub fn scale_of(bundle: &one_saves::Bundle) -> Option<i32> {
+    let source = bundle.header.source.as_ref();
+    if let Some(offset) = source.and_then(|source| source.utc_offset) {
+        return Some(offset);
+    }
+    match producer_of(source) {
+        Some((core, _)) if stamps_local_time(core) => None,
+        _ => Some(0),
+    }
+}
+
+/// Moves every clock anchor a bundle carries by `seconds`: from one producer's scale to another's,
+/// `seconds` being the difference between their offsets from UTC.
+///
+/// Only anchors move. A clock's reading is its counters or its calendar, which no scale changes,
+/// and an anchor is only ever the host time the producer advances them from. So a clock moved from
+/// a MiSTer in Pacific time to RetroArch has its anchor put eight hours later, and RetroArch counts
+/// the time since then as the MiSTer would have.
+pub fn rescale(bundle: &mut one_saves::Bundle, seconds: i64) {
+    use one_saves::extension::{RtcJoybus, RtcRtc4513, RtcSrtc, RtcTc8521, RtcTpp1};
+    if seconds == 0 {
+        return;
+    }
+    let extensions = &mut bundle.header.extensions;
+    let moved = |at: i64| at.saturating_add(seconds);
+    if let Some(&chip) = extensions.get::<RtcMbc3>() {
+        extensions.insert(RtcMbc3 { taken_at: moved(chip.taken_at), ..chip });
+    }
+    if let Some(&chip) = extensions.get::<RtcS3511a>() {
+        extensions.insert(RtcS3511a { taken_at: chip.taken_at.map(moved), ..chip });
+    }
+    if let Some(chip) = extensions.get::<RtcHuc3>().cloned() {
+        extensions.insert(RtcHuc3 { taken_at: chip.taken_at.map(moved), ..chip });
+    }
+    if let Some(&chip) = extensions.get::<RtcJoybus>() {
+        extensions.insert(RtcJoybus { taken_at: chip.taken_at.map(moved), ..chip });
+    }
+    if let Some(&chip) = extensions.get::<RtcRtc4513>() {
+        extensions.insert(RtcRtc4513 { taken_at: chip.taken_at.map(moved), ..chip });
+    }
+    if let Some(&chip) = extensions.get::<RtcSrtc>() {
+        extensions.insert(RtcSrtc { taken_at: chip.taken_at.map(moved), ..chip });
+    }
+    if let Some(&chip) = extensions.get::<RtcTc8521>() {
+        extensions.insert(RtcTc8521 { taken_at: chip.taken_at.map(moved), ..chip });
+    }
+    if let Some(&chip) = extensions.get::<RtcTpp1>() {
+        extensions.insert(RtcTpp1 { taken_at: chip.taken_at.map(moved), ..chip });
+    }
+}
+
+/// The core and app a `source` names, where the registry lists them. A listed core and app are
+/// carried as their slugs, which is what the registry is keyed by.
+fn producer_of(
+    source: Option<&one_saves::Source>,
+) -> Option<(&'static one_saves_registry::Core, Option<&'static one_saves_registry::App>)> {
+    let source = source?;
+    let core = one_saves_registry::core(source.core.as_ref()?.as_str())?;
+    let app = source.app.as_ref().and_then(|app| one_saves_registry::app(app.as_str()));
+    Some((core, app))
+}
+
+/// The layout the producer a `source` names writes an MBC3's or a Seiko chip's clock in, as the
+/// registry records it.
+///
+/// `source.core` names the engine that wrote the bytes, and `source.app` what ran it, which
+/// matters as much: RetroArch writes what its core exposes to a file of its own, and the mGBA app
+/// appends the same record to the save. See [`Core::clock_in`](one_saves_registry::Core::clock_in).
+/// `None` for a core nobody listed or one the registry records no clock for, and for an app's own
+/// build nobody has sampled.
+#[must_use]
+pub fn layout_of(source: Option<&one_saves::Source>) -> Option<ClockLayout> {
+    let (core, app) = producer_of(source)?;
+    core.clock_in(app)
+}
+
+/// How the producer a `source` names keeps a HuC-3's clock, as the registry records it, by the
+/// same rule as [`layout_of`]. See [`Core::huc3_in`](one_saves_registry::Core::huc3_in).
+#[must_use]
+pub fn huc3_layout_of(source: Option<&one_saves::Source>) -> Option<Huc3Layout> {
+    let (core, app) = producer_of(source)?;
+    core.huc3_in(app)
 }
 
 /// The shape a bundle's producer writes, from what its `source` says.
 ///
-/// `source.core` names the engine that wrote the bytes, so it is what says which of the shapes
-/// to expect — not `source.app`, since RetroArch writes whatever its core does. The layout each
-/// core writes is registry data — see [`ClockLayout`] — rather than
-/// anything this module reads out of the slug: a core is not obliged to spell its own name in a
-/// way that gives its clock away, and two that do spell it the same way need not agree.
+/// The layout each core writes, in the app that ran it, is registry data (see [`layout_of`])
+/// rather than anything this module reads out of a slug: a core is not obliged to spell its own
+/// name in a way that gives its clock away, and two that do spell it the same way need not agree.
 ///
 /// A bundle naming nobody, or naming a core the registry records no clock for, gets the form most
 /// producers use. An appended footer goes back at the width key 3 says it had, which an older
 /// build of a core may have written narrower than the registry's entry for it.
+///
+/// Where the producer as named keeps the clock differently from how this one was read, the clock
+/// is what was written. An MBC3 records the width of the footer it was read from as key 3, and
+/// leaves the key out for one read from a file of its own, so a footer goes back as one whatever
+/// the registry says. And a bundle naming a core and no app means the core as its kind hosts it,
+/// or the app that ships the engine as its own: `--from mgba` is said of the mGBA app's `.sav` as
+/// much as of RetroArch's `.srm`. So where the core as its kind hosts it keeps no clock of the
+/// bundle's chip (mGBA's libretro core keeps neither a Seiko chip's nor a HuC-3's), the clock was
+/// read from the app's file, and goes back in the app's shape.
 #[must_use]
 pub fn form_of(bundle: &one_saves::Bundle) -> ClockForm {
-    let core = bundle.header.source.as_ref().and_then(|source| source.core.as_ref());
-    // `source.core` carries the slug for a listed core, which is what the registry is keyed by.
-    let layout = core.map(one_saves::Name::as_str).and_then(one_saves_registry::core).and_then(|c| c.clock);
-    match form_for(bundle, layout) {
-        ClockForm::Mbc3Appended(width) => ClockForm::Mbc3Appended(
-            bundle
-                .header
-                .extensions
-                .get::<RtcMbc3>()
-                .and_then(|clock| clock.timestamp_width)
-                .unwrap_or(width),
-        ),
-        form => form,
+    let width = bundle.header.extensions.get::<RtcMbc3>().and_then(|clock| clock.timestamp_width);
+    let as_read = |form| match (form, width) {
+        (ClockForm::Mbc3Appended(default), width) => ClockForm::Mbc3Appended(width.unwrap_or(default)),
+        (ClockForm::Sidecar(_), Some(width)) => ClockForm::Mbc3Appended(width),
+        (form, _) => form,
+    };
+    let Some((core, app)) = producer_of(bundle.header.source.as_ref()) else {
+        return as_read(form_for(bundle, None));
+    };
+    let form = as_read(form_in(bundle, core, app));
+    if app.is_some() || writes_a_clock(bundle, form) {
+        return form;
+    }
+    match one_saves_registry::app(core.slug).filter(|own| own.cores.builds.contains(&core.slug)) {
+        Some(own) => match as_read(form_in(bundle, core, Some(own))) {
+            own_form if writes_a_clock(bundle, own_form) => own_form,
+            _ => form,
+        },
+        None => form,
     }
 }
 
-/// The shape a core with `layout` writes this bundle's clock in: what writing a save for a chosen
-/// core takes, given that core's [`ClockLayout`] from the registry.
+/// Whether writing `bundle` in `form` puts its clock anywhere: on the end of the save or beside it.
+fn writes_a_clock(bundle: &one_saves::Bundle, form: ClockForm) -> bool {
+    footer_of_form(bundle, form).is_some() || sidecar_of_form(bundle, form).is_some()
+}
+
+/// Whether a sidecar's record holds a Seiko S-3511A. Every other one holds an MBC3, and an origin a
+/// HuC-3 as well.
+fn holds_seiko(record: SidecarRecord) -> bool {
+    matches!(record, SidecarRecord::PackedSeiko)
+}
+
+/// The shape `core` writes this bundle's clock in when `app` runs it: what writing a save for a
+/// chosen reader takes, from its registry entries for every chip.
+///
+/// See [`form_with`], and [`Core::clock_in`](one_saves_registry::Core::clock_in) for what the app
+/// changes.
+#[must_use]
+pub fn form_in(
+    bundle: &one_saves::Bundle,
+    core: &one_saves_registry::Core,
+    app: Option<&one_saves_registry::App>,
+) -> ClockForm {
+    form_with(bundle, core.clock_in(app), core.huc3_in(app))
+}
+
+/// The shape a core with `layout` writes this bundle's clock in, from its [`ClockLayout`] alone.
+///
+/// A HuC-3 follows a layout of its own, which this does not know; it is [`form_with`] with none,
+/// whose rule for that case is the one a packed footer implies. [`form_in`] knows both.
+#[must_use]
+pub fn form_for(bundle: &one_saves::Bundle, layout: Option<ClockLayout>) -> ClockForm {
+    form_with(bundle, layout, None)
+}
+
+/// The shape a core with `layout`, keeping a HuC-3 as `huc3` says, writes this bundle's clock in.
 ///
 /// Which chip wrote the state is the save's own business — a Seiko S-3511A is a Game Boy Advance
 /// part and an MBC3 a Game Boy one — so the bundle's key settles it, and what the core settles is
 /// the layout. mincer_ray keeps the chip in a file of its own and GBA_MiSTer packs it; every
-/// other GBA core appends it the way mGBA does.
+/// other GBA core that keeps one appends it the way the mGBA app does.
 ///
 /// An appended footer takes the width the core gives its timestamp. With no layout, it is the
 /// form most producers use, at the width key 3 says the clock's own footer had.
 ///
-/// A HuC-3 goes back into the packed footer, the one HuC-3 form read here: at the core's
-/// reserved size, or at MiSTer's with no layout. A core that keeps its HuC-3 some other way gets
-/// the MBC3 form its layout says, which writes nothing, since the bundle holds no MBC3.
+/// A sidecar is the record the core keeps, whichever chip the bundle holds. Writing it for a chip
+/// the record does not hold writes nothing, which is right: mGBA's libretro core keeps no Seiko
+/// clock, and a GBA game run there reads the host's.
+///
+/// A HuC-3 goes where `huc3` says: packed into the footer, an origin beside the save, the
+/// controller's window on the end of it, or nowhere. With nothing recorded it goes into the packed
+/// footer for a core that packs its MBC3, and at MiSTer's size for no core at all, as it always
+/// has; any other core is not known to keep one, and gets nothing.
 #[must_use]
-pub fn form_for(bundle: &one_saves::Bundle, layout: Option<ClockLayout>) -> ClockForm {
+pub fn form_with(
+    bundle: &one_saves::Bundle,
+    layout: Option<ClockLayout>,
+    huc3: Option<Huc3Layout>,
+) -> ClockForm {
     if bundle.header.extensions.contains_key(&RtcHuc3::KEY) {
-        match layout {
-            Some(ClockLayout::Packed { reserved, .. }) => return ClockForm::Huc3Packed(reserved),
-            None => return ClockForm::Huc3Packed(PACKED_LEN_MISTER),
-            Some(_) => {}
-        }
+        return match (huc3, layout) {
+            (Some(Huc3Layout::Packed { reserved }), _)
+            | (None, Some(ClockLayout::Packed { reserved, .. })) => ClockForm::Huc3Packed(reserved),
+            (Some(Huc3Layout::Origin { timestamp_width, big_endian }), _) => {
+                ClockForm::Sidecar(SidecarRecord::Origin { timestamp_width, big_endian })
+            }
+            (Some(Huc3Layout::Memory), _) => ClockForm::Huc3Memory,
+            (Some(Huc3Layout::SameBoy), _) => ClockForm::Huc3SameBoy,
+            (Some(Huc3Layout::Vbam), _) => ClockForm::Huc3Vbam,
+            (None, None) => ClockForm::Huc3Packed(PACKED_LEN_MISTER),
+            (Some(Huc3Layout::NotKept), _) | (None, Some(_)) => ClockForm::None,
+        };
     }
     if bundle.header.extensions.contains_key(&RtcS3511a::KEY) {
         return match layout {
-            Some(ClockLayout::Sidecar) => ClockForm::S3511aSidecar,
+            Some(ClockLayout::Sidecar(record)) => ClockForm::Sidecar(record),
             Some(ClockLayout::Packed { reserved, .. }) => ClockForm::S3511aPacked(reserved),
             Some(ClockLayout::Appended { .. }) | None => ClockForm::S3511a,
         };
     }
     match layout {
-        Some(ClockLayout::Sidecar) => ClockForm::Sidecar,
+        Some(ClockLayout::Sidecar(record)) => ClockForm::Sidecar(record),
         Some(ClockLayout::Packed { reserved, .. }) => ClockForm::Packed(reserved),
         Some(ClockLayout::Appended { timestamp_width }) => ClockForm::Mbc3Appended(timestamp_width),
         None => ClockForm::Mbc3Appended(
@@ -655,9 +931,14 @@ pub fn footer_of(bundle: &one_saves::Bundle) -> Option<Vec<u8>> {
 /// Rebuilds the footer in a chosen shape.
 #[must_use]
 pub fn footer_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec<u8>> {
-    // A sidecar is not appended at all, so there is no footer for the save to carry.
-    if matches!(form, ClockForm::Sidecar | ClockForm::S3511aSidecar) {
+    // A sidecar is not appended at all, so there is no footer for the save to carry, and a
+    // reader that keeps no clock has none anywhere.
+    if matches!(form, ClockForm::Sidecar(_) | ClockForm::None) {
         return None;
+    }
+    if form == ClockForm::Huc3Memory {
+        let chip = bundle.header.extensions.get::<RtcHuc3>()?;
+        return Some(build_huc3_memory(&chip.filled(), chip.taken_at.unwrap_or_else(now)));
     }
     if let ClockForm::S3511aPacked(reserved) = form {
         let (chip, anchor) = s3511a_of(bundle)?;
@@ -665,6 +946,12 @@ pub fn footer_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec
     }
     if let ClockForm::Huc3Packed(reserved) = form {
         return huc3_of(bundle).map(|clock| build_packed_huc3(&clock, reserved));
+    }
+    if form == ClockForm::Huc3SameBoy {
+        return huc3_of(bundle).map(|clock| build_sameboy_huc3(&clock));
+    }
+    if form == ClockForm::Huc3Vbam {
+        return huc3_of(bundle).map(|clock| build_vbam_huc3(&clock));
     }
     // A packed footer is built from an appended one, and keeps none of its width.
     let width = match form {
@@ -690,6 +977,23 @@ fn footer_of_mbc3(bundle: &one_saves::Bundle, width: u8) -> Option<Vec<u8>> {
     // registers.
     let clock = extensions.get::<RtcMbc3>()?;
     Some(build_mbc3(&clock.live, &clock.latched_or_live(), clock.taken_at, usize::from(width)))
+}
+
+/// The MBC3 a bundle carries, and nothing for any other chip: a record that holds an MBC3 is no
+/// place for a Seiko chip's calendar.
+fn mbc3_of(bundle: &one_saves::Bundle) -> Option<Mbc3Clock> {
+    let clock = bundle.header.extensions.get::<RtcMbc3>()?;
+    let [seconds, minutes, hours, days_low, days_high] = clock.live;
+    Some(Mbc3Clock {
+        seconds,
+        minutes,
+        hours,
+        days_low,
+        days_high,
+        latched: clock.latched,
+        taken_at: clock.taken_at,
+        timestamp_width: clock.timestamp_width.map(usize::from),
+    })
 }
 
 /// Reads the footer mGBA appends for a GBA cartridge clock.
@@ -856,7 +1160,7 @@ pub fn parse_packed_huc3(footer: &[u8]) -> Option<Huc3Clock> {
     if seconds > 59 || packed >> 34 != 0 {
         return None;
     }
-    Some(Huc3Clock { seconds, minutes, days, taken_at })
+    Some(Huc3Clock { seconds, minutes, days, taken_at, memory: None, alarm: None })
 }
 
 /// The host clock and the 48-bit word both packed footers open with, from one of the two sizes
@@ -904,14 +1208,39 @@ fn packed_footer(taken_at: i64, packed: u64, reserved: usize) -> Vec<u8> {
     footer
 }
 
-/// The length of the sidecar clock file Gambatte writes beside a save.
+/// The length of the sidecar clock file OpenEmu's Gambatte writes beside a save: its origin, four
+/// bytes big-endian.
 pub const GAMBATTE_RTC_LEN: usize = 4;
 
-/// Reads Gambatte's sidecar clock file, which stores an **origin** rather than a reading.
+/// The length of the sidecar clock file Gambatte's libretro core has a libretro frontend write on a
+/// 64-bit host: its origin as a `time_t`, eight bytes little-endian.
+pub const GAMBATTE_LIBRETRO_RTC_LEN: usize = 8;
+
+/// The length of the sidecar clock file SameBoy's libretro core has a libretro frontend write: the
+/// clock section of its machine state.
+pub const SAMEBOY_RTC_LEN: usize = 32;
+
+/// Where SameBoy's record keeps the host clock, after two five-byte register sets padded out to
+/// eight-byte alignment.
+const SAMEBOY_TAKEN_AT: usize = 16;
+
+/// Reads Gambatte's sidecar clock file as OpenEmu's build writes it: an origin in four big-endian
+/// bytes. See [`parse_origin`].
+#[must_use]
+pub fn parse_gambatte_sidecar(bytes: &[u8], captured_at: i64) -> Option<Mbc3Clock> {
+    if bytes.len() != GAMBATTE_RTC_LEN {
+        return None;
+    }
+    parse_origin(bytes, true, captured_at)
+}
+
+/// Reads a sidecar clock file that stores an **origin** rather than a reading, as Gambatte's does.
 ///
-/// The four bytes are a big-endian Unix instant, and Gambatte derives the cartridge clock as
-/// `now - base`. That is the other operand of a reading, not a reading: on its own it says
-/// nothing about what time the game thinks it is.
+/// The bytes are a Unix instant, four or eight of them in the byte order given, and Gambatte
+/// derives the cartridge clock as `now - base`. That is the other operand of a reading, not a
+/// reading: on its own it says nothing about what time the game thinks it is. OpenEmu's build
+/// writes four bytes big-endian; the libretro core hands its frontend the base itself, a
+/// `uint64_t`, which is eight bytes little-endian on every host it runs on.
 ///
 /// `captured_at` is what supplies the missing half: the moment the counters are taken at, which
 /// is the moment the producer reads them. The cartridge clock follows the host's, so the counters
@@ -924,18 +1253,8 @@ pub const GAMBATTE_RTC_LEN: usize = 4;
 /// The file keeps no latched copy and is no footer, so the clock has neither a latched copy nor a
 /// timestamp width.
 #[must_use]
-pub fn parse_gambatte_sidecar(bytes: &[u8], captured_at: i64) -> Option<Mbc3Clock> {
-    if bytes.len() != GAMBATTE_RTC_LEN {
-        return None;
-    }
-    let base = i64::from(u32::from_be_bytes(bytes.try_into().ok()?));
-    let elapsed = captured_at.checked_sub(base)?;
-    // A clock that has not started yet is not a clock; a base in the future means the instant is
-    // wrong rather than that the cartridge ran backwards.
-    if elapsed < 0 {
-        return None;
-    }
-
+pub fn parse_origin(bytes: &[u8], big_endian: bool, captured_at: i64) -> Option<Mbc3Clock> {
+    let elapsed = origin_elapsed(bytes, big_endian, captured_at)?;
     let days = elapsed / 86_400;
     let seconds = u32::try_from(elapsed % 60).ok()?;
     let minutes = u32::try_from(elapsed / 60 % 60).ok()?;
@@ -959,45 +1278,429 @@ pub fn parse_gambatte_sidecar(bytes: &[u8], captured_at: i64) -> Option<Mbc3Cloc
     })
 }
 
-/// Reads a sidecar clock file, whichever producer wrote it.
+/// How long a clock read from an origin had been running at `captured_at`: the instant in `bytes`,
+/// four or eight of them in the byte order given, taken from it.
 ///
-/// The two that exist share an extension and nothing else, and their lengths tell them apart:
-/// Gambatte's four bytes are an MBC3 origin, mincer_ray's sixteen an S-3511A reading. Only the
-/// first needs `captured_at` — see [`parse_gambatte_sidecar`] — and the second ignores it, since
-/// it records its own instant.
+/// A clock that has not started yet is not a clock, so a base in the future, or before 1970, means
+/// the instant is wrong rather than that the cartridge ran backwards.
+fn origin_elapsed(bytes: &[u8], big_endian: bool, captured_at: i64) -> Option<i64> {
+    let base = match (bytes.len(), big_endian) {
+        (4, true) => i64::from(u32::from_be_bytes(bytes.try_into().ok()?)),
+        (4, false) => i64::from(u32::from_le_bytes(bytes.try_into().ok()?)),
+        (8, true) => i64::from_be_bytes(bytes.try_into().ok()?),
+        (8, false) => i64::from_le_bytes(bytes.try_into().ok()?),
+        _ => return None,
+    };
+    let elapsed = captured_at.checked_sub(base)?;
+    (base >= 0 && elapsed >= 0).then_some(elapsed)
+}
+
+/// Reads a HuC-3's origin, as Gambatte and VBA-M keep one beside a save: the same instant they keep
+/// for an MBC3, from which they derive the minute of the day and a twelve-bit day count. See
+/// [`parse_origin`] for the instant.
+///
+/// The seconds into the minute are the remainder, which neither core shows a game but which says
+/// when the minute counter next moves. Nothing else of the controller is kept.
+#[must_use]
+pub fn parse_huc3_origin(bytes: &[u8], big_endian: bool, captured_at: i64) -> Option<Huc3Clock> {
+    let elapsed = origin_elapsed(bytes, big_endian, captured_at)?;
+    Some(Huc3Clock {
+        seconds: u8::try_from(elapsed % 60).ok()?,
+        minutes: u16::try_from(elapsed / 60 % 1440).ok()?,
+        days: u16::try_from((elapsed / 86_400) & 0xFFF).ok()?,
+        taken_at: captured_at,
+        memory: None,
+        alarm: None,
+    })
+}
+
+/// Writes a HuC-3's origin back out, `timestamp_width` bytes in the byte order given: the instant
+/// that many days, minutes and seconds before the anchor.
+///
+/// The cores keeping one count twelve bits of days, so a day counter past them is taken as they
+/// would take it, and the minute as the minute of the day.
+#[must_use]
+pub fn build_huc3_origin(clock: &Huc3Clock, timestamp_width: u8, big_endian: bool) -> Vec<u8> {
+    let elapsed = i64::from(clock.days & 0xFFF) * 86_400
+        + i64::from(clock.minutes % 1440) * 60
+        + i64::from(clock.seconds.min(59));
+    write_instant(clock.taken_at.saturating_sub(elapsed), timestamp_width, big_endian)
+}
+
+/// The length of the record the mGBA app appends to a save for a HuC-3: the controller's 256
+/// nybbles two to a byte, then the instant it was last latched, eight bytes.
+pub const HUC3_MEMORY_LEN: usize = 0x80 + 8;
+
+/// Reads the record the mGBA app appends for a HuC-3, `GBMBCHuC3SaveBuffer`:
+///
+/// ```text
+/// bytes 0..128    the controller's window, address 2n in the low nybble of byte n and 2n + 1 in
+///                 the high one
+/// bytes 128..136  the host clock it last latched the counters at, epoch seconds, little-endian
+/// ```
+///
+/// The counters are where every HuC-3 keeps them, and the rest of the window is the game's and
+/// kept with them. mGBA moves its latch a whole minute at a time, so no seconds are counted into
+/// the minute. Nothing in the bytes says it is a HuC-3's, which is why this is for a footer whose
+/// cartridge is known to have one; the instant is checked to be a time.
+#[must_use]
+pub fn parse_huc3_memory(footer: &[u8]) -> Option<Huc3Clock> {
+    if footer.len() != HUC3_MEMORY_LEN {
+        return None;
+    }
+    let mut memory = [0u8; 256];
+    for (at, byte) in footer[..0x80].iter().enumerate() {
+        memory[2 * at] = byte & 0x0F;
+        memory[2 * at + 1] = byte >> 4;
+    }
+    let taken_at = i64::from_le_bytes(footer[0x80..].try_into().ok()?);
+    let value = |at: usize, len: usize| {
+        memory[at..at + len].iter().rev().fold(0u16, |value, &nybble| value << 4 | u16::from(nybble))
+    };
+    (taken_at >= 0).then_some(Huc3Clock {
+        seconds: 0,
+        minutes: value(HUC3_COUNTERS, 3),
+        days: value(HUC3_COUNTERS + 3, 4),
+        taken_at,
+        memory: Some(memory),
+        alarm: None,
+    })
+}
+
+/// Writes the mGBA app's HuC-3 record back out, from the controller's window and the instant it
+/// was latched at. See [`parse_huc3_memory`].
+#[must_use]
+pub fn build_huc3_memory(memory: &[u8; 256], taken_at: i64) -> Vec<u8> {
+    let mut record: Vec<u8> = memory.chunks(2).map(|pair| (pair[0] & 0x0F) | (pair[1] & 0x0F) << 4).collect();
+    record.extend_from_slice(&taken_at.to_le_bytes());
+    record
+}
+
+/// The length of the record the SameBoy app appends to a save for a HuC-3.
+pub const SAMEBOY_HUC3_LEN: usize = 17;
+
+/// Reads the record the SameBoy app appends for a HuC-3, `GB_huc3_rtc_time_t`, packed:
+///
+/// ```text
+/// bytes 0..8    the host clock the counters were last moved at, epoch seconds, little-endian
+/// bytes 8..10   the minute counter
+/// bytes 10..12  the day counter
+/// bytes 12..14  the alarm's minute
+/// bytes 14..16  the alarm's day
+/// byte  16      whether the alarm is on
+/// ```
+///
+/// SameBoy moves the minute counter when the host's minute turns, so the seconds counted into the
+/// minute are its anchor's. It keeps the counters, the alarm and nothing else of the controller.
+/// The instant is checked to be a time and the counters to be a clock's, since nothing else in the
+/// bytes is checkable.
+#[must_use]
+pub fn parse_sameboy_huc3(footer: &[u8]) -> Option<Huc3Clock> {
+    if footer.len() != SAMEBOY_HUC3_LEN {
+        return None;
+    }
+    let word = |at: usize| u16::from_le_bytes([footer[at], footer[at + 1]]);
+    let taken_at = i64::from_le_bytes(footer[..8].try_into().ok()?);
+    let (minutes, days) = (word(8), word(10));
+    let alarm = Huc3Alarm { minutes: word(12), days: word(14), enabled: footer[16] & 1 != 0 };
+    (taken_at >= 0 && minutes < 1440 && alarm.minutes < 1440 && footer[16] <= 1).then_some(Huc3Clock {
+        seconds: u8::try_from(taken_at % 60).ok()?,
+        minutes,
+        days,
+        taken_at,
+        memory: None,
+        alarm: Some(alarm),
+    })
+}
+
+/// Writes the SameBoy app's HuC-3 record back out. See [`parse_sameboy_huc3`].
+///
+/// SameBoy keeps no seconds of its own, only its anchor's, so a clock counted some other number of
+/// seconds into its minute starts that minute at the anchor's second. An alarm the clock does not
+/// carry is the one the specification fills a null with: all zero, and off.
+#[must_use]
+pub fn build_sameboy_huc3(clock: &Huc3Clock) -> Vec<u8> {
+    let alarm = clock.alarm.or_else(|| clock.memory.as_ref().map(Huc3Alarm::of)).unwrap_or(Huc3Alarm {
+        minutes: 0,
+        days: 0,
+        enabled: false,
+    });
+    let mut record = Vec::with_capacity(SAMEBOY_HUC3_LEN);
+    record.extend_from_slice(&clock.taken_at.to_le_bytes());
+    for value in [clock.minutes, clock.days, alarm.minutes, alarm.days] {
+        record.extend_from_slice(&value.to_le_bytes());
+    }
+    record.push(u8::from(alarm.enabled));
+    record
+}
+
+/// The length of the record the VisualBoyAdvance-M app appends to a save for a HuC-3.
+pub const VBAM_HUC3_LEN: usize = 24;
+
+/// Reads the record the VisualBoyAdvance-M app appends for a HuC-3, `mapperHuC3RTC` from its
+/// `mapperLastTime`:
+///
+/// ```text
+/// bytes 0..8    the instant the counters count from, epoch seconds, little-endian
+/// bytes 8..12   the counters as a game last read them, the day count above the minute's twelve bits
+/// bytes 12..16  the counters as a game is writing them
+/// bytes 16..20  whether the controller is in its reading mode
+/// bytes 20..24  how far into the counters a game has read or written
+/// ```
+///
+/// The first is VBA-M's clock, the same origin its libretro core keeps beside the save, and the
+/// rest is where a game had got to talking to the controller; the counters come from the origin at
+/// `captured_at`, as [`parse_huc3_origin`] reads it.
+#[must_use]
+pub fn parse_vbam_huc3(footer: &[u8], captured_at: i64) -> Option<Huc3Clock> {
+    if footer.len() != VBAM_HUC3_LEN {
+        return None;
+    }
+    let word = |at: usize| u32::from_le_bytes(footer[at..at + 4].try_into().expect("four bytes"));
+    // A mode is a flag and a shift steps four bits at a time to 24, so anything else is not this.
+    let plausible = word(16) <= 1 && word(20) <= 24 && word(20) % 4 == 0;
+    plausible.then(|| parse_huc3_origin(&footer[..8], false, captured_at)).flatten()
+}
+
+/// Writes the VisualBoyAdvance-M app's HuC-3 record back out: the origin, then the controller as
+/// VBA-M leaves it between a game's conversations with it, reading mode on and the counters latched
+/// as they stand at the anchor. See [`parse_vbam_huc3`].
+#[must_use]
+pub fn build_vbam_huc3(clock: &Huc3Clock) -> Vec<u8> {
+    let mut record = build_huc3_origin(clock, 8, false);
+    let latched = u32::from(clock.days & 0xFFF) << 12 | u32::from(clock.minutes % 1440);
+    for word in [latched, 0, 1, 0] {
+        record.extend_from_slice(&u32::to_le_bytes(word));
+    }
+    record
+}
+
+/// Reads a sidecar clock file as a HuC-3's, as the producer keeps one (`layout`), or by its length
+/// where it is not known which.
+///
+/// Only an origin is ever kept beside the save for a HuC-3, so that is what a known producer's file
+/// is read as, at its width and byte order, and an unknown one's at the width the file has: four
+/// bytes big-endian as OpenEmu's Gambatte writes an origin, eight little-endian as a libretro core
+/// writes one. A producer that keeps a HuC-3 some other way, or not at all, keeps none here.
+#[must_use]
+pub fn parse_huc3_sidecar(bytes: &[u8], layout: Option<Huc3Layout>, captured_at: i64) -> Option<Huc3Clock> {
+    match layout {
+        Some(Huc3Layout::Origin { timestamp_width, big_endian })
+            if bytes.len() == usize::from(timestamp_width) =>
+        {
+            parse_huc3_origin(bytes, big_endian, captured_at)
+        }
+        Some(_) => None,
+        None => match bytes.len() {
+            GAMBATTE_RTC_LEN => parse_huc3_origin(bytes, true, captured_at),
+            GAMBATTE_LIBRETRO_RTC_LEN => parse_huc3_origin(bytes, false, captured_at),
+            _ => None,
+        },
+    }
+}
+
+/// Reads the record mGBA's and VBA-M's libretro cores keep beside a save: the MBC3 footer their
+/// standalone builds append, alone in a file.
+///
+/// Checked as [`parse_mbc3`] checks a footer. Read from a file of its own, it is no footer, so the
+/// clock carries no width, which is what says so in key 3.
+#[must_use]
+pub fn parse_registers_sidecar(bytes: &[u8]) -> Option<Mbc3Clock> {
+    parse_mbc3(bytes).map(|clock| Mbc3Clock { timestamp_width: None, ..clock })
+}
+
+/// Reads the record SameBoy's libretro core keeps beside a save, the clock section of its machine
+/// state, laid out by its C compiler on a little-endian host:
+///
+/// ```text
+/// bytes 0..5    the live registers, a byte each: seconds, minutes, hours, days, day high
+/// bytes 5..10   the latched copy, the same way
+/// bytes 10..16  padding to the next field's alignment
+/// bytes 16..24  the host clock when the registers were last brought up to date, epoch seconds
+/// bytes 24..28  the CPU cycles counted into the current second
+/// bytes 28      a TPP1 cartridge's fourth mode register, zero for an MBC3
+/// bytes 29..32  padding
+/// ```
+///
+/// The registers are checked as a footer's are, and the host clock has to be a time. The cycle
+/// count is less than a second of the clock and nothing here keeps it, so writing the record back
+/// starts that second over.
+#[must_use]
+pub fn parse_sameboy_sidecar(bytes: &[u8]) -> Option<Mbc3Clock> {
+    if bytes.len() != SAMEBOY_RTC_LEN {
+        return None;
+    }
+    let registers = |at: usize| -> [u32; 5] { std::array::from_fn(|i| u32::from(bytes[at + i])) };
+    let live = registers(0);
+    let latched = registers(5);
+    let taken_at = i64::from_le_bytes(bytes[SAMEBOY_TAKEN_AT..SAMEBOY_TAKEN_AT + 8].try_into().ok()?);
+    let sane = |[seconds, minutes, hours, ..]: [u32; 5]| seconds < 60 && minutes < 60 && hours < 24;
+    (sane(live) && sane(latched) && taken_at >= 0).then_some(Mbc3Clock {
+        seconds: live[0],
+        minutes: live[1],
+        hours: live[2],
+        days_low: live[3],
+        days_high: live[4],
+        latched: Some(latched),
+        taken_at,
+        timestamp_width: None,
+    })
+}
+
+/// Reads a sidecar clock file as `record` lays it out, and nothing else: a file of another length
+/// is not this record.
+///
+/// Only an origin needs `captured_at` (see [`parse_origin`]); every other record holds its own
+/// instant and ignores it.
+#[must_use]
+pub fn parse_sidecar_as(bytes: &[u8], record: SidecarRecord, captured_at: i64) -> Option<Clock> {
+    match record {
+        SidecarRecord::Origin { timestamp_width, big_endian }
+            if bytes.len() == usize::from(timestamp_width) =>
+        {
+            parse_origin(bytes, big_endian, captured_at).map(Clock::Mbc3)
+        }
+        SidecarRecord::Origin { .. } => None,
+        SidecarRecord::Registers { .. } => parse_registers_sidecar(bytes).map(Clock::Mbc3),
+        SidecarRecord::SameBoy => parse_sameboy_sidecar(bytes).map(Clock::Mbc3),
+        SidecarRecord::PackedSeiko => parse_mincer_sidecar(bytes).map(Clock::S3511a),
+    }
+}
+
+/// Reads a sidecar clock file whose producer nobody named, by its length.
+///
+/// The files share an extension and nothing else, and among the producers sampled the lengths
+/// tell them apart: four bytes are OpenEmu's Gambatte origin and eight the libretro core's, sixteen
+/// are mincer_ray's Seiko record, thirty-two SameBoy's and forty-eight mGBA's or VBA-M's
+/// registers. A producer that is known is read as its record says instead, by [`parse_sidecar_as`],
+/// since a length is only a guess at who wrote the file.
 #[must_use]
 pub fn parse_sidecar(bytes: &[u8], captured_at: i64) -> Option<Clock> {
-    match bytes.len() {
-        GAMBATTE_RTC_LEN => parse_gambatte_sidecar(bytes, captured_at).map(Clock::Mbc3),
-        MINCER_RTC_LEN => parse_mincer_sidecar(bytes).map(Clock::S3511a),
+    let record = match bytes.len() {
+        GAMBATTE_RTC_LEN => SidecarRecord::Origin { timestamp_width: 4, big_endian: true },
+        GAMBATTE_LIBRETRO_RTC_LEN => SidecarRecord::Origin { timestamp_width: 8, big_endian: false },
+        MINCER_RTC_LEN => SidecarRecord::PackedSeiko,
+        SAMEBOY_RTC_LEN => SidecarRecord::SameBoy,
+        MBC3_LEN_32 | MBC3_LEN_64 => SidecarRecord::Registers { timestamp_width: 8 },
+        _ => return None,
+    };
+    parse_sidecar_as(bytes, record, captured_at)
+}
+
+/// Whether reading a sidecar `len` bytes long takes the instant it is read at: true of an origin,
+/// which is no reading until one is supplied, and of nothing else.
+///
+/// `record` is the producer's, where it is known. A file that is not that record is read by its
+/// length, as [`parse_sidecar`] reads one whose producer nobody named, so its length can make it an
+/// origin too.
+#[must_use]
+pub fn sidecar_takes_instant(record: Option<SidecarRecord>, len: usize) -> bool {
+    matches!(record, Some(SidecarRecord::Origin { .. }))
+        || matches!(len, GAMBATTE_RTC_LEN | GAMBATTE_LIBRETRO_RTC_LEN)
+}
+
+/// The record the producer a `source` names keeps its clock in beside the save, when it keeps one
+/// there.
+#[must_use]
+pub fn sidecar_record_of(source: Option<&one_saves::Source>) -> Option<SidecarRecord> {
+    match layout_of(source)? {
+        ClockLayout::Sidecar(record) => Some(record),
         _ => None,
     }
 }
 
-/// Rebuilds the sidecar file a bundle's clock goes in.
+/// Rebuilds the sidecar file a bundle's clock goes in, in a chosen shape.
 ///
-/// Which file that is follows from the chip, since one producer keeps each in a file of its own:
-/// an MBC3 goes back as Gambatte's origin and an S-3511A as mincer_ray's record.
+/// `None` for a shape that is not a sidecar, for a bundle with no clock, and for a clock of a chip
+/// the record does not hold, which the core keeps no file for.
 #[must_use]
-pub fn sidecar_of(bundle: &one_saves::Bundle) -> Option<Vec<u8>> {
-    if let Some((chip, anchor)) = s3511a_of(bundle) {
+pub fn sidecar_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec<u8>> {
+    let ClockForm::Sidecar(record) = form else { return None };
+    if holds_seiko(record) {
+        let (chip, anchor) = s3511a_of(bundle)?;
         return Some(build_mincer_sidecar(&chip.components, chip.control, anchor));
     }
-    let footer = footer_of_mbc3(bundle, RtcMbc3::DEFAULT_TIMESTAMP_WIDTH)?;
-    // `footer_of` rebuilds the appended form; reading it back gives the registers to work from.
-    let clock = parse_mbc3(&footer)?;
-    Some(build_gambatte_sidecar(&clock))
+    // An origin is the one record kept for a HuC-3 as well as an MBC3.
+    if let SidecarRecord::Origin { timestamp_width, big_endian } = record
+        && let Some(clock) = huc3_of(bundle)
+    {
+        return Some(build_huc3_origin(&clock, timestamp_width, big_endian));
+    }
+    let clock = mbc3_of(bundle)?;
+    Some(match record {
+        SidecarRecord::Origin { timestamp_width, big_endian } => {
+            build_origin(&clock, timestamp_width, big_endian)
+        }
+        SidecarRecord::Registers { timestamp_width } => build_mbc3(
+            &clock.live(),
+            &clock.latched.unwrap_or(clock.live()),
+            clock.taken_at,
+            usize::from(timestamp_width),
+        ),
+        SidecarRecord::SameBoy => build_sameboy_sidecar(&clock),
+        SidecarRecord::PackedSeiko => unreachable!("a Seiko record was written above"),
+    })
 }
 
-/// Writes Gambatte's sidecar back out: the origin the clock is derived from, big-endian.
+/// Rebuilds the sidecar file a bundle's clock goes in.
+///
+/// The file the bundle's producer keeps, where its producer keeps one (see [`form_of`]). Otherwise
+/// the one a core keeping such a file for this chip writes: Gambatte's libretro origin for an MBC3
+/// or a HuC-3, and mincer_ray's record for a Seiko chip. Which core will read it is the better
+/// question, and [`sidecar_of_form`] answers it.
+#[must_use]
+pub fn sidecar_of(bundle: &one_saves::Bundle) -> Option<Vec<u8>> {
+    use one_saves_registry::cores::{GAMBATTE, MINCER_RAY_GBA};
+    let form = match form_of(bundle) {
+        form @ ClockForm::Sidecar(_) => form,
+        _ if s3511a_of(bundle).is_some() => form_in(bundle, &MINCER_RAY_GBA, None),
+        _ => form_in(bundle, &GAMBATTE, None),
+    };
+    sidecar_of_form(bundle, form)
+}
+
+/// Writes Gambatte's sidecar back out as OpenEmu's build writes it: the origin the clock is
+/// derived from, four bytes big-endian.
 #[must_use]
 pub fn build_gambatte_sidecar(clock: &Mbc3Clock) -> Vec<u8> {
-    let elapsed = i64::from(clock.days()) * 86_400
-        + i64::from(clock.hours) * 3_600
-        + i64::from(clock.minutes) * 60
-        + i64::from(clock.seconds);
-    let base = clock.taken_at.saturating_sub(elapsed);
-    u32::try_from(base).unwrap_or(0).to_be_bytes().to_vec()
+    build_origin(clock, 4, true)
+}
+
+/// Writes an origin back out: the instant the clock is derived from, `timestamp_width` bytes in
+/// the byte order given. See [`parse_origin`].
+///
+/// An instant four bytes cannot hold is written as zero, which reads back as a clock that has been
+/// running since 1970 rather than as some other plausible time.
+#[must_use]
+pub fn build_origin(clock: &Mbc3Clock, timestamp_width: u8, big_endian: bool) -> Vec<u8> {
+    write_instant(clock.taken_at.saturating_sub(clock.elapsed_seconds()), timestamp_width, big_endian)
+}
+
+/// An instant as an origin keeps one, `timestamp_width` bytes in the byte order given, and zero
+/// where four bytes cannot hold it.
+fn write_instant(base: i64, timestamp_width: u8, big_endian: bool) -> Vec<u8> {
+    match (timestamp_width, big_endian) {
+        (4, true) => u32::try_from(base).unwrap_or(0).to_be_bytes().to_vec(),
+        (4, false) => u32::try_from(base).unwrap_or(0).to_le_bytes().to_vec(),
+        (_, true) => base.to_be_bytes().to_vec(),
+        (_, false) => base.to_le_bytes().to_vec(),
+    }
+}
+
+/// Writes SameBoy's record back out. See [`parse_sameboy_sidecar`] for the layout.
+///
+/// A source that kept no latched copy gets the live registers in its place, and the cycles into
+/// the current second, which no bundle keeps, start from zero.
+#[must_use]
+pub fn build_sameboy_sidecar(clock: &Mbc3Clock) -> Vec<u8> {
+    let byte = |value: u32| u8::try_from(value & 0xFF).expect("masked to a byte");
+    let mut record = Vec::with_capacity(SAMEBOY_RTC_LEN);
+    record.extend(clock.live().map(byte));
+    record.extend(clock.latched.unwrap_or(clock.live()).map(byte));
+    record.resize(SAMEBOY_TAKEN_AT, 0);
+    record.extend_from_slice(&clock.taken_at.to_le_bytes());
+    record.resize(SAMEBOY_RTC_LEN, 0);
+    record
 }
 
 /// The control register the MiSTer GBA core and its Pocket port start with: 24-hour mode.
@@ -1556,11 +2259,97 @@ mod tests {
         assert_eq!(build_mincer_sidecar(&clock.components, clock.control, clock.taken_at), MINCER_SIDECAR);
     }
 
+    /// The `.rtc` mGBA's libretro core had RetroArch write beside a real Pokémon Crystal save: the
+    /// clock one second in, latched, at 2026-11-04 07:31:29 UTC. The same forty-eight bytes the
+    /// mGBA app appends to its `.sav`.
+    const MGBA_LIBRETRO_SIDECAR: [u8; 48] = [
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // live
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // latched
+        0x51, 0xdf, 0xea, 0x6a, 0, 0, 0, 0, // taken_at, 64-bit
+    ];
+
+    /// The `.rtc` Gambatte's libretro core had RetroArch write beside the same save: its origin as
+    /// the core's `uint64_t`, little-endian.
+    const GAMBATTE_LIBRETRO_SIDECAR: [u8; 8] = [0x4f, 0xdf, 0xea, 0x6a, 0, 0, 0, 0];
+
+    /// The `.rtc` SameBoy's libretro core had RetroArch write beside the same save: nine seconds
+    /// in, latched, the host clock at 16 and 242448 cycles into the second at 24.
+    const SAMEBOY_LIBRETRO_SIDECAR: [u8; 32] = [
+        0x09, 0, 0, 0, 0, 0x09, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // live, latched, padding
+        0x5a, 0xdf, 0xea, 0x6a, 0, 0, 0, 0, // taken_at
+        0x10, 0xb3, 0x03, 0, 0, 0, 0, 0, // cycles, the TPP1 register, padding
+    ];
+
     #[test]
-    fn the_two_sidecars_are_told_apart_by_length() {
+    fn the_sidecars_are_told_apart_by_length() {
         assert!(matches!(parse_sidecar(&MINCER_SIDECAR, 0), Some(Clock::S3511a(_))));
         assert!(matches!(parse_sidecar(&GAMBATTE_SIDECAR, GAMBATTE_WRITTEN_AT), Some(Clock::Mbc3(_))));
+        let at = 1_793_777_500;
+        assert!(matches!(parse_sidecar(&GAMBATTE_LIBRETRO_SIDECAR, at), Some(Clock::Mbc3(_))));
+        assert!(matches!(parse_sidecar(&SAMEBOY_LIBRETRO_SIDECAR, 0), Some(Clock::Mbc3(_))));
+        assert!(matches!(parse_sidecar(&MGBA_LIBRETRO_SIDECAR, 0), Some(Clock::Mbc3(_))));
+        // Half a Seiko record is eight bytes, the length of an origin, and an origin that far in
+        // the future is no clock.
         assert_eq!(parse_sidecar(&MINCER_SIDECAR[..8], 0), None);
+        assert_eq!(parse_sidecar(&MINCER_SIDECAR[..12], 0), None);
+    }
+
+    #[test]
+    fn a_named_record_reads_only_its_own_shape() {
+        let origin = |width, big_endian| SidecarRecord::Origin { timestamp_width: width, big_endian };
+        let at = 1_793_777_500;
+        assert!(parse_sidecar_as(&GAMBATTE_LIBRETRO_SIDECAR, origin(8, false), at).is_some());
+        // OpenEmu's four big-endian bytes are not the libretro core's eight little-endian ones.
+        assert_eq!(parse_sidecar_as(&GAMBATTE_SIDECAR, origin(8, false), GAMBATTE_WRITTEN_AT), None);
+        assert!(parse_sidecar_as(&GAMBATTE_SIDECAR, origin(4, true), GAMBATTE_WRITTEN_AT).is_some());
+        // Nor is anything else the record of another.
+        let registers = SidecarRecord::Registers { timestamp_width: 8 };
+        assert_eq!(parse_sidecar_as(&SAMEBOY_LIBRETRO_SIDECAR, registers, 0), None);
+        assert_eq!(parse_sidecar_as(&MGBA_LIBRETRO_SIDECAR, SidecarRecord::SameBoy, 0), None);
+        assert_eq!(parse_sidecar_as(&MGBA_LIBRETRO_SIDECAR, SidecarRecord::PackedSeiko, 0), None);
+    }
+
+    #[test]
+    fn reads_a_real_gambatte_libretro_sidecar_and_round_trips_it() {
+        // The base is 2026-11-04 07:31:27 UTC; read 73 seconds later, the clock has run that long.
+        let at = 1_793_777_487 + 73;
+        let clock = parse_origin(&GAMBATTE_LIBRETRO_SIDECAR, false, at).expect("a clock");
+        assert_eq!((clock.days(), clock.hours, clock.minutes, clock.seconds), (0, 0, 1, 13));
+        assert_eq!((clock.taken_at, clock.latched, clock.timestamp_width), (at, None, None));
+        assert_eq!(build_origin(&clock, 8, false), GAMBATTE_LIBRETRO_SIDECAR);
+        // The same origin as OpenEmu writes it.
+        assert_eq!(build_origin(&clock, 4, true), 1_793_777_487u32.to_be_bytes());
+    }
+
+    #[test]
+    fn reads_a_real_mgba_libretro_sidecar_as_no_footer() {
+        let clock = parse_registers_sidecar(&MGBA_LIBRETRO_SIDECAR).expect("a clock");
+        assert_eq!(clock.live(), [1, 0, 0, 0, 0]);
+        assert_eq!(clock.latched, Some([1, 0, 0, 0, 0]));
+        assert_eq!(clock.taken_at, 1_793_777_489);
+        // Read from a file of its own, it had no footer to have a width, and key 3 says so.
+        assert_eq!(clock.timestamp_width, None);
+        assert_eq!(
+            build_mbc3(&clock.live(), &clock.latched.unwrap(), clock.taken_at, 8),
+            MGBA_LIBRETRO_SIDECAR
+        );
+    }
+
+    #[test]
+    fn reads_a_real_sameboy_libretro_sidecar_and_rebuilds_all_but_its_cycles() {
+        let clock = parse_sameboy_sidecar(&SAMEBOY_LIBRETRO_SIDECAR).expect("a clock");
+        assert_eq!(clock.live(), [9, 0, 0, 0, 0]);
+        assert_eq!(clock.latched, Some([9, 0, 0, 0, 0]));
+        assert_eq!((clock.taken_at, clock.timestamp_width), (1_793_777_498, None));
+        // The cycles into the second are the one thing no bundle keeps.
+        let mut expected = SAMEBOY_LIBRETRO_SIDECAR;
+        expected[24..28].fill(0);
+        assert_eq!(build_sameboy_sidecar(&clock), expected);
+
+        // A register out of range is not SameBoy's clock.
+        let mut bad = SAMEBOY_LIBRETRO_SIDECAR;
+        bad[1] = 60;
+        assert_eq!(parse_sameboy_sidecar(&bad), None);
     }
 
     #[test]
@@ -1607,23 +2396,34 @@ mod tests {
             reading: clock.reading(),
             clock: Clock::S3511a(clock),
         };
-        let bundle = |core: &str| {
-            let header = Header::default()
-                .source(Source::default().core(Name::parse(core).unwrap()))
-                .extensions(split.extensions());
+        let in_app = |app: Option<&str>, core: &str| {
+            let source = Source::default()
+                .app(app.map(|app| Name::parse(app).unwrap()))
+                .core(Name::parse(core).unwrap());
+            let header = Header::default().source(source).extensions(split.extensions());
             one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")])
         };
+        let bundle = |core: &str| in_app(None, core);
 
         let mincer = bundle("mincer-ray-gba");
-        assert_eq!(form_of(&mincer), ClockForm::S3511aSidecar);
+        assert_eq!(form_of(&mincer), ClockForm::Sidecar(SidecarRecord::PackedSeiko));
         // Kept in a file of its own, so the save carries nothing.
         assert_eq!(footer_of(&mincer), None);
         assert_eq!(sidecar_of(&mincer).as_deref(), Some(&MINCER_SIDECAR[..]));
 
-        // The same clock handed to mGBA is mGBA's own footer for that moment, byte for byte.
-        let mgba = bundle("mgba");
-        assert_eq!(form_of(&mgba), ClockForm::S3511a);
-        assert_eq!(footer_of(&mgba).as_deref(), Some(&RUBY_FOOTER[..]));
+        // The same clock handed to the mGBA app is the app's own footer for that moment, byte for
+        // byte. And to mGBA with no app named: its libretro core keeps no Seiko clock, so a Seiko
+        // clock under its name was read off the end of the app's file.
+        for mgba in [in_app(Some("mgba"), "mgba"), bundle("mgba")] {
+            assert_eq!(form_of(&mgba), ClockForm::S3511a);
+            assert_eq!(footer_of(&mgba).as_deref(), Some(&RUBY_FOOTER[..]));
+        }
+
+        // Written for RetroArch's mGBA there is nothing to write at all: a GBA game there reads
+        // the host's clock.
+        let form = form_for(&mincer, one_saves_registry::cores::MGBA.clock);
+        assert_eq!(form, ClockForm::Sidecar(SidecarRecord::Registers { timestamp_width: 8 }));
+        assert_eq!((footer_of_form(&mincer, form), sidecar_of_form(&mincer, form)), (None, None));
     }
 
     /// One record of the block GBA_MiSTer appends, for the moment `RUBY_FOOTER` holds: the word
@@ -1974,7 +2774,7 @@ mod tests {
         let clock = split_for(&save, Some("gb"), Some("x.1sav.rtc.huc3")).expect("a clock").clock;
         assert!(matches!(clock, Clock::Huc3(Huc3Clock { days: 10, minutes: 20, seconds: 5, .. })));
 
-        // No HuC-3 read here is kept in an appended footer, so one stays in the save.
+        // An MBC3's footer is no HuC-3's, so one stays in the save.
         let mut appended = vec![0u8; 8192];
         appended.extend_from_slice(&mbc3_footer(1, 2, 3, 4, 1_700_000_000));
         assert_eq!(split_for(&appended, Some("gb"), Some("x.1sav.rtc.huc3")), None);
@@ -2005,8 +2805,18 @@ mod tests {
             Some(&huc3_footer(3000, 825, 37, PACKED_LEN_POCKET)[..])
         );
         assert_eq!(footer(None), Some(original), "naming no core, MiSTer's");
-        // mGBA keeps a HuC-3 its own way, which this module does not write.
-        assert_eq!(footer(Some("mgba")), None);
+        // mGBA's libretro core keeps none, so a HuC-3 under its name came off the app's file, and
+        // goes back as the app keeps it: the counters at their addresses in the whole window.
+        let app = footer(Some("mgba")).expect("the app's footer");
+        let back = parse_huc3_memory(&app).expect("the app's record");
+        assert_eq!((back.days, back.minutes, back.taken_at), (3000, 825, 1_786_533_688));
+        // SameBoy's libretro core keeps none either, so the same goes for the SameBoy app's record:
+        // the anchor, the two counters and an alarm nobody set.
+        let app = footer(Some("sameboy")).expect("the app's footer");
+        assert_eq!(app.len(), SAMEBOY_HUC3_LEN);
+        let back = parse_sameboy_huc3(&app).expect("the app's record");
+        assert_eq!((back.days, back.minutes, back.taken_at), (3000, 825, 1_786_533_688));
+        assert_eq!(back.alarm, Some(Huc3Alarm { minutes: 0, days: 0, enabled: false }));
 
         // A key from a source that kept less is filled the way the specification fills it.
         let mut sparse = RtcHuc3::from(clock);
@@ -2023,6 +2833,153 @@ mod tests {
         );
     }
 
+    /// The `.rtc` Gambatte's libretro core had RetroArch write beside a real Robopon Sun save: the
+    /// HuC-3's origin, the same eight bytes it keeps for an MBC3.
+    const GAMBATTE_HUC3_SIDECAR: [u8; 8] = [0x55, 0xdf, 0xea, 0x6a, 0, 0, 0, 0];
+
+    #[test]
+    fn a_huc3_origin_reads_as_gambatte_and_vba_m_count_from_it() {
+        // Three days, two hours, five minutes and seven seconds after the origin.
+        let base = 1_793_777_493;
+        let at = base + 3 * 86_400 + 125 * 60 + 7;
+        let clock = parse_huc3_origin(&GAMBATTE_HUC3_SIDECAR, false, at).expect("a clock");
+        assert_eq!((clock.days, clock.minutes, clock.seconds, clock.taken_at), (3, 125, 7, at));
+        assert_eq!(clock.memory, None, "nothing of the controller is kept");
+        // Written back, the origin comes out as it went in, in either core's shape.
+        assert_eq!(build_huc3_origin(&clock, 8, false), GAMBATTE_HUC3_SIDECAR);
+        assert_eq!(build_huc3_origin(&clock, 4, true), 1_793_777_493u32.to_be_bytes());
+
+        // The minute is the minute of the day and the days twelve bits, as both cores count them.
+        let late =
+            parse_huc3_origin(&GAMBATTE_HUC3_SIDECAR, false, base + 4097 * 86_400 + 1439 * 60).unwrap();
+        assert_eq!((late.days, late.minutes), (1, 1439));
+        // And an origin after the moment it is read at is no clock.
+        assert_eq!(parse_huc3_origin(&GAMBATTE_HUC3_SIDECAR, false, base - 1), None);
+    }
+
+    #[test]
+    fn a_huc3_sidecar_is_read_as_its_producer_keeps_one() {
+        let at = 1_793_777_493 + 60;
+        let origin = Some(Huc3Layout::Origin { timestamp_width: 8, big_endian: false });
+        assert_eq!(parse_huc3_sidecar(&GAMBATTE_HUC3_SIDECAR, origin, at).map(|c| c.minutes), Some(1));
+        // A producer keeping none, or keeping it on the end of the save, keeps nothing here.
+        for layout in [Huc3Layout::NotKept, Huc3Layout::Memory, Huc3Layout::Packed { reserved: 512 }] {
+            assert_eq!(parse_huc3_sidecar(&GAMBATTE_HUC3_SIDECAR, Some(layout), at), None, "{layout:?}");
+        }
+        // Nobody named, the length says which origin it is.
+        assert!(parse_huc3_sidecar(&GAMBATTE_HUC3_SIDECAR, None, at).is_some());
+        assert!(parse_huc3_sidecar(&1_793_777_493u32.to_be_bytes(), None, at).is_some());
+        assert_eq!(parse_huc3_sidecar(&[0; 48], None, at), None);
+    }
+
+    /// The record the mGBA app appends for a HuC-3, laid out as `GBMBCHuC3Write` lays it: every
+    /// nybble its address's own value, so a nybble put in the wrong half shows, then the latch time.
+    fn mgba_huc3_record() -> Vec<u8> {
+        let memory: [u8; 256] = std::array::from_fn(|at| u8::try_from(at % 16).unwrap());
+        let mut record: Vec<u8> = (0..0x80).map(|n| memory[2 * n] | memory[2 * n + 1] << 4).collect();
+        record.extend_from_slice(&1_793_779_606i64.to_le_bytes());
+        record
+    }
+
+    #[test]
+    fn the_mgba_apps_huc3_record_is_read_whole_and_written_back_whole() {
+        let record = mgba_huc3_record();
+        assert_eq!(record.len(), HUC3_MEMORY_LEN);
+        let clock = parse_huc3_memory(&record).expect("a clock");
+        // The counters are the nybbles at 0x10 to 0x12 and 0x13 to 0x16, least significant first.
+        assert_eq!((clock.minutes, clock.days), (0x210, 0x6543));
+        assert_eq!((clock.seconds, clock.taken_at), (0, 1_793_779_606));
+        let memory = clock.memory.expect("the whole window");
+        assert_eq!((memory[0x10], memory[0x11], memory[0xFF]), (0, 1, 15));
+        assert_eq!(build_huc3_memory(&memory, clock.taken_at), record);
+
+        // Every address goes into the key, so the game's own nybbles come back from it.
+        let key = RtcHuc3::from(clock);
+        assert!(key.memory.iter().all(Option::is_some));
+        assert_eq!(build_huc3_memory(&key.filled(), clock.taken_at), record);
+
+        // It is a footer only on a cartridge the ROM says has a HuC-3.
+        let mut save = vec![0x33u8; 32_768];
+        save.extend_from_slice(&record);
+        assert_eq!(split(&save, Some("gbc")), None);
+        let split = split_for(&save, Some("gbc"), Some("x.1sav.rtc.huc3")).expect("a clock");
+        assert_eq!((split.sram.len(), split.clock), (32_768, Clock::Huc3(clock)));
+        // A latch before 1970 is no time mGBA took.
+        let mut negative = record;
+        negative[HUC3_MEMORY_LEN - 1] = 0x80;
+        assert_eq!(parse_huc3_memory(&negative), None);
+    }
+
+    #[test]
+    fn a_huc3_goes_where_each_reader_keeps_one() {
+        use one_saves_registry::{apps, cores};
+        let clock = Huc3Clock {
+            seconds: 7,
+            minutes: 125,
+            days: 3,
+            taken_at: 1_793_777_493,
+            memory: None,
+            alarm: None,
+        };
+        let bundle = huc3_bundle(&clock, None, None);
+        let origin = ClockForm::Sidecar(SidecarRecord::Origin { timestamp_width: 8, big_endian: false });
+        for (core, app, want) in [
+            (&cores::GAMEBOY_MISTER, None, ClockForm::Huc3Packed(PACKED_LEN_MISTER)),
+            (&cores::BUDUDE2_GBC, None, ClockForm::Huc3Packed(PACKED_LEN_POCKET)),
+            (&cores::GAMBATTE, Some(&apps::RETROARCH), origin),
+            (&cores::VBA_M, Some(&apps::RETROARCH), origin),
+            (&cores::MGBA, Some(&apps::MGBA), ClockForm::Huc3Memory),
+            (&cores::MGBA, Some(&apps::RETROARCH), ClockForm::None),
+            (&cores::SAMEBOY, Some(&apps::RETROARCH), ClockForm::None),
+            // Nobody has seen OpenEmu's Gambatte with one, so nothing is guessed for it.
+            (&cores::GAMBATTE, Some(&apps::OPENEMU), ClockForm::None),
+        ] {
+            assert_eq!(form_in(&bundle, core, app), want, "{} in {:?}", core.slug, app.map(|a| a.slug));
+        }
+
+        // Each written: the origin the clock counts from, beside the save; the app's window on the
+        // end of it; or nothing at all.
+        let beside = sidecar_of_form(&bundle, origin).expect("an origin");
+        assert_eq!(parse_huc3_origin(&beside, false, clock.taken_at), Some(clock));
+        assert_eq!(footer_of_form(&bundle, origin), None);
+        let memory = footer_of_form(&bundle, ClockForm::Huc3Memory).expect("the app's record");
+        let back = parse_huc3_memory(&memory).expect("reads back");
+        assert_eq!((back.days, back.minutes, back.taken_at), (3, 125, clock.taken_at));
+        assert_eq!(
+            (footer_of_form(&bundle, ClockForm::None), sidecar_of_form(&bundle, ClockForm::None)),
+            (None, None)
+        );
+        // A record that holds an MBC3 alone has no HuC-3 in it.
+        assert_eq!(sidecar_of_form(&bundle, ClockForm::Sidecar(SidecarRecord::SameBoy)), None);
+        // Asked for a sidecar with no reader in mind, Gambatte's.
+        assert_eq!(sidecar_of(&bundle), Some(beside));
+    }
+
+    #[test]
+    fn a_huc3_read_from_the_mgba_app_goes_back_to_it() {
+        // `--from mgba` names no app. The libretro core keeps no HuC-3, so the clock came from the
+        // app's footer, and that is the file it gets back, the game's nybbles and all.
+        let clock = parse_huc3_memory(&mgba_huc3_record()).expect("a clock");
+        let bundle = huc3_bundle(&clock, None, Some("mgba"));
+        assert_eq!(form_of(&bundle), ClockForm::Huc3Memory);
+        assert_eq!(footer_of(&bundle), Some(mgba_huc3_record()));
+        // Named as RetroArch's, it is that and nothing else.
+        assert_eq!(form_of(&huc3_bundle(&clock, Some("retroarch"), Some("mgba"))), ClockForm::None);
+    }
+
+    /// A bundle carrying a HuC-3, from the producer `app` and `core` name.
+    fn huc3_bundle(clock: &Huc3Clock, app: Option<&str>, core: Option<&str>) -> one_saves::Bundle {
+        use one_saves::{Header, Name, Part, Source};
+        let mut extensions = Extensions::new();
+        extensions.insert(RtcHuc3::from(*clock));
+        let name = |text: Option<&str>| text.map(|text| Name::parse(text).unwrap());
+        let source = Source::default().app(name(app)).core(name(core));
+        one_saves::Bundle::new(
+            Header::default().source(source).extensions(extensions),
+            vec![Part::new(0, *b"SAVE")],
+        )
+    }
+
     #[test]
     fn a_gba_save_of_the_same_length_is_read_as_the_seiko_chip() {
         // Both producers write sixteen bytes; the system is what tells them apart.
@@ -2035,69 +2992,101 @@ mod tests {
         assert!(matches!(split(&gb, Some("gb")).unwrap().clock, Clock::Mbc3(_)));
     }
 
-    #[test]
-    fn the_producer_decides_which_shape_is_written_back() {
-        // Four producers, one clock, four encodings. The bundle records the clock; `source.core`
-        // is what says which shape to put it back in, so a round trip returns the file the
-        // emulator would have written rather than some other emulator's idea of it. The width is
-        // the one SameBoy and mGBA give the timestamp, which the other two forms have no use for.
+    /// A bundle carrying `clock`, from the producer `app` and `core` name.
+    fn bundle_with(clock: Mbc3Clock, app: Option<&str>, core: Option<&str>) -> one_saves::Bundle {
         use one_saves::{Header, Name, Part, Source};
-        let clock = Mbc3Clock { timestamp_width: Some(8), ..parse_packed(&POCKET_FIRST).expect("a clock") };
         let split = Split {
             sram: Vec::new(),
             footer: Vec::new(),
             reading: Some(clock.reading()),
             clock: Clock::Mbc3(clock),
         };
+        let name = |text: Option<&str>| text.map(|text| Name::parse(text).unwrap());
+        let source = Source::default().app(name(app)).core(name(core));
+        one_saves::Bundle::new(
+            Header::default().source(source).extensions(split.extensions()),
+            vec![Part::new(0, *b"SAVE")],
+        )
+    }
 
+    #[test]
+    fn the_producer_decides_which_shape_is_written_back() {
+        // Producers that read one clock four ways. The bundle records the clock; `source` is what
+        // says which shape to put it back in, so a round trip returns the file the emulator would
+        // have written rather than some other emulator's idea of it. The clock is one read from a
+        // file of its own, with no footer width, as every libretro core's is.
+        let clock = Mbc3Clock { timestamp_width: None, ..parse_packed(&POCKET_FIRST).expect("a clock") };
+        let origin = SidecarRecord::Origin { timestamp_width: 8, big_endian: false };
+        let registers = SidecarRecord::Registers { timestamp_width: 8 };
         for (core, want) in [
             ("budude2-gbc", ClockForm::Packed(PACKED_LEN_POCKET)),
-            ("gambatte", ClockForm::Sidecar),
-            ("sameboy", ClockForm::Mbc3Appended(8)),
-            ("mgba", ClockForm::Mbc3Appended(8)),
+            ("gambatte", ClockForm::Sidecar(origin)),
+            ("sameboy", ClockForm::Sidecar(SidecarRecord::SameBoy)),
+            ("mgba", ClockForm::Sidecar(registers)),
+            ("vba-m", ClockForm::Sidecar(registers)),
         ] {
-            let header = Header::default()
-                .source(Source::default().core(Name::parse(core).unwrap()))
-                .extensions(split.extensions());
-            let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
+            let bundle = bundle_with(clock, None, Some(core));
             assert_eq!(form_of(&bundle), want, "{core}");
 
             match want {
                 // A sidecar is not appended, so there is nothing for the save to carry.
-                ClockForm::Sidecar => {
-                    assert_eq!(footer_of(&bundle), None);
-                    assert!(sidecar_of(&bundle).is_some());
+                ClockForm::Sidecar(_) => {
+                    assert_eq!(footer_of(&bundle), None, "{core}");
+                    assert_eq!(sidecar_of(&bundle), sidecar_of_form(&bundle, want), "{core}");
                 }
-                ClockForm::Packed(PACKED_LEN_POCKET) => {
-                    assert_eq!(footer_of(&bundle).as_deref(), Some(&POCKET_FIRST[..]));
-                }
-                _ => assert_eq!(footer_of(&bundle).map(|f| f.len()), Some(MBC3_LEN_64)),
+                _ => assert_eq!(footer_of(&bundle).as_deref(), Some(&POCKET_FIRST[..]), "{core}"),
             }
         }
+        let lengths = |core| sidecar_of(&bundle_with(clock, None, Some(core))).map(|file| file.len());
+        assert_eq!(
+            ["gambatte", "sameboy", "mgba"].map(lengths),
+            [Some(GAMBATTE_LIBRETRO_RTC_LEN), Some(SAMEBOY_RTC_LEN), Some(MBC3_LEN_64)]
+        );
     }
 
     #[test]
-    fn a_clock_written_for_another_core_takes_that_cores_width() {
-        // The Pocket's timestamp is four bytes in a layout of its own. Restored for mGBA, which
-        // appends, the footer is the one mGBA writes rather than one sized by the Pocket's.
-        use one_saves::{Header, Name, Part, Source};
-        use one_saves_registry::cores;
+    fn a_clock_read_off_a_footer_goes_back_on_the_end() {
+        // `--from mgba` names the core and not the app, which is how the mGBA app's `.sav` has
+        // been converted all along. Its clock was split off the end of the file and says so with
+        // key 3, so that is where it goes back, whatever the core does under libretro.
+        let footer = parse_mbc3(&MGBA_LIBRETRO_SIDECAR).expect("a clock");
+        assert_eq!(footer.timestamp_width, Some(8));
+        for core in ["mgba", "sameboy", "vba-m"] {
+            assert_eq!(form_of(&bundle_with(footer, None, Some(core))), ClockForm::Mbc3Appended(8), "{core}");
+        }
+        // The same clock read from RetroArch's `.rtc` carries no width, and goes back beside the
+        // save, byte for byte.
+        let beside = parse_registers_sidecar(&MGBA_LIBRETRO_SIDECAR).expect("a clock");
+        let bundle = bundle_with(beside, Some("retroarch"), Some("mgba"));
+        assert_eq!(form_of(&bundle), ClockForm::Sidecar(SidecarRecord::Registers { timestamp_width: 8 }));
+        assert_eq!((footer_of(&bundle), sidecar_of(&bundle)), (None, Some(MGBA_LIBRETRO_SIDECAR.to_vec())));
+        // And for the mGBA app, the same forty-eight bytes on the end of the save.
+        let app = bundle_with(beside, Some("mgba"), Some("mgba"));
+        assert_eq!(form_of(&app), ClockForm::Mbc3Appended(8));
+        assert_eq!(footer_of(&app).as_deref(), Some(&MGBA_LIBRETRO_SIDECAR[..]));
+    }
+
+    #[test]
+    fn a_clock_written_for_another_core_takes_that_cores_shape() {
+        // The Pocket's timestamp is four bytes in a layout of its own. Restored for the mGBA app,
+        // which appends, the footer is the one mGBA writes rather than one sized by the Pocket's;
+        // restored for RetroArch's mGBA, it is the same bytes in a file of their own.
+        use one_saves_registry::{apps, cores};
         let clock = parse_packed(&POCKET_FIRST).expect("a clock");
-        let split = Split {
-            sram: Vec::new(),
-            footer: Vec::new(),
-            reading: Some(clock.reading()),
-            clock: Clock::Mbc3(clock),
-        };
-        let header = Header::default()
-            .source(Source::default().core(Name::parse("budude2-gbc").unwrap()))
-            .extensions(split.extensions());
-        let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
+        let bundle = bundle_with(clock, None, Some("budude2-gbc"));
         assert_eq!(footer_of(&bundle).as_deref(), Some(&POCKET_FIRST[..]));
-        let form = form_for(&bundle, cores::MGBA.clock);
+
+        let form = form_for(&bundle, cores::MGBA.clock_in(Some(&apps::MGBA)));
         assert_eq!(form, ClockForm::Mbc3Appended(8));
         let appended = footer_of_form(&bundle, form).expect("a footer");
         assert_eq!(appended.len(), MBC3_LEN_64);
+        assert_eq!(sidecar_of_form(&bundle, form), None);
+
+        let form = form_for(&bundle, cores::MGBA.clock_in(Some(&apps::RETROARCH)));
+        assert_eq!(form, ClockForm::Sidecar(SidecarRecord::Registers { timestamp_width: 8 }));
+        assert_eq!(footer_of_form(&bundle, form), None);
+        assert_eq!(sidecar_of_form(&bundle, form), Some(appended.clone()));
+
         // A core nobody has recorded gets the width the clock's own footer had.
         assert_eq!(form_for(&bundle, None), ClockForm::Mbc3Appended(4));
         assert_eq!(form_for(&bundle, cores::GAMEBOY_MISTER.clock), ClockForm::Packed(PACKED_LEN_MISTER));
@@ -2108,29 +3097,32 @@ mod tests {
     }
 
     #[test]
-    fn the_core_picks_the_layout_and_the_app_around_it_does_not() {
-        // RetroArch writes whatever its core writes, so the same app lays a clock down two ways.
-        // And an `app` of `gambatte` is a 0.3 spelling that now names an app nobody listed: read
-        // as written, it says nothing about a core, so it gets the common form. An appended
-        // footer goes back at the width key 3 says the clock's own had.
-        use one_saves::{Header, Name, Part, Source};
-        let clock = parse_packed(&POCKET_FIRST).expect("a clock");
-        let split = Split {
-            sram: Vec::new(),
-            footer: Vec::new(),
-            reading: Some(clock.reading()),
-            clock: Clock::Mbc3(clock),
+    fn the_core_and_the_app_around_it_pick_the_layout_together() {
+        // RetroArch writes what each core exposes, so the same app lays a clock down two ways; and
+        // one engine run by two apps lays it down two ways as well. An `app` of `gambatte` is a 0.3
+        // spelling that now names an app nobody listed: read as written, it says nothing about a
+        // core, so it gets the common form, at the width key 3 says the clock's own footer had.
+        let clock = Mbc3Clock { timestamp_width: None, ..parse_packed(&POCKET_FIRST).expect("a clock") };
+        let footer = parse_packed(&POCKET_FIRST).expect("a clock");
+        let origin = |width, big_endian| {
+            ClockForm::Sidecar(SidecarRecord::Origin { timestamp_width: width, big_endian })
         };
-        let name = |text| Name::parse(text).ok();
-        for (source, want) in [
-            (Source::default().app(name("retroarch")).core(name("gambatte")), ClockForm::Sidecar),
-            (Source::default().app(name("retroarch")).core(name("sameboy")), ClockForm::Mbc3Appended(4)),
-            (Source::default().app(name("gambatte")), ClockForm::Mbc3Appended(4)),
+        for (clock, app, core, want) in [
+            (clock, Some("retroarch"), Some("gambatte"), origin(8, false)),
+            (clock, Some("openemu"), Some("gambatte"), origin(4, true)),
+            (clock, Some("retroarch"), Some("sameboy"), ClockForm::Sidecar(SidecarRecord::SameBoy)),
+            (clock, Some("mgba"), Some("mgba"), ClockForm::Mbc3Appended(8)),
+            // OpenEmu's own mGBA nobody has sampled, so it gets the common form.
+            (clock, Some("openemu"), Some("mgba"), ClockForm::Mbc3Appended(8)),
+            (footer, Some("gambatte"), None, ClockForm::Mbc3Appended(4)),
         ] {
-            let header = Header::default().source(source.clone()).extensions(split.extensions());
-            let bundle = one_saves::Bundle::new(header, vec![Part::new(0, *b"SAVE")]);
-            assert_eq!(form_of(&bundle), want, "{source:?}");
+            assert_eq!(form_of(&bundle_with(clock, app, core)), want, "{app:?} {core:?}");
         }
+
+        // OpenEmu's Gambatte writes the origin as the file under data/saves/openemu/gambatte has it.
+        let read = parse_gambatte_sidecar(&GAMBATTE_SIDECAR, GAMBATTE_WRITTEN_AT).expect("a clock");
+        let openemu = bundle_with(read, Some("openemu"), Some("gambatte"));
+        assert_eq!(sidecar_of(&openemu).as_deref(), Some(&GAMBATTE_SIDECAR[..]));
     }
 
     #[test]

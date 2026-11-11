@@ -8,7 +8,7 @@ use std::ops::Range;
 
 use one_saves_registry::{System, systems};
 
-use crate::{ByteOrder, Cartridge, Clock, Evidence, RomId, Save, SaveKind, View};
+use crate::{ByteOrder, Cartridge, Clock, Evidence, Lane, RomId, Save, SaveKind, View};
 
 /// How much a header's check proves on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +109,7 @@ fn field(bytes: &[u8]) -> Option<String> {
 
 /// Battery-backed SRAM of a stated size.
 fn sram(size: u32) -> Save {
-    Save { kind: SaveKind::Sram, size: Some(size) }
+    Save { kind: SaveKind::Sram, size: Some(size), lane: None }
 }
 
 /// Nintendo 64, in any of the three byte orders its dumps come in.
@@ -130,11 +130,11 @@ fn n64(view: View<'_>, _: &[System]) -> Option<RomId> {
     let flags = header[0x3F];
     let cartridge = if homebrew {
         let save = match flags >> 4 {
-            1 => Some(Save { kind: SaveKind::Eeprom, size: Some(512) }),
-            2 => Some(Save { kind: SaveKind::Eeprom, size: Some(2048) }),
+            1 => Some(Save { kind: SaveKind::Eeprom, size: Some(512), lane: None }),
+            2 => Some(Save { kind: SaveKind::Eeprom, size: Some(2048), lane: None }),
             3 => Some(sram(32 * 1024)),
             4 => Some(sram(96 * 1024)),
-            5 => Some(Save { kind: SaveKind::Flash, size: Some(128 * 1024) }),
+            5 => Some(Save { kind: SaveKind::Flash, size: Some(128 * 1024), lane: None }),
             _ => None,
         };
         Cartridge { save, clock: (flags & 1 != 0).then_some(Clock::Joybus) }
@@ -163,7 +163,7 @@ fn ines(view: View<'_>, _: &[System]) -> Option<RomId> {
     // Only NES 2.0 states the size of the battery-backed RAM; iNES says there is some.
     let nes2 = header[7] & 0x0C == 0x08;
     let size = if nes2 { (header[10] >> 4 != 0).then(|| 64 << (header[10] >> 4)) } else { None };
-    let save = (header[6] & 0x02 != 0).then_some(Save { kind: SaveKind::Sram, size });
+    let save = (header[6] & 0x02 != 0).then_some(Save { kind: SaveKind::Sram, size, lane: None });
     Some(RomId {
         cartridge: Cartridge { save, clock: None },
         payload: 16..view.size(),
@@ -287,6 +287,54 @@ fn gba(view: View<'_>, _: &[System]) -> Option<RomId> {
     })
 }
 
+/// The save chip a GBA ROM was built for, by the library it links: Nintendo's SDK leaves the
+/// library's name and version in the ROM, `EEPROM_V124`, `SRAM_V113`, `FLASH1M_V103`.
+///
+/// It reads the whole ROM, which identifying one never does: a [`Probe`](crate::Probe) reads a few
+/// windows and has to reach the same answer. So this is asked for apart, by a caller holding the
+/// ROM in memory. An EEPROM's size is not in its name: 512 bytes and 8 KiB link the same library.
+///
+/// ```
+/// let mut rom = vec![0u8; 0x400];
+/// rom[0x200..0x20B].copy_from_slice(b"EEPROM_V124");
+/// assert_eq!(rom_id::gba_save(&rom).map(|save| save.kind), Some(rom_id::SaveKind::Eeprom));
+/// ```
+#[must_use]
+pub fn gba_save(rom: &[u8]) -> Option<Save> {
+    const LIBRARIES: [(&[u8], SaveKind, Option<u32>); 5] = [
+        (b"FLASH1M_V", SaveKind::Flash, Some(128 * 1024)),
+        (b"FLASH512_V", SaveKind::Flash, Some(64 * 1024)),
+        (b"FLASH_V", SaveKind::Flash, Some(64 * 1024)),
+        (b"SRAM", SaveKind::Sram, Some(32 * 1024)),
+        (b"EEPROM_V", SaveKind::Eeprom, None),
+    ];
+    let mut found = [false; LIBRARIES.len()];
+    for at in 0..rom.len() {
+        if !matches!(rom[at], b'E' | b'F' | b'S') {
+            continue;
+        }
+        let rest = &rom[at..];
+        // A version follows the name: three digits.
+        let versioned = |name: &[u8]| {
+            rest.starts_with(name)
+                && rest.get(name.len()..name.len() + 3).is_some_and(|d| d.iter().all(u8::is_ascii_digit))
+        };
+        for (seen, (name, ..)) in found.iter_mut().zip(LIBRARIES) {
+            // SRAM's library is SRAM_V or SRAM_F_V.
+            *seen |= if name == b"SRAM" {
+                versioned(b"SRAM_V") || versioned(b"SRAM_F_V")
+            } else {
+                versioned(name)
+            };
+        }
+    }
+    LIBRARIES.iter().zip(found).find(|(_, seen)| *seen).map(|((_, kind, size), _)| Save {
+        kind: *kind,
+        size: *size,
+        lane: None,
+    })
+}
+
 /// The opening bytes of the Nintendo logo every Game Boy cartridge carries at 0x104, checked by the
 /// boot ROM.
 const GB_LOGO: [u8; 8] = [0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B];
@@ -347,7 +395,10 @@ fn gameboy_cartridge(header: &[u8]) -> Cartridge {
         // MBC3 with its timer, with or without RAM.
         0x0F | 0x10 => Cartridge { save: battery_ram, clock: Some(Clock::Mbc3) },
         // MBC7 keeps its saves in a 256-byte EEPROM.
-        0x22 => Cartridge { save: Some(Save { kind: SaveKind::Eeprom, size: Some(256) }), clock: None },
+        0x22 => Cartridge {
+            save: Some(Save { kind: SaveKind::Eeprom, size: Some(256), lane: None }),
+            clock: None,
+        },
         // TAMA5, whose header states no memory at all.
         0xFD => Cartridge { save: None, clock: Some(Clock::Tc8521) },
         0xFE => Cartridge { save: battery_ram, clock: Some(Clock::Huc3) },
@@ -414,7 +465,15 @@ fn backup_ram(record: &[u8]) -> Option<Save> {
     let start = u32::from_be_bytes(record[4..8].try_into().ok()?);
     let end = u32::from_be_bytes(record[8..12].try_into().ok()?);
     let span = end.checked_sub(start)?.checked_add(1)?;
-    Some(sram(if record[2] & 0x10 != 0 { span.div_ceil(2) } else { span }))
+    // A serial EEPROM is two lines on the bus rather than a range of memory, and a cartridge
+    // carrying one declares the word they sit in: Evander Holyfield's and Frank Thomas's
+    // 200001-200001. Its size is the chip's, which the header does not give.
+    if span <= 2 {
+        return Some(Save { kind: SaveKind::Eeprom, size: None, lane: None });
+    }
+    // Bit 3 says which lane, the odd one when set.
+    let lane = (record[2] & 0x10 != 0).then(|| if record[2] & 0x08 != 0 { Lane::Odd } else { Lane::Even });
+    Some(Save { lane, ..sram(if lane.is_some() { span.div_ceil(2) } else { span }) })
 }
 
 /// Master System and Game Gear, which share the `TMR SEGA` header at one of three places.
@@ -499,9 +558,9 @@ fn wonderswan(view: View<'_>, _: &[System]) -> Option<RomId> {
         0x03 => Some(sram(128 * 1024)),
         0x04 => Some(sram(256 * 1024)),
         0x05 => Some(sram(512 * 1024)),
-        0x10 => Some(Save { kind: SaveKind::Eeprom, size: Some(128) }),
-        0x20 => Some(Save { kind: SaveKind::Eeprom, size: Some(2048) }),
-        0x50 => Some(Save { kind: SaveKind::Eeprom, size: Some(1024) }),
+        0x10 => Some(Save { kind: SaveKind::Eeprom, size: Some(128), lane: None }),
+        0x20 => Some(Save { kind: SaveKind::Eeprom, size: Some(2048), lane: None }),
+        0x50 => Some(Save { kind: SaveKind::Eeprom, size: Some(1024), lane: None }),
         _ => return None,
     };
     let system = if footer[1] == 1 { systems::WONDERSWAN_COLOR } else { systems::WONDERSWAN };
@@ -651,7 +710,11 @@ mod tests {
         rom[6] = 0x02;
         let id = identify(Some("Zelda.nes"), &rom).unwrap();
         assert_eq!((id.system, id.payload.clone()), (systems::NES, 16..rom.len() as u64));
-        assert_eq!(id.cartridge.save, Some(Save { kind: SaveKind::Sram, size: None }), "iNES says no size");
+        assert_eq!(
+            id.cartridge.save,
+            Some(Save { kind: SaveKind::Sram, size: None, lane: None }),
+            "iNES says no size"
+        );
         // NES 2.0 says how much.
         rom[7] = 0x08;
         rom[10] = 0x70;
@@ -704,6 +767,27 @@ mod tests {
     }
 
     #[test]
+    fn a_gba_rom_names_its_save_chip_by_the_library_it_links() {
+        let mut rom = vec![0u8; 0x400];
+        rom[0x04..0x0C].copy_from_slice(&GBA_LOGO);
+        rom[0xA0..0xAC].copy_from_slice(b"KLONOA      ");
+        rom[0xAC..0xB0].copy_from_slice(b"AKLE");
+        rom[0xB2] = 0x96;
+        assert_eq!(gba_save(&rom), None, "no library, no chip");
+        rom[0x200..0x20B].copy_from_slice(b"EEPROM_V124");
+        let eeprom = Save { kind: SaveKind::Eeprom, size: None, lane: None };
+        assert_eq!(gba_save(&rom), Some(eeprom));
+        // Identifying the ROM reads windows of it, and says nothing of the chip.
+        assert_eq!(identify(None, &rom).unwrap().cartridge.save, None);
+        rom[0x300..0x30C].copy_from_slice(b"FLASH1M_V103");
+        let flash = Save { kind: SaveKind::Flash, size: Some(128 * 1024), lane: None };
+        assert_eq!(gba_save(&rom), Some(flash), "the larger chip wins");
+        // A name with no version after it is text, not the library.
+        rom[0x300..0x30C].copy_from_slice(b"FLASH1M_Vxyz");
+        assert_eq!(gba_save(&rom), Some(eeprom));
+    }
+
+    #[test]
     fn a_mega_drive_header_declares_its_backup_ram() {
         let mut rom = vec![0x20u8; 0x200];
         rom[0x100..0x110].copy_from_slice(b"SEGA GENESIS    ");
@@ -711,7 +795,13 @@ mod tests {
         rom[0x1B0..0x1BC].copy_from_slice(b"RA\xF8\x20\x00\x20\x00\x01\x00\x20\x3F\xFF");
         let id = identify(None, &rom).unwrap();
         assert_eq!((id.system, id.title.as_deref()), (systems::GENESIS, Some("PHANTASY STAR IV")));
-        assert_eq!(id.cartridge.save, Some(sram(8 * 1024)), "odd bytes only, so half the span");
+        let odd = Save { lane: Some(Lane::Odd), ..sram(8 * 1024) };
+        assert_eq!(id.cartridge.save, Some(odd), "odd bytes only, so half the span");
+        // Evander Holyfield's: an EEPROM's two lines, declared as the one word they sit in.
+        rom[0x1B0..0x1BC].copy_from_slice(b"RA\xE8\x40\x00\x20\x00\x01\x00\x20\x00\x01");
+        let eeprom = Save { kind: SaveKind::Eeprom, size: None, lane: None };
+        assert_eq!(identify(None, &rom).unwrap().cartridge.save, Some(eeprom));
+        rom[0x1B0..0x1BC].copy_from_slice(b"RA\xF8\x20\x00\x20\x00\x01\x00\x20\x3F\xFF");
         rom[0x100..0x110].copy_from_slice(b"SEGA 32X        ");
         assert_eq!(identify(None, &rom).unwrap().system, systems::SEGA_32X);
         // FIFA Soccer '96 calls itself a Mega Drive, and only the 32X header past it says otherwise.

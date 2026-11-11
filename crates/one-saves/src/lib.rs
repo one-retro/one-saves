@@ -191,7 +191,7 @@ pub const EXTENSION: &str = "1saves";
 pub const MEDIA_TYPE: &str = "application/vnd.1saves+cbor";
 
 /// The version of the specification this crate implements.
-pub const SPEC_VERSION: &str = "0.7";
+pub const SPEC_VERSION: &str = "0.8";
 
 /// How long a part's `path` may run, in bytes.
 ///

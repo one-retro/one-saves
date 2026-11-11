@@ -39,6 +39,7 @@ use std::ops::Range;
 mod header;
 mod name;
 
+pub use header::gba_save;
 pub use name::candidates;
 pub use one_saves_registry::System;
 
@@ -112,6 +113,18 @@ pub struct Save {
     pub kind: SaveKind,
     /// Its size in bytes, when the header states it.
     pub size: Option<u32>,
+    /// The byte lane of a 16-bit bus it sits on, for memory wired to one lane alone: most Mega
+    /// Drive SRAM, on the odd one. `None` for memory as wide as its bus.
+    pub lane: Option<Lane>,
+}
+
+/// One byte lane of a 16-bit bus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lane {
+    /// The odd addresses, the low byte of each word on a big-endian bus.
+    Odd,
+    /// The even addresses.
+    Even,
 }
 
 /// A kind of save memory.

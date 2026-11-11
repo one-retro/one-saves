@@ -18,10 +18,13 @@ assert!(matches!(role("memcard-8"), RoleMatch::Numbered(_, 8)));
 A producer that already knows which core it is skips the lookup, and skips the table with it:
 
 ```rust
-use one_saves_registry::{ClockLayout, cores, systems};
+use one_saves_registry::{ClockLayout, SidecarRecord, apps, cores, systems};
 
 assert_eq!(cores::MGBA.slug, "mgba");
-assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended { timestamp_width: 8 }));
+// As a libretro core, mGBA keeps its clock in a `.rtc` beside the save; its own app appends it.
+let beside = ClockLayout::Sidecar(SidecarRecord::Registers { timestamp_width: 8 });
+assert_eq!(cores::MGBA.clock, Some(beside));
+assert_eq!(cores::MGBA.clock_in(Some(&apps::MGBA)), Some(ClockLayout::Appended { timestamp_width: 8 }));
 assert!(cores::MGBA.systems.contains(&systems::GBA.slug));
 ```
 
@@ -54,10 +57,13 @@ right slug, and they are never emitted.
 The tables are non-normative and first-come, so a name absent here is not thereby invalid:
 `system()` returning `None` means "not listed", never "malformed".
 
-One field is not drawn from the specification pages: `Core::clock`, which records how a core lays
-real-time-clock state down beside a save. The specifications do not describe clock layouts, so
-those come from files real cores wrote and live in `data/clocks.json`, which a `--docs` sync
-leaves alone.
+Three fields are not drawn from the specification pages. `Core::clock` and `Core::huc3` record how
+a core lays real-time-clock state down beside a save, and `Core::layouts` how it keeps a system's
+save memory in its file where that is not the memory's own bytes: a Mega Drive's SRAM spread over
+the bus by Genesis Plus GX, a GBA chip padded by gpSP. The specifications describe neither, so these
+come from files real cores wrote, and from a MiSTer asked to read them, and live in
+`data/clocks.json` and `data/layouts.json`, which a `--docs` sync leaves alone. Each entry says
+where its facts were read.
 
 No dependencies.
 

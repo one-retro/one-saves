@@ -1,0 +1,87 @@
+{
+  "_note": [
+    "How each core keeps a system's save memory in its file, where that is not the memory's own bytes.",
+    "Like clocks.json, this file is NOT synced from the registry pages: the specification says what a",
+    "save's payload holds, the medium's bytes in the order the console's hardware addresses them, and",
+    "not how each core keeps them. A core absent here, or a system absent from a core's entry, keeps the",
+    "memory as it is. Layouts: expanded (fill, length: trimmed | doubled | bytes, eeprom_length),",
+    "packed (length), padded (length, reversed_eeprom), vba-next, chip (eeprom_min).",
+    "Each entry's `evidence` says where it was read: files the cores wrote, or a MiSTer that was asked to read them."
+  ],
+  "cores": {
+    "blastem": {
+      "evidence": "corpus genesis/NOTES.md, 'How each core lays out the same save': five cores over thirteen games, the data identical once the layout is undone: BlastEm keeps the SRAM's own bytes at the cartridge's real size (WSB '95 32768, 8 KB carts 8192), an EEPROM as the chip, 0xFF where unwritten.",
+      "genesis": {
+        "layout": "packed"
+      }
+    },
+    "clownmdemu": {
+      "evidence": "corpus genesis/NOTES.md, 'How each core lays out the same save': five cores over thirteen games, the data identical once the layout is undone: clownmdemu writes 65536 bytes for every game, the SRAM on the odd lane and 0x00 on the even; it has no serial EEPROM.",
+      "genesis": {
+        "layout": "expanded",
+        "fill": 0,
+        "length": 65536
+      }
+    },
+    "genesis-plus-gx": {
+      "evidence": "corpus genesis/NOTES.md, 'How each core lays out the same save': five cores over thirteen games, the data identical once the layout is undone: Genesis Plus GX keeps a 64 KB image of 0x200000-0x20FFFF, the even lane 0xFF, and its libretro port reports it up to the last byte that is not 0xFF (Sonic 3 604, WSB '95 63804); an EEPROM goes through the same buffer unexpanded (Evander 128, NFL QB Club 96 253). A MiSTer did not read its WSB '95 file and did read the same bytes packed (2026-11-10).",
+      "genesis": {
+        "layout": "expanded",
+        "fill": 255,
+        "length": "trimmed"
+      }
+    },
+    "genesis-plus-gx-wide": {
+      "evidence": "corpus genesis/NOTES.md, 'How each core lays out the same save': five cores over thirteen games, the data identical once the layout is undone: Genesis Plus GX Wide's files are Genesis Plus GX's, byte for byte in layout.",
+      "genesis": {
+        "layout": "expanded",
+        "fill": 255,
+        "length": "trimmed"
+      }
+    },
+    "gba-mister": {
+      "evidence": "A MiSTer (GBA_20260530) showed no save for Klonoa from mGBA's 512-byte 4 Kbit EEPROM, and showed it from the same bytes padded with 0xFF to 8192 and from gpSP's 131072-byte file (2026-11-10); the core writes such an EEPROM at 8192 (corpus MISTER.md, 'What the files look like').",
+      "gba": {
+        "layout": "chip",
+        "eeprom_min": 8192
+      }
+    },
+    "gpsp": {
+      "evidence": "corpus gba/NOTES.md, 'How each core writes the save': every gpSP save is 131072 bytes, the chip at 0, the rest 0xFF.",
+      "gba": {
+        "layout": "padded",
+        "length": 131072
+      }
+    },
+    "megadrive-mister": {
+      "evidence": "corpus MISTER.md, 'What the files look like': always 65536 bytes, byte-wide SRAM packed one byte per SRAM byte like BlastEm, an EEPROM at the start. A MiSTer read WSB '95 from BlastEm's 32768-byte file and from Genesis Plus GX's bytes packed, not from Genesis Plus GX's own file, and read Evander's 128-byte EEPROM (2026-11-10).",
+      "genesis": {
+        "layout": "packed",
+        "length": 65536
+      }
+    },
+    "picodrive": {
+      "evidence": "corpus genesis/NOTES.md, 'How each core lays out the same save': five cores over thirteen games, the data identical once the layout is undone: PicoDrive writes the SRAM spread over the header's range (1024 for Sonic 3, 16384 for 8 KB carts, 65536 for WSB '95), 0x00 on the other lane, and every EEPROM as an 8192-byte file, the chip first and 0x00 after (cart.c Pico.sv.size = 0x2000).",
+      "genesis": {
+        "layout": "expanded",
+        "fill": 0,
+        "length": "doubled",
+        "eeprom_length": 8192
+      }
+    },
+    "skyemu": {
+      "evidence": "corpus gba/NOTES.md, 'How each core writes the save': every SkyEmu save is 131072 bytes (cart_backup[128K]), the rest 0xFF, and an EEPROM's eight-byte blocks back to front (Minish Cap 'ADLEZBGA' where mGBA has 'GBZELDA').",
+      "gba": {
+        "layout": "padded",
+        "length": 131072,
+        "reversed_eeprom": true
+      }
+    },
+    "vba-next": {
+      "evidence": "corpus gba/NOTES.md, 'How each core writes the save': every VBA Next save is 139264 (0x22000) bytes, an EEPROM at 0x20000 and any other chip at 0, the rest 0xFF.",
+      "gba": {
+        "layout": "vba-next"
+      }
+    }
+  }
+}

@@ -14,6 +14,20 @@
     ]
   },
   {
+    "slug": "bgb",
+    "name": "BGB",
+    "cores": [
+      "bgb"
+    ]
+  },
+  {
+    "slug": "crabemu",
+    "name": "CrabEmu",
+    "cores": [
+      "crabemu"
+    ]
+  },
+  {
     "slug": "delta",
     "name": "Delta",
     "cores": [
@@ -28,6 +42,13 @@
     ]
   },
   {
+    "slug": "desmume",
+    "name": "DeSmuME",
+    "cores": [
+      "desmume"
+    ]
+  },
+  {
     "slug": "dolphin",
     "name": "Dolphin",
     "cores": [
@@ -39,6 +60,13 @@
     "name": "DuckStation",
     "cores": [
       "duckstation"
+    ]
+  },
+  {
+    "slug": "fceux",
+    "name": "FCEUX",
+    "cores": [
+      "fceux"
     ]
   },
   {
@@ -74,6 +102,13 @@
     "name": "MiSTer",
     "cores": [
       "mister"
+    ]
+  },
+  {
+    "slug": "mupen64plus",
+    "name": "Mupen64Plus",
+    "cores": [
+      "mupen64plus"
     ]
   },
   {
@@ -151,10 +186,24 @@
     ]
   },
   {
+    "slug": "sameboy",
+    "name": "SameBoy",
+    "cores": [
+      "sameboy"
+    ]
+  },
+  {
     "slug": "snes9x",
     "name": "Snes9x",
     "cores": [
       "snes9x"
+    ]
+  },
+  {
+    "slug": "visualboyadvance-m",
+    "name": "VisualBoyAdvance-M",
+    "cores": [
+      "vba-m"
     ]
   },
   {

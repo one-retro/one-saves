@@ -75,6 +75,7 @@ pub mod detect;
 pub mod error;
 #[cfg(feature = "icon")]
 mod icon;
+pub mod layout;
 // Only a card format reads a title, so without one there is no label to write.
 #[cfg(any(
     feature = "gc",

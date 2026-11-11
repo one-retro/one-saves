@@ -526,6 +526,8 @@ fn decode_source(value: &CBOR, path: &str, strictness: Strictness) -> Result<Sou
     let core_version = fields.take(5).map(|v| want_text(&v, path)).transpose()?;
     let platform = fields.take(6).map(|v| want_name(&v, &format!("{path}.platform"))).transpose()?;
     let platform_version = fields.take(7).map(|v| want_text(&v, path)).transpose()?;
+    let utc_offset =
+        fields.take(8).map(|v| want_utc_offset(&v, &format!("{path}.utc_offset"))).transpose()?;
 
     Ok(Source {
         device_kind,
@@ -536,8 +538,22 @@ fn decode_source(value: &CBOR, path: &str, strictness: Strictness) -> Result<Sou
         core_version,
         platform,
         platform_version,
+        utc_offset,
         unknown: fields.unknown(path, strictness)?,
     })
+}
+
+/// Reads a UTC offset: whole seconds east of UTC, within the span real zones occupy.
+fn want_utc_offset(value: &CBOR, path: &str) -> Result<i32, Error> {
+    let seconds = match value.as_case() {
+        CBORCase::Unsigned(n) => i64::try_from(*n).ok(),
+        CBORCase::Negative(n) => i64::try_from(*n).ok().map(|n| -1 - n),
+        _ => return Err(Error::at(path, ErrorKind::Type { expected: "an integer" })),
+    };
+    seconds
+        .filter(|seconds| Source::UTC_OFFSETS.contains(seconds))
+        .and_then(|seconds| i32::try_from(seconds).ok())
+        .ok_or_else(|| Error::at(path, ErrorKind::Type { expected: "seconds east of UTC, -43200 to 50400" }))
 }
 
 fn decode_card(value: &CBOR, path: &str, strictness: Strictness) -> Result<Card, Error> {
@@ -883,6 +899,9 @@ impl Source {
         }
         if let Some(platform_version) = &self.platform_version {
             map.insert(7u64, platform_version.as_str());
+        }
+        if let Some(utc_offset) = self.utc_offset {
+            map.insert(8u64, i64::from(utc_offset));
         }
         finish(map, &self.unknown, &Extensions::new())
     }

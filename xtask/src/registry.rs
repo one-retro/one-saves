@@ -109,11 +109,25 @@ pub struct Binding {
 /// How one core lays out clock state, as `clocks.json` records it.
 #[derive(Serialize, Deserialize)]
 pub struct Clock {
-    pub layout: String,
+    /// Where an MBC3's or a Seiko chip's clock goes; absent where only a HuC-3 is recorded.
+    #[serde(default)]
+    pub layout: Option<String>,
     #[serde(default)]
     pub reserved: Option<usize>,
     #[serde(default)]
     pub timestamp_width: Option<u8>,
+    /// What a sidecar holds; see `SidecarRecord`.
+    #[serde(default)]
+    pub record: Option<String>,
+    /// `big` or `little`, for a record whose byte order is the core's own choice.
+    #[serde(default)]
+    pub byte_order: Option<String>,
+    /// How a HuC-3's clock is kept, which follows a layout of its own; see `Huc3Layout`.
+    #[serde(default)]
+    pub huc3: Option<Box<Clock>>,
+    /// An app's own build of the core, by app slug, where it lays the clock out differently.
+    #[serde(default)]
+    pub apps: BTreeMap<String, Clock>,
 }
 
 /// `clocks.json`: clock layouts, keyed by core slug.
@@ -126,6 +140,49 @@ pub struct Clocks {
     #[serde(rename = "_note", default)]
     pub note: Vec<String>,
     pub cores: BTreeMap<String, Clock>,
+}
+
+/// How one core keeps one system's save memory, as `layouts.json` records it.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Layout {
+    /// `expanded`, `packed`, `padded`, `vba-next` or `chip`; see `SaveLayout`.
+    #[serde(rename = "layout")]
+    pub kind: String,
+    /// What an expanded file holds on the lane the SRAM is not on.
+    #[serde(default)]
+    pub fill: Option<u8>,
+    /// A file's length: `trimmed` or `doubled` for an expanded file, else a number of bytes.
+    #[serde(default)]
+    pub length: Option<serde_json::Value>,
+    /// The length every EEPROM's file is padded to, for an expanded file.
+    #[serde(default)]
+    pub eeprom_length: Option<u32>,
+    /// Whether a padded file keeps an EEPROM's eight-byte blocks back to front.
+    #[serde(default)]
+    pub reversed_eeprom: Option<bool>,
+    /// The shortest file a chip layout reads an EEPROM from.
+    #[serde(default)]
+    pub eeprom_min: Option<u32>,
+}
+
+/// One core's layouts, by system slug, and where they were read.
+#[derive(Serialize, Deserialize)]
+pub struct CoreLayouts {
+    pub evidence: String,
+    #[serde(flatten)]
+    pub systems: BTreeMap<String, Layout>,
+}
+
+/// `layouts.json`: how cores keep save memory in their files, keyed by core slug.
+///
+/// This repository's own, like `clocks.json`: the specification says what a payload holds, not how
+/// each core keeps it, so a `--docs` sync leaves it alone.
+#[derive(Serialize, Deserialize)]
+pub struct Layouts {
+    #[serde(rename = "_note", default)]
+    pub note: Vec<String>,
+    pub cores: BTreeMap<String, CoreLayouts>,
 }
 
 /// Everything the registries hold.
@@ -376,6 +433,11 @@ fn load<T: for<'de> Deserialize<'de>>(dir: &Path, name: &str) -> Fallible<T> {
 /// Reads the clock layouts, which are this repository's rather than the specification's.
 pub fn read_clocks(dir: &Path) -> Fallible<Clocks> {
     load(dir, "clocks")
+}
+
+/// Reads the save layouts, which are this repository's rather than the specification's.
+pub fn read_layouts(dir: &Path) -> Fallible<Layouts> {
+    load(dir, "layouts")
 }
 
 /// Reads the JSON back, which is all generating the Rust tables needs.

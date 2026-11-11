@@ -142,6 +142,14 @@ struct Convert {
     /// Without it the paks are kept whole, other games' notes and all.
     #[arg(long, value_name = "CODE")]
     n64_game: Option<String>,
+    /// For a producer that stamps its clock in local time, as every MiSTer core does, how far that
+    /// time runs ahead of UTC: `-08:00` for Pacific, `+09:00` for Japan, or seconds.
+    ///
+    /// MiSTer hands its cores the zone's standard time counted as though it were UTC, summer and
+    /// winter alike, so this is the zone's standard offset. The bundle records it, and a clock then
+    /// moves to an emulator that stamps UTC at the right hour rather than off by the zone.
+    #[arg(long, value_name = "OFFSET", allow_hyphen_values = true, value_parser = utc_offset)]
+    utc_offset: Option<i32>,
     /// Keep an appended real-time-clock footer inside the save rather than splitting it out.
     ///
     /// Splitting is the default because the footer carries a live timestamp, so leaving it inline
@@ -160,13 +168,25 @@ struct Extract {
     /// Where to write the result.
     #[arg(short, long)]
     output: Option<PathBuf>,
-    /// The format to write. Defaults to what the bundle says it is.
+    /// The format to write, or the app or core that will read it. Defaults to the file the bundle
+    /// came from.
+    ///
+    /// For a cartridge save, an app or a core lays its clock out the way that reader keeps one:
+    /// `--to retroarch --core mgba` writes the save memory and a `.rtc` beside it, `--to mgba` the
+    /// mGBA app's `.sav` with the clock on the end, `--to mister` the MiSTer core's for the save's
+    /// system. A name that is both an app and a core, as `mgba` is, means the app. An app that runs
+    /// several cores for the system needs `--core` only where they would write the save
+    /// differently.
     ///
     /// For a state, the emulator to rebuild its file for: retroarch, mgba or duckstation. A state
     /// loads only into the core that took it, so it is refused for an emulator that does not run
     /// that core.
     #[arg(long, value_name = "NAME")]
     to: Option<String>,
+    /// With `--to` naming an app that runs many cores, such as RetroArch, the one that will read
+    /// the save.
+    #[arg(long, value_name = "NAME")]
+    core: Option<String>,
     /// Extract one part's payload by id, rather than the whole thing.
     #[arg(long, value_name = "ID")]
     part: Option<u64>,
@@ -181,13 +201,60 @@ struct Extract {
     /// taking the others off, and a pak keeps the ID block a console knows it by.
     #[arg(long, value_name = "FILE")]
     onto: Option<PathBuf>,
-    /// Write the clock to a sidecar file instead of appending it: Gambatte's for a Game Boy clock,
+    /// Write the clock to this file beside the save instead of appending it.
+    ///
+    /// With `--to`, where the reader keeps its clock in a file, the name to give that file, which is
+    /// otherwise the save's with a `.rtc` extension. Without it, the file the bundle's producer
+    /// keeps, or for one that appends, Gambatte's under libretro for a Game Boy clock and
     /// mincer_ray's for a GBA one.
     #[arg(long, value_name = "FILE")]
     rtc_file: Option<PathBuf>,
+    /// For a reader that stamps its clock in local time, as a MiSTer does, how far that time runs
+    /// ahead of UTC: `-08:00` for Pacific, or seconds. The clock's anchor is moved onto that scale.
+    ///
+    /// Without it, a MiSTer is taken to run on the scale the bundle records, which is right for a
+    /// save going back to the MiSTer it came from.
+    #[arg(long, value_name = "OFFSET", allow_hyphen_values = true, value_parser = utc_offset)]
+    utc_offset: Option<i32>,
+    /// The game's ROM, whose header says what the cartridge keeps its saves in: SRAM or an EEPROM
+    /// on a Mega Drive, the chip on a GBA. Laying a Mega Drive save out for Genesis Plus GX or
+    /// PicoDrive needs it for an EEPROM larger than 256 bytes.
+    #[cfg(feature = "rom")]
+    #[arg(long, value_name = "FILE")]
+    rom: Option<PathBuf>,
     /// Overwrite the output if it exists.
     #[arg(long)]
     force: bool,
+}
+
+/// Reads a UTC offset: `+09:00`, `-08:00`, `-0800`, or a number of seconds, within the span real
+/// zones occupy.
+fn utc_offset(text: &str) -> Result<i32, String> {
+    let seconds = if let Ok(seconds) = text.parse::<i64>() {
+        seconds
+    } else {
+        let (sign, rest) = match text.split_at_checked(1) {
+            Some(("+", rest)) => (1, rest),
+            Some(("-", rest)) => (-1, rest),
+            _ => return Err(format!("{text:?} is not an offset such as -08:00, +09:00 or -28800")),
+        };
+        let digits: String = rest.chars().filter(|c| *c != ':').collect();
+        let (hours, minutes) = match digits.len() {
+            2 => (digits.as_str(), "0"),
+            4 => digits.split_at(2),
+            _ => return Err(format!("{text:?} is not an offset such as -08:00, +09:00 or -28800")),
+        };
+        let parse = |part: &str| part.parse::<i64>().map_err(|_| format!("{text:?} is not an offset"));
+        let (hours, minutes) = (parse(hours)?, parse(minutes)?);
+        if minutes >= 60 {
+            return Err(format!("{text:?} has {minutes} minutes"));
+        }
+        sign * (hours * 3600 + minutes * 60)
+    };
+    if !one_saves::Source::UTC_OFFSETS.contains(&seconds) {
+        return Err(format!("{text:?} is outside -12:00 to +14:00, where every zone is"));
+    }
+    i32::try_from(seconds).map_err(|e| e.to_string())
 }
 
 #[derive(Args)]
@@ -416,15 +483,20 @@ fn unwrap_archive(
 /// The clock kept beside a save, and the instant it was read at when the file needs one.
 ///
 /// A clock in its own file has to be found, since the save does not mention it. Gambatte's records
-/// an origin rather than a reading, so an instant is what turns one into the other; mincer_ray's
-/// records the instant itself, and has none here.
+/// an origin rather than a reading, so an instant is what turns one into the other; every other
+/// producer's records the instant itself, and has none here.
 type Sidecar = (std::path::PathBuf, Vec<u8>, Option<i64>);
 
 /// The longest a clock kept in a file of its own could be, with room to spare: the longest any
 /// producer writes is MiSTer's, at 512 bytes.
 const MAX_SIDECAR_CLOCK: u64 = 64 << 10;
 
-fn sidecar_clock(args: &Convert) -> Result<Option<Sidecar>, Box<dyn std::error::Error>> {
+/// The clock beside the save, and the instant to read it at when it holds an origin: as the
+/// producer `source` names keeps it, or by its length where nobody said.
+fn sidecar_clock(
+    args: &Convert,
+    source: Option<&Source>,
+) -> Result<Option<Sidecar>, Box<dyn std::error::Error>> {
     // A clock named on the command line is read as given. One found beside the input is read only
     // as a file, since the user never named it.
     let found = if let Some(path) = &args.rtc_file {
@@ -436,13 +508,17 @@ fn sidecar_clock(args: &Convert) -> Result<Option<Sidecar>, Box<dyn std::error::
             .map(|bytes| (beside, bytes))
     };
     let Some((path, bytes)) = found else {
-        if args.rtc_captured_at.is_some() {
+        // VisualBoyAdvance-M appends a HuC-3's origin rather than keeping it beside the save.
+        let footer_origin =
+            one_saves_convert::rtc::huc3_layout_of(source) == Some(one_saves_convert::rtc::Huc3Layout::Vbam);
+        if args.rtc_captured_at.is_some() && !footer_origin {
             return Err("--rtc-captured-at was given, but there is no sidecar clock to apply it to".into());
         }
         return Ok(None);
     };
 
-    if bytes.len() != one_saves_convert::rtc::GAMBATTE_RTC_LEN {
+    let record = one_saves_convert::rtc::sidecar_record_of(source);
+    if !one_saves_convert::rtc::sidecar_takes_instant(record, bytes.len()) {
         if args.rtc_captured_at.is_some() {
             return Err(format!(
                 "--rtc-captured-at was given, but {} records its own instant",
@@ -494,19 +570,19 @@ fn convert(args: Convert) -> Fallible {
     }
 
     #[cfg(feature = "rom")]
-    let Identified { mut game, system: rom_system, clock: rom_clock, n64_save: rom_n64_save } =
+    let Identified { mut game, system: rom_system, clock: rom_clock, n64_save: rom_n64_save, memory } =
         identify(&args)?;
     // Without `rom` there is no `--rom` to read, so there is nothing a ROM could have said.
     #[cfg(not(feature = "rom"))]
-    let Identified { mut game, system: rom_system, clock: rom_clock, n64_save: rom_n64_save } =
+    let Identified { mut game, system: rom_system, clock: rom_clock, n64_save: rom_n64_save, memory } =
         Identified::default();
 
-    let sidecar = sidecar_clock(&args)?;
+    let source = source_of(&args, profile.as_ref())?;
+    let sidecar = sidecar_clock(&args, source.as_ref())?;
     let sidecar_path = sidecar.as_ref().map(|(path, _, at)| (path.clone(), at.is_some()));
     // A sidecar that records its own instant ignores the one passed beside it.
     let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at.unwrap_or_default()));
 
-    let source = source_of(&args, profile.as_ref())?;
     let system = system_of(&args, rom_system, profile.as_ref(), source.as_ref(), &extension);
 
     let mut label = format.label().to_owned();
@@ -524,6 +600,8 @@ fn convert(args: Convert) -> Fallible {
             split_rtc: !args.keep_rtc_inline,
             rtc_sidecar: sidecar,
             clock_chip: rom_clock.map(ToOwned::to_owned),
+            captured_at: args.rtc_captured_at,
+            memory,
             ..raw::RawOptions::default()
         };
         raw::wrap(&bytes, &options)?
@@ -557,6 +635,14 @@ fn convert(args: Convert) -> Fallible {
     write_out(&output, &encoded, args.force)?;
 
     report_clock(sidecar_path.as_ref(), args.rtc_captured_at.is_some(), &bundle);
+    if has_clock(&bundle) && one_saves_convert::rtc::scale_of(&bundle).is_none() {
+        println!(
+            "note: this clock was stamped in the MiSTer's local time, and nothing said how far that is from"
+        );
+        println!(
+            "      UTC; pass --utc-offset (-08:00 for Pacific) so it reaches other emulators at the right hour"
+        );
+    }
 
     // A backup RAM is a flat save to this build, but saying "flat cartridge save" about one would
     // be wrong twice over: the internal RAM is not a cartridge, and the cart is not a game. What
@@ -593,7 +679,14 @@ fn convert(args: Convert) -> Fallible {
 
 /// Says where a save's clock came from, when it had one.
 fn report_clock(sidecar: Option<&(PathBuf, bool)>, instant_given: bool, bundle: &Bundle) {
-    if let Some((path, needed_instant)) = sidecar {
+    if let Some((path, _)) = sidecar
+        && !has_clock(bundle)
+    {
+        println!(
+            "note: {} holds no clock for this cartridge, since what wrote it keeps none of its chip there",
+            path.display()
+        );
+    } else if let Some((path, needed_instant)) = sidecar {
         let how = if !needed_instant {
             "the instant it records"
         } else if instant_given {
@@ -703,6 +796,27 @@ fn source_of(
     source.core_version.clone_from(&args.core_version);
     source.platform_version.clone_from(&args.platform_version);
 
+    // Zero claims UTC and so does leaving it out, so an offset is recorded only for a producer that
+    // stamps something else.
+    if let Some(offset) = args.utc_offset {
+        let core = source.core.as_ref().and_then(|core| one_saves_registry::core(core.as_str()));
+        match core {
+            Some(core) if one_saves_convert::rtc::stamps_local_time(core) => source.utc_offset = Some(offset),
+            Some(core) => {
+                return Err(format!(
+                    "{} stamps its clock in UTC, so --utc-offset has nothing to say about it",
+                    core.name
+                )
+                .into());
+            }
+            None => {
+                return Err(
+                    "--utc-offset needs --from or --core to name the core that stamped the clock".into()
+                );
+            }
+        }
+    }
+
     Ok((!source.is_empty()).then_some(source))
 }
 
@@ -743,6 +857,8 @@ struct Identified {
     clock: Option<&'static str>,
     /// The save chip an N64 ROM's header says the cartridge has.
     n64_save: Option<one_saves::extension::N64Save>,
+    /// What a Mega Drive or GBA ROM says the cartridge keeps its saves in.
+    memory: Option<one_saves_convert::layout::SaveMemory>,
 }
 
 /// Works out what game a save belongs to, from a ROM's header and a catalog.
@@ -770,7 +886,13 @@ fn identify(args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
             eprintln!("note: this ROM is not in {}", dat.display());
         }
     }
-    Ok(Identified { game: Some(game), system: info.system, clock: info.clock, n64_save: info.n64_save })
+    Ok(Identified {
+        game: Some(game),
+        system: info.system,
+        clock: info.clock,
+        n64_save: info.n64_save,
+        memory: info.memory,
+    })
 }
 
 fn extract(args: Extract) -> Fallible {
@@ -817,6 +939,24 @@ fn extract(args: Extract) -> Fallible {
     // save.
     let card_format = card::card_format_of(&bundle)?.map(|format| format.as_str().to_owned());
     let device = *bundle.shape() == one_saves::Shape::Device;
+
+    // A save laid out for the app or core that will read it, rather than written as a format.
+    if let Some(name) = args.to.clone()
+        && Format::from_name(&name).is_none()
+    {
+        if card_format.is_some() || device || n64::is_n64_bundle(&bundle) {
+            return Err(format!(
+                "--to {name} lays a cartridge save out for the app or core that reads it; a card is written \
+                 as its own format, and an N64 save with --n64"
+            )
+            .into());
+        }
+        return extract_for(&args, &bundle, &name);
+    }
+    if args.core.is_some() {
+        return Err("--core names the core an app given with --to runs".into());
+    }
+
     let target = match args.to.as_deref() {
         Some(name) => Format::from_name(name).ok_or_else(|| format!("unknown format {name:?}"))?,
         None => match card_format.as_deref() {
@@ -834,8 +974,10 @@ fn extract(args: Extract) -> Fallible {
     if args.onto.is_some() && target != Format::N64Pak {
         return Err("--onto is for an N64 save, with --n64, or a Controller Pak".into());
     }
+    let reader = reader_of(&args, None)?;
+    let unwrapped = (target == Format::Raw).then(|| raw::unwrap_as(&bundle, &reader)).transpose()?;
     let payload = match target {
-        Format::Raw => raw::unwrap(&bundle)?,
+        Format::Raw => unwrapped.as_ref().map(|laid| laid.save.clone()).unwrap_or_default(),
         Format::Bundle => return Err("extracting a bundle as a bundle is a copy".into()),
         card => match args.onto.as_deref() {
             Some(onto) => card::write_onto(card, &bundle, &std::fs::read(onto)?)?,
@@ -847,27 +989,22 @@ fn extract(args: Extract) -> Fallible {
     // `Format::Raw` covers every flat save and names the commonest of them, so a backup RAM would
     // otherwise go back out as `.srm`. The bundle knows better.
     let is_backup_ram = bundle.header.system.as_ref().is_some_and(|s| s.as_str() == "sega-cd");
-    // A device written as one file is a MiSTer NeoGeo save, which the core names `.sav`.
-    let suffix = match target {
-        Format::Raw if is_backup_ram => "brm",
-        Format::NeoGeoCard if device => "sav",
+    // A device written as one file is a MiSTer NeoGeo save, which the core names `.sav`. A flat
+    // save written back as its producer wrote it takes the name that producer gives it: `.sav` off a
+    // MiSTer, `.srm` out of RetroArch.
+    let suffix = match (target, producer_of(&bundle)) {
+        (Format::Raw, _) if is_backup_ram => "brm",
+        (Format::Raw, Some((core, app))) if args.to.is_none() => {
+            save_suffix(core, app, system_of_bundle(&bundle))
+        }
+        (Format::NeoGeoCard, _) if device => "sav",
         _ => target.extension(),
     };
 
-    // A clock kept in its own file is written back to one, and left off the save: the two forms
-    // are alternatives, and a save carrying both would have its clock read twice over.
-    let payload = match &args.rtc_file {
-        Some(path) => {
-            let sidecar = one_saves_convert::rtc::sidecar_of(&bundle)
-                .ok_or("this bundle carries no clock to write to a sidecar")?;
-            write_out(path, &sidecar, args.force)?;
-            println!("clock -> {} ({} bytes)", path.display(), sidecar.len());
-            raw::unwrap_save_only(&bundle)?
-        }
-        None => payload,
-    };
-
     let output = args.output.unwrap_or_else(|| args.input.with_extension(suffix));
+
+    let (payload, beside) = clock_beside(&bundle, unwrapped.as_ref(), payload, args.rtc_file, &output)?;
+
     write_out(&output, &payload, args.force)?;
     println!(
         "{} -> {} ({}, {} bytes)",
@@ -880,7 +1017,240 @@ fn extract(args: Extract) -> Fallible {
         },
         payload.len()
     );
+    if let Some((path, sidecar)) = beside {
+        write_out(&path, &sidecar, args.force)?;
+        println!("clock -> {} ({} bytes)", path.display(), sidecar.len());
+    }
+    if let Some(unwrapped) = &unwrapped {
+        report_unwrapped(unwrapped, "its producer");
+    }
     Ok(())
+}
+
+/// What `--utc-offset` and `--rom` say about the reader and the cartridge, for writing a save.
+fn reader_of(
+    args: &Extract,
+    core: Option<(&'static one_saves_registry::Core, Option<&'static one_saves_registry::App>)>,
+) -> Result<raw::Reader, Box<dyn std::error::Error>> {
+    #[cfg(feature = "rom")]
+    let memory = match args.rom.as_deref() {
+        Some(rom) => one_saves_convert::rom::identify(&std::fs::read(rom)?).and_then(|info| info.memory),
+        None => None,
+    };
+    #[cfg(not(feature = "rom"))]
+    let memory = None;
+    Ok(raw::Reader { core, utc_offset: args.utc_offset, memory })
+}
+
+/// Says what writing a save took that the bundle did not say.
+fn report_unwrapped(unwrapped: &raw::Unwrapped, reader: &str) {
+    if unwrapped.rescaled_by != 0 {
+        let hours = f64::from(i32::try_from(unwrapped.rescaled_by).unwrap_or(i32::MAX)) / 3600.0;
+        println!("moved the clock's anchor {hours:+} h, from the scale it was stamped on to {reader}'s");
+    }
+    if unwrapped.scale_unknown {
+        println!(
+            "note: the clock was stamped in a MiSTer's local time, or is going to one, and nothing said how"
+        );
+        println!("      far that is from UTC, so it may be off by the zone's offset; --utc-offset says");
+    }
+    if unwrapped.memory_assumed {
+        println!(
+            "note: laid out as SRAM, since nothing said what the cartridge keeps; pass --rom if it has an"
+        );
+        println!("      EEPROM larger than 256 bytes");
+    }
+}
+
+/// A clock file to write, and where.
+type ClockFile = (PathBuf, Vec<u8>);
+
+/// The save to write, and the clock file to write beside it with its path, when there is one.
+///
+/// A clock kept in its own file is written back to one beside the save, and left off the save:
+/// the two forms are alternatives, and a save carrying both would have its clock read twice over.
+/// That is where the producer kept it, when it keeps one there, and `--rtc-file` asks for it there
+/// whatever the producer did.
+fn clock_beside(
+    bundle: &Bundle,
+    unwrapped: Option<&raw::Unwrapped>,
+    payload: Vec<u8>,
+    rtc_file: Option<PathBuf>,
+    output: &Path,
+) -> Result<(Vec<u8>, Option<ClockFile>), Box<dyn std::error::Error>> {
+    Ok(match (rtc_file, unwrapped) {
+        (Some(path), unwrapped) => {
+            let sidecar = one_saves_convert::rtc::sidecar_of(bundle)
+                .ok_or("this bundle carries no clock to write to a sidecar")?;
+            let save = match unwrapped {
+                Some(unwrapped) => unwrapped.save[..unwrapped.memory_len].to_vec(),
+                None => raw::unwrap_save_only(bundle)?,
+            };
+            (save, Some((path, sidecar)))
+        }
+        (None, Some(unwrapped)) => {
+            (payload, unwrapped.sidecar.clone().map(|sidecar| (output.with_extension("rtc"), sidecar)))
+        }
+        (None, None) => (payload, None),
+    })
+}
+
+/// Writes a flat save for the reader `--to` names: its save memory, under the name that reader
+/// gives a save, and its clock laid out the way that reader keeps one, on the end of the save or in
+/// a `.rtc` beside it.
+///
+/// An app that runs many cores and was not told which with `--core` is taken at its word where it
+/// can be: when every core it runs for the save's system would write the same files, which is
+/// MiSTer's one Game Boy layout across its Gameboy and SGB cores, or any libretro core for a save
+/// with no clock.
+fn extract_for(args: &Extract, bundle: &Bundle, name: &str) -> Fallible {
+    use one_saves_registry::{App, Core};
+    /// The extension a reader gives the save, and the save written for it.
+    type Written = (&'static str, raw::Unwrapped);
+    let system = system_of_bundle(bundle);
+    let (app, cores) = readers_of(name, args.core.as_deref(), system)?;
+    if let (Some(system), [core]) = (system, cores.as_slice())
+        && !core.systems.contains(&system)
+    {
+        return Err(
+            format!("{} runs {}, and this save is for {system}", core.name, core.systems.join(", ")).into()
+        );
+    }
+
+    // What each core would write, and whether they agree.
+    let written =
+        |core: &'static Core, app: Option<&'static App>| -> Result<Written, Box<dyn std::error::Error>> {
+            let unwrapped = raw::unwrap_as(bundle, &reader_of(args, Some((core, app)))?)?;
+            Ok((save_suffix(core, app, system), unwrapped))
+        };
+    let first = cores.first().ok_or("no core to write the save for")?;
+    let (suffix, unwrapped) = written(first, app)?;
+    for other in &cores[1..] {
+        let (other_suffix, other) = written(other, app)?;
+        if (other_suffix, &other.save, &other.sidecar) != (suffix, &unwrapped.save, &unwrapped.sidecar) {
+            let names: Vec<&str> = cores.iter().map(|core| core.slug).collect();
+            let app = app.map_or("", |app| app.name);
+            return Err(format!(
+                "{app} runs {} for this save, and they do not write it alike; name the one that will read it \
+                 with --core",
+                names.join(", ")
+            )
+            .into());
+        }
+    }
+    let reader = match (app, cores.as_slice()) {
+        (Some(app), [_, _, ..]) => app.name.to_owned(),
+        (Some(app), _) if app.name != first.name => format!("{} in {}", first.name, app.name),
+        _ => first.name.to_owned(),
+    };
+
+    if unwrapped.sidecar.is_none() && args.rtc_file.is_some() {
+        return Err(format!(
+            "{reader} keeps no clock beside the save, so there is nothing to write to --rtc-file"
+        )
+        .into());
+    }
+    let output = args.output.clone().unwrap_or_else(|| args.input.with_extension(suffix));
+    let payload = &unwrapped.save;
+    write_out(&output, payload, args.force)?;
+    println!("{} -> {} (save for {reader}, {} bytes)", args.input.display(), output.display(), payload.len());
+
+    if let Some(beside) = &unwrapped.sidecar {
+        let path = args.rtc_file.clone().unwrap_or_else(|| output.with_extension("rtc"));
+        write_out(&path, beside, args.force)?;
+        println!("clock -> {} ({} bytes)", path.display(), beside.len());
+    } else if has_clock(bundle) && unwrapped.save.len() == unwrapped.memory_len {
+        println!("note: {reader} keeps no clock for this cartridge, so the save's clock was left out");
+    }
+    report_unwrapped(&unwrapped, &reader);
+    Ok(())
+}
+
+/// The extension `core`, run by `app`, gives a flat save.
+///
+/// A libretro frontend writes `.srm` whatever the core; a MiSTer, a Pocket, a standalone engine
+/// and an app's own build write `.sav`. A Sega CD's backup RAM is the exception everywhere.
+fn save_suffix(
+    core: &one_saves_registry::Core,
+    app: Option<&one_saves_registry::App>,
+    system: Option<&str>,
+) -> &'static str {
+    let libretro = core.kind == one_saves_registry::CoreKind::Libretro
+        && app.is_none_or(|app| !app.cores.builds.contains(&core.slug));
+    match system {
+        Some("sega-cd") => "brm",
+        _ if libretro => "srm",
+        _ => "sav",
+    }
+}
+
+/// The listed core, and the listed app running it, that a bundle says wrote it.
+fn producer_of(
+    bundle: &Bundle,
+) -> Option<(&'static one_saves_registry::Core, Option<&'static one_saves_registry::App>)> {
+    let source = bundle.header.source.as_ref()?;
+    let core = one_saves_registry::core(source.core.as_ref()?.as_str())?;
+    Some((core, source.app.as_ref().and_then(|app| one_saves_registry::app(app.as_str()))))
+}
+
+/// The system a bundle says its save is for.
+fn system_of_bundle(bundle: &Bundle) -> Option<&str> {
+    bundle.header.system.as_ref().map(one_saves::Slug::as_str)
+}
+
+/// Whether a bundle records a cartridge clock, under any chip's key.
+fn has_clock(bundle: &Bundle) -> bool {
+    use one_saves::extension::{RtcHuc3, RtcMbc3, RtcS3511a};
+    let extensions = &bundle.header.extensions;
+    extensions.get::<RtcMbc3>().is_some()
+        || extensions.get::<RtcS3511a>().is_some()
+        || extensions.get::<RtcHuc3>().is_some()
+}
+
+/// The readers `--to` and `--core` can mean for a save of `system`: one core, and the app running
+/// it when one was named; or, for an app that runs many and was not told which, every core it runs
+/// for the system.
+///
+/// An app is looked for first, since a name both lists, as `mgba` is, means the app to someone
+/// naming what will read the file. An app that runs one build of its own runs that.
+fn readers_of(
+    name: &str,
+    core: Option<&str>,
+    system: Option<&str>,
+) -> Result<(Option<&'static one_saves_registry::App>, Vec<&'static one_saves_registry::Core>), String> {
+    let listed_core = |name: &str| {
+        one_saves_registry::core_by_any_name(name).ok_or_else(|| format!("{name:?} is not a listed core"))
+    };
+    let Some(app) = one_saves_registry::app_by_any_name(name) else {
+        let reader = one_saves_registry::core_by_any_name(name)
+            .ok_or_else(|| format!("{name:?} is neither a format nor a listed app or core"))?;
+        if core.is_some() {
+            return Err(format!("--core names the core an app runs, and {} is a core", reader.name));
+        }
+        return Ok((None, vec![reader]));
+    };
+    let readers = match (core, app.cores.builds, system) {
+        (Some(core), _, _) => vec![listed_core(core)?],
+        (None, [only], _) if app.cores.kind.is_none() => vec![listed_core(only)?],
+        (None, _, Some(system)) => {
+            let readers: Vec<_> =
+                one_saves_registry::cores_for_system(system).filter(|core| app.runs(core)).collect();
+            if readers.is_empty() {
+                return Err(format!("{} runs no listed core for {system}", app.name));
+            }
+            readers
+        }
+        (None, _, None) => {
+            return Err(format!(
+                "{} runs many cores and this save names no system; name the one that will read it with --core",
+                app.name
+            ));
+        }
+    };
+    if let Some(reader) = readers.iter().find(|reader| !app.runs(reader)) {
+        return Err(format!("{} does not run {}", app.name, reader.name));
+    }
+    Ok((Some(app), readers))
 }
 
 fn new_card(args: &New) -> Fallible {
@@ -1497,6 +1867,32 @@ fn profiles() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reader_is_an_app_first_and_a_core_otherwise() {
+        let slugs = |name, core, system| {
+            readers_of(name, core, system).map(|(app, cores)| {
+                (app.map(|app| app.slug), cores.iter().map(|core| core.slug).collect::<Vec<_>>())
+            })
+        };
+        // `mgba` is both, and someone naming what will read a file means the app.
+        assert_eq!(slugs("mgba", None, None), Ok((Some("mgba"), vec!["mgba"])));
+        assert_eq!(slugs("retroarch", Some("mGBA"), None), Ok((Some("retroarch"), vec!["mgba"])));
+        assert_eq!(slugs("gambatte", None, None), Ok((None, vec!["gambatte"])));
+        assert_eq!(slugs("Gameboy_MiSTer", None, None), Ok((None, vec!["gameboy-mister"])));
+        assert_eq!(slugs("openemu", Some("gambatte"), None), Ok((Some("openemu"), vec!["gambatte"])));
+        // An app that runs many, told no core, means every one it runs for the save's system.
+        assert_eq!(slugs("mister", None, Some("gbc")), Ok((Some("mister"), vec!["gameboy-mister"])));
+        assert_eq!(
+            slugs("mister", None, Some("gb")),
+            Ok((Some("mister"), vec!["gameboy-mister", "sgb-mister"]))
+        );
+        // And with no system to go by, it has to be told.
+        assert!(slugs("retroarch", None, None).unwrap_err().contains("--core"));
+        assert!(slugs("retroarch", Some("gameboy-mister"), None).unwrap_err().contains("does not run"));
+        assert!(slugs("gambatte", Some("mgba"), None).is_err(), "--core is for an app");
+        assert!(slugs("nonesuch", None, None).is_err());
+    }
 
     #[test]
     fn text_from_a_bundle_cannot_drive_the_terminal() {

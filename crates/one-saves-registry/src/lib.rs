@@ -32,12 +32,14 @@
 //! has a const, and naming one links that core alone rather than the whole table.
 //!
 //! ```
-//! use one_saves_registry::{ClockLayout, cores, systems};
+//! use one_saves_registry::{ClockLayout, SidecarRecord, cores, systems};
 //!
 //! // mGBA holds mgba.io and is listed, so `mgba` is the one spelling it writes.
 //! assert_eq!(cores::MGBA.slug, "mgba");
-//! // And the registry records how it lays a clock down, so a converter need not guess.
-//! assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended { timestamp_width: 8 }));
+//! // And the registry records how it lays a clock down, so a converter need not guess: as a
+//! // libretro core, in a `.rtc` of its own beside the save.
+//! let beside = ClockLayout::Sidecar(SidecarRecord::Registers { timestamp_width: 8 });
+//! assert_eq!(cores::MGBA.clock, Some(beside));
 //!
 //! // Systems the same way.
 //! assert_eq!(systems::GBA.name, "Game Boy Advance");
@@ -87,7 +89,8 @@ pub use generated::platforms;
 pub use generated::systems;
 
 use generated::{
-    APPS, BINDINGS, CARD_FORMATS, CORES, DEVICE_KINDS, PLATFORMS, ROLE_PREFIXES, ROLES, SYSTEMS, VENDORS,
+    APP_CLOCKS, APPS, BINDINGS, CARD_FORMATS, CORES, DEVICE_KINDS, PLATFORMS, ROLE_PREFIXES, ROLES, SYSTEMS,
+    VENDORS,
 };
 
 /// A gaming system, and the names other tools use for it.
@@ -129,6 +132,13 @@ pub enum CoreKind {
 /// how many bytes it takes. That width is what `x.1sav.rtc.mbc3` carries as key 3, and what
 /// rebuilding a footer for a core has to match, so it is recorded beside the layout.
 ///
+/// The layout is the core's as its [`kind`](Core::kind) hosts it, and for a libretro core that is
+/// the frontend's doing as much as the core's: a libretro frontend writes the save memory a core
+/// exposes to `<name>.srm` and its clock, when it exposes one, to `<name>.rtc`, and appends
+/// nothing. So a libretro core that keeps a clock keeps it in a [`Sidecar`](Self::Sidecar),
+/// whatever a standalone build of the same engine does. An app running a build of its own lays
+/// the clock out its own way; see [`Core::clock_in`].
+///
 /// Unlike the rest of this crate these are not drawn from the registry pages: the specifications
 /// do not describe clock layouts. They come from files real cores wrote, or from a core's own
 /// source where no file has been sampled. A core whose source is not published and whose files
@@ -136,7 +146,7 @@ pub enum CoreKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClockLayout {
     /// Appended to the save, registers little-endian at their natural width and then the host
-    /// clock. mGBA, SameBoy, VBA-M.
+    /// clock. The mGBA app, and the standalone builds of SameBoy and VBA-M.
     Appended {
         /// How many bytes the host clock takes.
         timestamp_width: u8,
@@ -152,11 +162,173 @@ pub enum ClockLayout {
         /// How many bytes the host clock takes, wherever in the packing it sits.
         timestamp_width: u8,
     },
-    /// Written to a separate file beside the save, not appended to it. Gambatte for an MBC3,
-    /// mincer_ray's GBA core for a Seiko S-3511A.
+    /// Written to a file of its own beside the save, `<name>.rtc`, and not appended to it. Every
+    /// libretro core that keeps a clock, and mincer_ray's GBA core on the Pocket.
     ///
-    /// No footer, so no width: `x.1sav.rtc.mbc3` leaves key 3 out for a clock kept this way.
-    Sidecar,
+    /// The file holds whatever the core keeps, and the record says what that is. A chip the record
+    /// does not hold is one the core keeps no clock for at all: mGBA's libretro core keeps an
+    /// MBC3's, and nothing for a GBA cartridge's Seiko chip, whose time a game there reads from
+    /// the host.
+    ///
+    /// No footer, so no width: `x.1sav.rtc.mbc3` leaves key 3 out for a clock kept this way, even
+    /// where the record has a timestamp of its own.
+    Sidecar(SidecarRecord),
+}
+
+/// What a clock kept in a file of its own holds.
+///
+/// The files share a name and a place and nothing else. Some hold a reading and one holds the
+/// instant a reading is derived from. Their lengths tell them apart, but only among the producers
+/// sampled so far, so a consumer that knows the producer reads its record as this says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidecarRecord {
+    /// The instant the clock's counters count from, as a `time_t`. The clock reads the time since
+    /// then, so the file is the other operand of a reading rather than a reading. Gambatte keeps
+    /// one for an MBC3 and for a HuC-3 alike, eight little-endian bytes under libretro and four
+    /// big-endian ones in OpenEmu's build, and VBA-M's libretro core one for a HuC-3.
+    Origin {
+        /// How many bytes the instant takes.
+        timestamp_width: u8,
+        /// Whether it is written most significant byte first.
+        big_endian: bool,
+    },
+    /// An MBC3's registers as an appending core puts them after the save, ten little-endian words
+    /// and then the host clock, alone in the file. mGBA's and VBA-M's libretro cores.
+    Registers {
+        /// How many bytes the host clock takes.
+        timestamp_width: u8,
+    },
+    /// SameBoy's own record of an MBC3, the clock section of its machine state: the live and
+    /// latched registers a byte each, the host clock as eight little-endian bytes from offset 16,
+    /// and the cycles counted into the current second, 32 bytes in all. SameBoy's libretro core.
+    SameBoy,
+    /// A Seiko S-3511A's calendar and the host clock it was taken at, bit-packed. mincer_ray's GBA
+    /// core.
+    PackedSeiko,
+}
+
+/// How a core keeps a Hudson HuC-3's clock, which every core that keeps one keeps its own way.
+///
+/// A [`ClockLayout`] covers the chips whose state the producers that keep them agree about, an
+/// MBC3's registers and a Seiko chip's calendar, where the layout is the core's and the chip the
+/// save's. A HuC-3 is a controller with a 256-nybble window, and no two producers keep the same
+/// part of it in the same shape, not even where their MBC3s agree: VBA-M keeps an MBC3's registers
+/// beside the save and a HuC-3's origin. So it is recorded beside the layout, for the cores whose
+/// files or source say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Huc3Layout {
+    /// Packed into the footer the core keeps an MBC3 in, padded to this length: the minute and day
+    /// counters, the seconds into the minute and the host clock. The MiSTer Game Boy cores and
+    /// their Pocket ports.
+    Packed {
+        /// The length in bytes the footer is padded to.
+        reserved: usize,
+    },
+    /// In a file of its own beside the save, `<name>.rtc`: the instant the counters count from.
+    /// Gambatte and VBA-M under libretro.
+    Origin {
+        /// How many bytes the instant takes.
+        timestamp_width: u8,
+        /// Whether it is written most significant byte first.
+        big_endian: bool,
+    },
+    /// Appended to the save: the controller's whole window, two nybbles to a byte, the lower
+    /// address in the lower half, and then the host clock it was latched at, eight bytes
+    /// little-endian. The mGBA app.
+    Memory,
+    /// Appended to the save as SameBoy's own seventeen packed bytes: the host clock the counters
+    /// were last moved at, eight bytes little-endian, then the minute and day counters and the
+    /// alarm's minute and day, two bytes each, and whether the alarm is on. The SameBoy app.
+    SameBoy,
+    /// Appended to the save as VBA-M's own 24 bytes: the instant the counters count from, eight
+    /// bytes little-endian, then four little-endian words of the controller's state as a game left
+    /// it, the last time it read and the shift it was reading at. The VisualBoyAdvance-M app.
+    Vbam,
+    /// Not kept at all: the core saves no HuC-3 clock, and a game's clock starts over each time it
+    /// is loaded. mGBA's and SameBoy's libretro cores, and OpenEmu's Gambatte, which will not load
+    /// a HuC-3 cartridge at all.
+    NotKept,
+}
+
+/// How a core keeps one system's save memory in its file, where that is not the memory's own bytes
+/// one after another.
+///
+/// A bundle carries the memory alone, as the console's hardware addresses it: a Mega Drive's SRAM
+/// as its own bytes, a GBA's chip without the padding a file adds. Cores disagree about the file,
+/// and MiSTer's cores will not read every one of them, so writing a file for a core means laying
+/// the memory out as that core keeps it. A core with no layout for a system keeps the memory as it
+/// is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveLayout {
+    /// The cartridge's 16-bit address window, as Genesis Plus GX keeps a Mega Drive's: SRAM on one
+    /// byte lane sits at every other byte of the file, and the other lane holds `fill`. A serial
+    /// EEPROM is kept as its own bytes, never spread out.
+    Expanded {
+        /// What the lane the SRAM is not on holds.
+        fill: u8,
+        /// How long the file is.
+        length: ExpandedLength,
+        /// The length an EEPROM's file is padded to with `fill`, for a core that writes every
+        /// EEPROM at one size: PicoDrive's 8 KiB.
+        eeprom_length: Option<u32>,
+    },
+    /// The SRAM's own bytes, one after another, as BlastEm and MiSTer keep a Mega Drive's, padded
+    /// with 0xFF to `length` for a core that writes every save at one size.
+    Packed {
+        /// The size the core writes every save at.
+        length: Option<u32>,
+    },
+    /// The chip at the start of a file of `length` bytes, the rest 0xFF, as gpSP and SkyEmu keep a
+    /// GBA's.
+    Padded {
+        /// The file's length.
+        length: u32,
+        /// Whether each eight-byte block of an EEPROM is kept back to front, as SkyEmu keeps them.
+        reversed_eeprom: bool,
+    },
+    /// VBA Next's GBA file: 0x22000 bytes, an EEPROM at 0x20000 behind 0xFF and any other chip at
+    /// the start.
+    VbaNext,
+    /// The chip itself, an EEPROM padded with 0xFF to at least `eeprom_min` bytes: MiSTer's GBA
+    /// core reads a 4 Kbit EEPROM only from a file of 8 KiB, the size it writes one at.
+    Chip {
+        /// The shortest file an EEPROM is read from.
+        eeprom_min: u32,
+    },
+}
+
+/// How long an [`Expanded`](SaveLayout::Expanded) file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpandedLength {
+    /// Up to the last byte that is not 0xFF, as Genesis Plus GX's libretro port reports it: the
+    /// file is as long as its data, and the core reads anything shorter as 0xFF.
+    Trimmed,
+    /// Twice the SRAM, which is the range the cartridge's header declares, as PicoDrive writes it.
+    Doubled,
+    /// Always this long, as clownmdemu writes every save at 64 KiB.
+    Fixed(u32),
+}
+
+/// A core's [`SaveLayout`] for one of the systems it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemLayout {
+    /// The system's slug.
+    pub system: &'static str,
+    /// How the core keeps that system's save memory.
+    pub layout: SaveLayout,
+}
+
+/// One app's own build of a core, laying a clock out differently from the core's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AppClock {
+    /// The core's slug.
+    pub(crate) core: &'static str,
+    /// The app's slug.
+    pub(crate) app: &'static str,
+    /// How that build lays an MBC3's or a Seiko chip's clock out, where anyone has seen.
+    pub(crate) layout: Option<ClockLayout>,
+    /// How that build keeps a HuC-3's clock, where anyone has seen.
+    pub(crate) huc3: Option<Huc3Layout>,
 }
 
 /// An emulator core: the engine that runs the game, as distinct from the [`App`] hosting it.
@@ -175,13 +347,118 @@ pub struct Core {
     pub systems: &'static [&'static str],
     /// Former names, SD-card folders and rebuilds that count as the same core. Never emitted.
     pub aliases: &'static [&'static str],
-    /// How it lays out clock state, for the cores that write any.
+    /// How it lays out clock state, for the cores that write any, as its [`kind`](Self::kind)
+    /// hosts it: a libretro core in a libretro frontend, a MiSTer core on a MiSTer.
     ///
     /// `None` means this registry records no clock convention for the core — either because it
     /// runs nothing with a clock chip, or because nobody has checked. A consumer meeting `None`
     /// should fall back to whatever it does for an unlisted producer rather than assume there is
     /// no clock.
+    ///
+    /// An app that ships a build of its own may lay the clock out differently, as the mGBA app
+    /// does; [`clock_in`](Self::clock_in) answers for a known app.
     pub clock: Option<ClockLayout>,
+    /// How it keeps a HuC-3's clock, for the Game Boy cores whose files or source say, as its
+    /// [`kind`](Self::kind) hosts it; [`huc3_in`](Self::huc3_in) answers for a known app.
+    ///
+    /// `None` means nobody has checked, which is not the same as
+    /// [`NotKept`](Huc3Layout::NotKept).
+    pub huc3: Option<Huc3Layout>,
+    /// How it keeps save memory in its file, for the systems where that is not the memory's own
+    /// bytes, as its [`kind`](Self::kind) hosts it; [`layout_in`](Self::layout_in) answers for one
+    /// system and a known app.
+    pub layouts: &'static [SystemLayout],
+}
+
+impl Core {
+    /// How this core lays out clock state when `app` runs it.
+    ///
+    /// An app that loads the core as one of its kind, as RetroArch loads a libretro core, writes
+    /// what [`clock`](Self::clock) says. An app that ships a build of its own writes what that
+    /// build does: the mGBA app appends the clock its libretro core keeps beside the save, and
+    /// OpenEmu's Gambatte writes its instant in four big-endian bytes rather than eight
+    /// little-endian ones. Those are recorded where a build's files have been sampled, and a build
+    /// nobody has sampled answers `None`, since the core's kind says nothing about it.
+    ///
+    /// With no app, [`clock`](Self::clock).
+    ///
+    /// ```
+    /// use one_saves_registry::{ClockLayout, SidecarRecord, apps, cores};
+    ///
+    /// let beside = Some(ClockLayout::Sidecar(SidecarRecord::Registers { timestamp_width: 8 }));
+    /// assert_eq!(cores::MGBA.clock_in(Some(&apps::RETROARCH)), beside);
+    /// let appended = Some(ClockLayout::Appended { timestamp_width: 8 });
+    /// assert_eq!(cores::MGBA.clock_in(Some(&apps::MGBA)), appended);
+    /// ```
+    #[must_use]
+    pub fn clock_in(&self, app: Option<&App>) -> Option<ClockLayout> {
+        match self.build_in(app) {
+            Build::Kind => self.clock,
+            Build::Own(found) => found.and_then(|build| build.layout),
+        }
+    }
+
+    /// How this core keeps a HuC-3's clock when `app` runs it, by the same rule as
+    /// [`clock_in`](Self::clock_in).
+    ///
+    /// ```
+    /// use one_saves_registry::{Huc3Layout, apps, cores};
+    ///
+    /// assert_eq!(cores::MGBA.huc3_in(Some(&apps::RETROARCH)), Some(Huc3Layout::NotKept));
+    /// assert_eq!(cores::MGBA.huc3_in(Some(&apps::MGBA)), Some(Huc3Layout::Memory));
+    /// ```
+    #[must_use]
+    pub fn huc3_in(&self, app: Option<&App>) -> Option<Huc3Layout> {
+        match self.build_in(app) {
+            Build::Kind => self.huc3,
+            Build::Own(found) => found.and_then(|build| build.huc3),
+        }
+    }
+
+    /// How this core keeps `system`'s save memory in its file when `app` runs it, where that is not
+    /// the memory's own bytes.
+    ///
+    /// `None` means the file is the memory as it is, or that an app's own build has not been
+    /// checked: the registry records layouts for the cores as their kinds host them.
+    ///
+    /// ```
+    /// use one_saves_registry::{ExpandedLength, SaveLayout, apps, cores};
+    ///
+    /// let gpgx = cores::GENESIS_PLUS_GX.layout_in(Some(&apps::RETROARCH), "genesis");
+    /// assert!(matches!(gpgx, Some(SaveLayout::Expanded { fill: 0xFF, length: ExpandedLength::Trimmed, .. })));
+    /// assert_eq!(cores::MEGADRIVE_MISTER.layout_in(None, "genesis"), Some(SaveLayout::Packed { length: Some(65_536) }));
+    /// assert_eq!(cores::MGBA.layout_in(None, "gba"), None, "mGBA keeps the chip as it is");
+    /// ```
+    #[must_use]
+    pub fn layout_in(&self, app: Option<&App>, system: &str) -> Option<SaveLayout> {
+        match self.build_in(app) {
+            Build::Kind => self.layouts.iter().find(|l| l.system == system).map(|l| l.layout),
+            Build::Own(_) => None,
+        }
+    }
+
+    /// Which build of this core `app` runs: the core as its kind hosts it, or a build of the app's
+    /// own, with what the registry records of that build.
+    fn build_in(&self, app: Option<&App>) -> Build {
+        let Some(app) = app else { return Build::Kind };
+        if let Ok(index) = APP_CLOCKS.binary_search_by_key(&(self.slug, app.slug), |c| (c.core, c.app)) {
+            return Build::Own(Some(&APP_CLOCKS[index]));
+        }
+        // A standalone engine's entry is its own build already, as a standalone emulator ships it.
+        if app.cores.builds.contains(&self.slug) && self.kind != CoreKind::Standalone {
+            Build::Own(None)
+        } else {
+            Build::Kind
+        }
+    }
+}
+
+/// Which build of a core an app runs.
+enum Build {
+    /// The core as its kind hosts it, which its own entry describes.
+    Kind,
+    /// A build of the app's own, and the registry's record of it, when it has one.
+    Own(Option<&'static AppClock>),
 }
 
 /// What an app runs, as the Apps registry's **Cores** column says it.
@@ -560,8 +837,8 @@ mod tests {
     #[test]
     fn the_registries_are_the_size_the_documents_are() {
         assert_eq!(SYSTEMS.len(), 50);
-        assert_eq!(CORES.len(), 201);
-        assert_eq!(APPS.len(), 17);
+        assert_eq!(CORES.len(), 202);
+        assert_eq!(APPS.len(), 24);
         assert_eq!(PLATFORMS.len(), 13);
         assert_eq!(CARD_FORMATS.len(), 7);
         assert_eq!(DEVICE_KINDS.len(), 5);
@@ -710,11 +987,18 @@ mod tests {
 
     #[test]
     fn the_layouts_are_the_ones_real_cores_write() {
-        assert_eq!(cores::GAMBATTE.clock, Some(ClockLayout::Sidecar));
-        // A GBA core keeps its clock in a file too, and the system says which chip is in it.
-        assert_eq!(cores::MINCER_RAY_GBA.clock, Some(ClockLayout::Sidecar));
-        assert_eq!(cores::MGBA.clock, Some(ClockLayout::Appended { timestamp_width: 8 }));
-        assert_eq!(cores::SAMEBOY.clock, Some(ClockLayout::Appended { timestamp_width: 8 }));
+        // Under a libretro frontend every core that keeps a clock keeps it in a `.rtc` beside the
+        // save, and what each one puts in it is its own.
+        let beside = |record| Some(ClockLayout::Sidecar(record));
+        assert_eq!(
+            cores::GAMBATTE.clock,
+            beside(SidecarRecord::Origin { timestamp_width: 8, big_endian: false })
+        );
+        assert_eq!(cores::MGBA.clock, beside(SidecarRecord::Registers { timestamp_width: 8 }));
+        assert_eq!(cores::VBA_M.clock, beside(SidecarRecord::Registers { timestamp_width: 8 }));
+        assert_eq!(cores::SAMEBOY.clock, beside(SidecarRecord::SameBoy));
+        // A GBA core keeps its clock in a file too, a record of another chip entirely.
+        assert_eq!(cores::MINCER_RAY_GBA.clock, beside(SidecarRecord::PackedSeiko));
         // The MiSTer core writes a whole SD block; its openFPGA ports write sixteen bytes. Both
         // give the host clock four bytes, where the appending emulators give it eight.
         let block = Some(ClockLayout::Packed { reserved: 512, timestamp_width: 4 });
@@ -735,6 +1019,114 @@ mod tests {
         // A MiSTer core for a system with no MBC3 in it records nothing, rather than inheriting
         // the Game Boy core's layout because the two slugs end alike.
         assert_eq!(cores::PSX_MISTER.clock, None);
+    }
+
+    #[test]
+    fn a_huc3_is_kept_the_way_each_core_keeps_one() {
+        // The same layout for both chips on MiSTer and in Gambatte, and not in VBA-M, which keeps
+        // an MBC3's registers beside the save and a HuC-3's origin.
+        assert_eq!(cores::GAMEBOY_MISTER.huc3, Some(Huc3Layout::Packed { reserved: 512 }));
+        assert_eq!(cores::SGB_MISTER.huc3, Some(Huc3Layout::Packed { reserved: 512 }));
+        assert_eq!(cores::BUDUDE2_GBC.huc3, Some(Huc3Layout::Packed { reserved: 16 }));
+        let origin = Some(Huc3Layout::Origin { timestamp_width: 8, big_endian: false });
+        assert_eq!(cores::GAMBATTE.huc3, origin);
+        assert_eq!(cores::VBA_M.huc3, origin);
+        // Two libretro cores keep none at all, which is an answer rather than an absence of one.
+        assert_eq!(cores::MGBA.huc3, Some(Huc3Layout::NotKept));
+        assert_eq!(cores::SAMEBOY.huc3, Some(Huc3Layout::NotKept));
+        // A core nobody has looked at says nothing.
+        assert_eq!(cores::SPIRITUALIZED_GBC.huc3, None);
+        // And only a core that runs a Game Boy has one to keep.
+        for core in cores().iter().filter(|core| core.huc3.is_some()) {
+            assert!(core.systems.iter().any(|s| matches!(*s, "gb" | "gbc")), "{}", core.slug);
+        }
+    }
+
+    #[test]
+    fn an_app_running_a_build_of_its_own_lays_the_clock_out_its_own_way() {
+        // The mGBA app appends the record its libretro core keeps beside the save.
+        assert_eq!(
+            cores::MGBA.clock_in(Some(&apps::MGBA)),
+            Some(ClockLayout::Appended { timestamp_width: 8 })
+        );
+        // OpenEmu's Gambatte writes the same instant narrower and the other way round.
+        assert_eq!(
+            cores::GAMBATTE.clock_in(Some(&apps::OPENEMU)),
+            Some(ClockLayout::Sidecar(SidecarRecord::Origin { timestamp_width: 4, big_endian: true }))
+        );
+        // RetroArch loads the core as a libretro core, so it writes what the core's kind does.
+        for core in [&cores::MGBA, &cores::GAMBATTE, &cores::SAMEBOY, &cores::GAMEBOY_MISTER] {
+            if apps::RETROARCH.runs(core) {
+                assert_eq!(core.clock_in(Some(&apps::RETROARCH)), core.clock, "{}", core.slug);
+            }
+            // And naming no app says nothing more than the core does.
+            assert_eq!(core.clock_in(None), core.clock, "{}", core.slug);
+        }
+        // A MiSTer runs MiSTer cores as their kind.
+        assert_eq!(cores::GAMEBOY_MISTER.clock_in(Some(&apps::MISTER)), cores::GAMEBOY_MISTER.clock);
+        // A build of its own nobody has sampled is not assumed to be the libretro core's: OpenEmu
+        // builds mGBA itself, and Provenance builds Gambatte though it also loads libretro cores.
+        assert_eq!(cores::MGBA.clock_in(Some(&apps::OPENEMU)), None);
+        assert_eq!(cores::GAMBATTE.clock_in(Some(&apps::PROVENANCE)), None);
+
+        // The HuC-3 the same way: the mGBA app keeps the whole controller where its libretro core
+        // keeps nothing, and OpenEmu's Gambatte will not load a HuC-3 cartridge at all.
+        assert_eq!(cores::MGBA.huc3_in(Some(&apps::MGBA)), Some(Huc3Layout::Memory));
+        assert_eq!(cores::MGBA.huc3_in(Some(&apps::RETROARCH)), Some(Huc3Layout::NotKept));
+        assert_eq!(cores::MGBA.huc3_in(None), Some(Huc3Layout::NotKept));
+        assert_eq!(cores::GAMBATTE.huc3_in(Some(&apps::OPENEMU)), Some(Huc3Layout::NotKept));
+        assert_eq!(cores::GAMEBOY_MISTER.huc3_in(Some(&apps::MISTER)), cores::GAMEBOY_MISTER.huc3);
+
+        // The standalone SameBoy and VisualBoyAdvance-M append both chips' clocks to the save, where
+        // their libretro cores keep an MBC3's beside it.
+        for (core, app, huc3) in [
+            (&cores::SAMEBOY, &apps::SAMEBOY, Huc3Layout::SameBoy),
+            (&cores::VBA_M, &apps::VISUALBOYADVANCE_M, Huc3Layout::Vbam),
+        ] {
+            assert_eq!(core.clock_in(Some(app)), Some(ClockLayout::Appended { timestamp_width: 8 }));
+            assert_eq!(core.huc3_in(Some(app)), Some(huc3));
+            assert!(matches!(core.clock_in(Some(&apps::RETROARCH)), Some(ClockLayout::Sidecar(_))));
+        }
+        // BGB has no other build, so its entry is the app's.
+        assert_eq!(cores::BGB.clock_in(Some(&apps::BGB)), Some(ClockLayout::Appended { timestamp_width: 8 }));
+    }
+
+    #[test]
+    fn a_save_layout_is_the_core_s_as_its_kind_hosts_it() {
+        // A Mega Drive's SRAM spread over its bus by some cores and packed by others.
+        assert!(matches!(
+            cores::PICODRIVE.layout_in(Some(&apps::RETROARCH), "genesis"),
+            Some(SaveLayout::Expanded {
+                fill: 0x00,
+                length: ExpandedLength::Doubled,
+                eeprom_length: Some(8192)
+            })
+        ));
+        assert_eq!(cores::BLASTEM.layout_in(None, "genesis"), Some(SaveLayout::Packed { length: None }));
+        // Only for the system the layout is for: Genesis Plus GX keeps a Master System's as it is.
+        assert_eq!(cores::GENESIS_PLUS_GX.layout_in(None, "mastersystem"), None);
+        assert_eq!(
+            cores::GBA_MISTER.layout_in(Some(&apps::MISTER), "gba"),
+            Some(SaveLayout::Chip { eeprom_min: 8192 })
+        );
+        // An app's own build nobody has checked keeps nothing assumed: OpenEmu builds Genesis Plus GX.
+        assert_eq!(cores::GENESIS_PLUS_GX.layout_in(Some(&apps::OPENEMU), "genesis"), None);
+        for core in &CORES {
+            for layout in core.layouts {
+                assert!(core.systems.contains(&layout.system), "{} lays out {}", core.slug, layout.system);
+            }
+        }
+    }
+
+    #[test]
+    fn every_recorded_build_is_one_its_app_ships() {
+        // An override for an app that loads the core as its kind would contradict the core's own
+        // entry, and one for an app that does not run the core at all is a typo.
+        for entry in &APP_CLOCKS {
+            let app = app(entry.app).unwrap_or_else(|| panic!("{} is not a listed app", entry.app));
+            assert!(app.cores.builds.contains(&entry.core), "{} ships no build of {}", entry.app, entry.core);
+        }
+        assert!(APP_CLOCKS.is_sorted_by_key(|c| (c.core, c.app)), "sorted, for the binary search");
     }
 
     #[test]

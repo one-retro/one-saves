@@ -29,6 +29,10 @@ pub struct RomInfo {
     /// The save chip an N64 cartridge carries, where the header says: only a homebrew header does,
     /// in the byte a retail one keeps its revision in.
     pub n64_save: Option<one_saves::extension::N64Save>,
+    /// What a Mega Drive or GBA cartridge keeps its saves in, which is what laying a save out for
+    /// a core takes: a Mega Drive header declares SRAM and its byte lane, or an EEPROM's two
+    /// lines, and a GBA ROM links the library of its chip.
+    pub memory: Option<crate::layout::SaveMemory>,
 }
 
 /// Identifies a ROM from its header.
@@ -46,7 +50,23 @@ pub fn identify(bytes: &[u8]) -> Option<RomInfo> {
         serial: if n64 { id.serial.as_deref().map(crate::n64::serial_of) } else { id.serial },
         clock: id.cartridge.clock.map(rom_id::Clock::key),
         n64_save: if n64 { id.cartridge.save.and_then(n64_save) } else { None },
+        memory: match id.system.slug {
+            "genesis" => id.cartridge.save.map(save_memory),
+            "gba" => rom_id::gba_save(bytes).map(save_memory),
+            _ => None,
+        },
     })
+}
+
+/// What [`layout`](crate::layout) needs of a cartridge's save memory.
+fn save_memory(save: rom_id::Save) -> crate::layout::SaveMemory {
+    use crate::layout::SaveMemory;
+    let size = save.size.and_then(|size| usize::try_from(size).ok());
+    match (save.kind, save.lane) {
+        (rom_id::SaveKind::Eeprom, _) => SaveMemory::Eeprom { size },
+        (_, Some(lane)) => SaveMemory::ByteLane { odd: lane == rom_id::Lane::Odd, size },
+        (_, None) => SaveMemory::Memory { size },
+    }
 }
 
 /// The chip a header's save memory is, by its kind and size.

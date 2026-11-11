@@ -81,7 +81,8 @@ fn registries(args: &[String]) -> Result<(), String> {
     };
 
     let clocks = registry::read_clocks(&data_dir)?;
-    generate::write_rust(&data, &clocks, &generated)?;
+    let layouts = registry::read_layouts(&data_dir)?;
+    generate::write_rust(&data, &clocks, &layouts, &generated)?;
     println!(
         "wrote {} ({} systems, {} cores, {} apps, {} platforms, {} roles, {} prefixes, {} card \
          formats, {} device kinds, {} bindings, {} vendors)",
