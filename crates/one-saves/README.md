@@ -25,6 +25,11 @@ println!("content hash: {}", bundle.content_hash()?);
   collection — and holds its header and its parts to that shape's rules, so every consumer reads
   the same file the same way. A state names the core it loads into, holds exactly one `state` part
   and at most one screenshot, and says when and with what it was taken.
+- **Reads a bundle as it arrives**, with `stream::Reader`: a push parser that judges the header
+  before any part has arrived and each part before its payload, hands each payload on as it goes
+  by, and holds no more than the limits it is given, whatever the input. It accepts exactly what
+  `Bundle::from_slice` accepts with every part's digest checked, refuses the rest with the same
+  errors, and does no I/O of its own, so it runs under an async runtime without depending on one.
 - **Hashes** a bundle two ways. The *file hash* identifies this exact file; the *content hash* is
   a pure function of what the bundle says, and is what a content-addressable store keys on.
 - **Types the extension keys the specification defines** — a clock reading, a label, an icon, a

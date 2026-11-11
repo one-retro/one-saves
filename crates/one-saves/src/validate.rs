@@ -46,6 +46,9 @@ impl Bundle {
     /// Nesting is bounded by the shapes rather than by a depth counter: a save, a state and a
     /// screenshot hold no bundle, a card holds saves, a device holds cards and saves, and a
     /// collection holds anything but another collection.
+    ///
+    /// [`Checker`] applies these same rules a part at a time, for the streaming reader. A rule
+    /// added here belongs there too; `tests/stream.rs` holds the two to the same verdict.
     fn validate_inner(&self) -> Result<(), Error> {
         if self.parts.is_empty() {
             return Err(Error::at("parts", ErrorKind::EmptyContainer));
@@ -141,18 +144,10 @@ impl Bundle {
     /// A format this version does not list constrains nothing. A consumer that does not know one
     /// must not write the card anyway, so nothing it would rebuild depends on these.
     fn check_card_format(&self) -> Result<(), Error> {
-        let Some(card) = self.header.card.as_ref().filter(|_| self.header.shape == Shape::Card) else {
+        let Some(format) = card_format(&self.header) else {
             return Ok(());
         };
-        let format = card.format.as_str();
-        if let (Some(expected), Some(area)) = (system_area_len(format), &card.system_area)
-            && area.len() != expected
-        {
-            return Err(Error::at(
-                "header.card.system_area",
-                ErrorKind::SystemAreaWrongLength { format: format.to_owned(), expected, found: area.len() },
-            ));
-        }
+        check_system_area(&self.header)?;
         for (index, part) in self.parts.iter().enumerate() {
             let path = format!("parts[{index}]");
             check_dirent(part, format, &path)?;
@@ -263,8 +258,230 @@ impl Bundle {
     }
 }
 
+/// The format of the card a bundle is, where it is one: what its entries are held to.
+pub(crate) fn card_format(header: &Header) -> Option<&str> {
+    header.card.as_ref().filter(|_| header.shape == Shape::Card).map(|card| card.format.as_str())
+}
+
+/// A card's `system_area` is as long as its format makes one.
+fn check_system_area(header: &Header) -> Result<(), Error> {
+    let Some(card) = header.card.as_ref().filter(|_| header.shape == Shape::Card) else {
+        return Ok(());
+    };
+    let format = card.format.as_str();
+    if let (Some(expected), Some(area)) = (system_area_len(format), &card.system_area)
+        && area.len() != expected
+    {
+        return Err(Error::at(
+            "header.card.system_area",
+            ErrorKind::SystemAreaWrongLength { format: format.to_owned(), expected, found: area.len() },
+        ));
+    }
+    Ok(())
+}
+
 /// Why a `system` part is refused anywhere but on a card.
 const SYSTEM_ONLY_ON_A_CARD: &str = "holds no `system` part; an entry belonging to no game is a card's";
+
+/// A part's kind and the address a consumer names it by: its `role`, `path` and `slot`.
+type Address = (PartKind, Option<crate::name::Slug>, Option<String>, Option<u64>);
+
+/// The same rules [`Bundle::validate`] checks, applied a part at a time as a streaming reader meets
+/// them.
+///
+/// Each rule is judged the moment everything it needs has arrived: the header's on its own, a
+/// part's from the keys ahead of its payload, its extension keys once they follow, and the one
+/// rule that needs every part — a state holds a `state` part — at the end. The rules themselves
+/// are the functions `validate` calls; what is restated here is only the bookkeeping that carries
+/// one part's facts to the next, which `validate` does by walking the whole list.
+pub(crate) struct Checker {
+    /// The shape the header named.
+    shape: Shape,
+    /// The card's format, where the bundle is a card.
+    card_format: Option<String>,
+    /// The `id` of the part before, which the next one has to exceed.
+    previous: Option<u64>,
+    /// How many `state` parts have gone by.
+    states: u64,
+    /// How many `screenshot` parts have gone by.
+    screenshots: u64,
+    /// Every part's address so far, by kind, to the `id` that took it.
+    addresses: HashMap<Address, u64>,
+    /// Every `system` part's path so far, which is where a later one may sit.
+    laid_down: HashSet<String>,
+}
+
+impl Checker {
+    /// Checks a header on its own, which is everything `validate` says about one without its parts.
+    pub(crate) fn new(header: &Header) -> Result<Self, Error> {
+        check_header(header)?;
+        check_system_area(header)?;
+        Ok(Checker {
+            shape: header.shape.clone(),
+            card_format: card_format(header).map(str::to_owned),
+            previous: None,
+            states: 0,
+            screenshots: 0,
+            addresses: HashMap::new(),
+            laid_down: HashSet::new(),
+        })
+    }
+
+    /// The shape the header named.
+    pub(crate) fn shape(&self) -> &Shape {
+        &self.shape
+    }
+
+    /// The format of the card the bundle is, where it is one.
+    pub(crate) fn card_format(&self) -> Option<&str> {
+        self.card_format.as_deref()
+    }
+
+    /// Checks how many parts the bundle declares, which only a screenshot bounds.
+    pub(crate) fn parts(&self, count: u64) -> Result<(), Error> {
+        if self.shape == Shape::Screenshot && count > 1 {
+            return Err(Error::at(
+                "parts[1]",
+                ErrorKind::PartNotInShape {
+                    shape: "screenshot",
+                    reason: "holds one `screenshot` part and nothing else",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks a part's keys against the header and the parts before it.
+    ///
+    /// `part` carries everything ahead of its payload; its payload, extension keys and unknown keys
+    /// are not looked at.
+    pub(crate) fn part(&mut self, index: u64, part: &Part) -> Result<(), Error> {
+        let path = format!("parts[{index}]");
+        if let Some(previous) = self.previous {
+            if previous == part.id {
+                return Err(Error::at(&path, ErrorKind::DuplicatePartId(part.id)));
+            }
+            if previous > part.id {
+                return Err(Error::at("parts", ErrorKind::PartsOutOfOrder));
+            }
+        }
+        self.previous = Some(part.id);
+
+        self.check_shape(index, part)?;
+
+        let address = (part.kind.clone(), part.role.clone(), part.path.clone(), part.slot);
+        if let Some(&first) = self.addresses.get(&address) {
+            return Err(Error::at(&path, ErrorKind::PartsShareAnAddress { first, second: part.id }));
+        }
+        self.addresses.insert(address, part.id);
+
+        if part.kind == PartKind::System
+            && let Some(entry) = part.path.as_deref()
+        {
+            if let Some((directory, _)) = entry.rsplit_once('/')
+                && !self.laid_down.contains(directory)
+            {
+                return Err(Error::at(
+                    &path,
+                    ErrorKind::SystemEntryBeforeItsDirectory { directory: directory.to_owned() },
+                ));
+            }
+            self.laid_down.insert(entry.to_owned());
+        }
+
+        if let Some(format) = &self.card_format {
+            check_dirent(part, format, &path)?;
+            if part.kind == PartKind::Bundle
+                && let Some(name) = part.path.as_deref()
+            {
+                check_spelling(name, format, &format!("{path}.path"))?;
+            }
+        }
+
+        check_part_kind(part, &path)?;
+        if let Some(game) = &part.game {
+            check_game(game, &format!("{path}.game"))?;
+        }
+        Ok(())
+    }
+
+    /// What [`check_parts_against_shape`](Bundle::check_parts_against_shape) says about this one
+    /// part, given the ones before it.
+    fn check_shape(&mut self, index: u64, part: &Part) -> Result<(), Error> {
+        let refuse = |shape: &'static str, reason: &'static str| {
+            Err(Error::at(format!("parts[{index}]"), ErrorKind::PartNotInShape { shape, reason }))
+        };
+        match &self.shape {
+            Shape::Unknown(_) => {}
+            Shape::State => match part.kind {
+                PartKind::State => {
+                    self.states += 1;
+                    if self.states > 1 {
+                        return refuse("state", "holds exactly one `state` part");
+                    }
+                }
+                PartKind::Screenshot => {
+                    self.screenshots += 1;
+                    if self.screenshots > 1 {
+                        return refuse("state", "holds at most one `screenshot` part");
+                    }
+                }
+                PartKind::Bundle => return refuse("state", "holds no nested bundle"),
+                PartKind::System => return refuse("state", SYSTEM_ONLY_ON_A_CARD),
+                _ => {}
+            },
+            Shape::Screenshot => {
+                // A second part is refused by `parts`, before any part arrives.
+                if index > 0 || part.kind != PartKind::Screenshot {
+                    return refuse("screenshot", "holds one `screenshot` part and nothing else");
+                }
+            }
+            shape @ (Shape::Save | Shape::Card | Shape::Device | Shape::Collection) => {
+                let name = shape_name(shape);
+                match part.kind {
+                    PartKind::State => {
+                        return refuse(name, "holds no `state` part; a save state is a bundle of its own");
+                    }
+                    PartKind::Screenshot => {
+                        return refuse(
+                            name,
+                            "holds no `screenshot` part; a screenshot is a bundle of its own",
+                        );
+                    }
+                    PartKind::Bundle if *shape == Shape::Save => {
+                        return refuse("save", "holds no nested bundle");
+                    }
+                    PartKind::System if *shape != Shape::Card => return refuse(name, SYSTEM_ONLY_ON_A_CARD),
+                    _ => {}
+                }
+                if *shape == Shape::Device && part.role.is_none() {
+                    return refuse("device", "names a role on every part");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks the extension keys that follow a part's payload.
+    pub(crate) fn part_extensions(
+        index: u64,
+        kind: &PartKind,
+        extensions: &crate::Extensions,
+    ) -> Result<(), Error> {
+        check_key_placement(extensions, Place::Part(kind), &format!("parts[{index}]"))
+    }
+
+    /// Checks what takes every part to say, once the last has gone by.
+    pub(crate) fn finish(&self) -> Result<(), Error> {
+        if self.shape == Shape::State && self.states == 0 {
+            return Err(Error::at(
+                "parts",
+                ErrorKind::PartNotInShape { shape: "state", reason: "holds exactly one `state` part" },
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// The name a shape this version defines is written as, for an error to name it by.
 fn shape_name(shape: &Shape) -> &'static str {
@@ -375,7 +592,7 @@ fn system_area_len(format: &str) -> Option<usize> {
 }
 
 /// A part's entry is as long as its card's format makes one.
-fn check_dirent(part: &Part, format: &str, path: &str) -> Result<(), Error> {
+pub(crate) fn check_dirent(part: &Part, format: &str, path: &str) -> Result<(), Error> {
     if let (Some(expected), Some(dirent)) = (dirent_len(format), &part.dirent)
         && dirent.len() != expected
     {
@@ -667,6 +884,22 @@ fn check_hashes(hashes: &[HashValue], path: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// Whether a bundle of one shape may hold a bundle of another, for two shapes this version defines.
+pub(crate) fn check_holds(outer: &Shape, inner: &Shape) -> Result<(), ErrorKind> {
+    let (holds, shape, reason) = match outer {
+        Shape::Save | Shape::State | Shape::Screenshot => {
+            (false, shape_name(outer), "holds no nested bundle")
+        }
+        Shape::Card => (matches!(inner, Shape::Save), "card", "holds saves and nothing else"),
+        Shape::Device => (matches!(inner, Shape::Card | Shape::Save), "device", "holds cards and saves"),
+        Shape::Collection => {
+            (!matches!(inner, Shape::Collection), "collection", "does not hold another collection")
+        }
+        Shape::Unknown(_) => return Ok(()),
+    };
+    if holds { Ok(()) } else { Err(ErrorKind::PartNotInShape { shape, reason }) }
+}
+
 /// Checks the rules a `bundle` part carries, all of them past what a schema can see.
 fn check_nested(part: &Part, header: &Header, path: &str) -> Result<(), Error> {
     let outer = &header.shape;
@@ -707,22 +940,7 @@ fn check_nested(part: &Part, header: &Header, path: &str) -> Result<(), Error> {
     if !outer.is_known() || !inner.shape().is_known() {
         return Ok(());
     }
-    let (holds, shape, reason) = match outer {
-        Shape::Save | Shape::State | Shape::Screenshot => {
-            (false, shape_name(outer), "holds no nested bundle")
-        }
-        Shape::Card => (matches!(inner.shape(), Shape::Save), "card", "holds saves and nothing else"),
-        Shape::Device => {
-            (matches!(inner.shape(), Shape::Card | Shape::Save), "device", "holds cards and saves")
-        }
-        Shape::Collection => {
-            (!matches!(inner.shape(), Shape::Collection), "collection", "does not hold another collection")
-        }
-        Shape::Unknown(_) => return Ok(()),
-    };
-    if !holds {
-        return Err(Error::at(path, ErrorKind::PartNotInShape { shape, reason }));
-    }
+    check_holds(outer, inner.shape()).map_err(|kind| Error::at(path, kind))?;
 
     // A save made of several files carries an entry on each, and those are the card's entries as
     // much as the one on the outer part is.

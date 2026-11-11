@@ -1,0 +1,29 @@
+# The streaming reader held to `from_slice` under libFuzzer. Its own workspace, so the main one, and
+# CI with it, never builds it: it needs a nightly compiler and `cargo fuzz`.
+#
+#   cargo +nightly fuzz run stream -- -max_total_time=600
+#
+# Seed it from the conformance corpus by copying `tests/conformance/{valid,invalid}/*.cbor` into
+# `corpus/stream/` first; any bundle is a good seed.
+[package]
+name = "one-saves-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+one-saves = { path = "..", features = ["zstd"] }
+
+[[bin]]
+name = "stream"
+path = "fuzz_targets/stream.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

@@ -39,6 +39,11 @@ impl Error {
         self.path = if self.path.is_empty() { outer.to_owned() } else { format!("{outer}.{}", self.path) };
         self
     }
+
+    /// The fault, without where it is.
+    pub(crate) fn into_kind(self) -> ErrorKind {
+        self.kind
+    }
 }
 
 impl fmt::Display for Error {
@@ -317,6 +322,19 @@ pub enum ErrorKind {
 
     /// A `zstd` payload did not inflate, or inflated to something other than its stated `size`.
     ZstdInvalid(String),
+
+    /// Past a limit the caller set on a [streaming reader](crate::stream::Reader).
+    ///
+    /// Not a rule of the specification: the bundle may be well formed, and
+    /// [`from_slice`](crate::Bundle::from_slice), which takes no limits, may accept it. It is
+    /// raised as soon as a length or a count that breaks the limit is read, before any of the bytes
+    /// it announces.
+    OverLimit {
+        /// Which limit.
+        limit: crate::stream::Limit,
+        /// What the caller set it to.
+        max: u64,
+    },
 }
 
 impl fmt::Display for ErrorKind {
@@ -418,6 +436,7 @@ impl fmt::Display for ErrorKind {
                 f.write_str("is `zstd` and this build of one-saves has the `zstd` feature off")
             }
             ErrorKind::ZstdInvalid(why) => write!(f, "`zstd` payload is not readable: {why}"),
+            ErrorKind::OverLimit { limit, max } => write!(f, "{}", limit.describe(*max)),
         }
     }
 }

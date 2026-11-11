@@ -170,6 +170,12 @@ impl HashValue {
         use sha2::{Digest, Sha256};
         HashValue { algorithm: HashAlgorithm::Sha256, digest: Sha256::digest(bytes).to_vec() }
     }
+
+    /// The SHA-256 of everything a hasher was fed, for a digest taken a piece at a time.
+    pub(crate) fn sha256_from(hasher: sha2::Sha256) -> Self {
+        use sha2::Digest;
+        HashValue { algorithm: HashAlgorithm::Sha256, digest: hasher.finalize().to_vec() }
+    }
 }
 
 impl fmt::Display for HashValue {

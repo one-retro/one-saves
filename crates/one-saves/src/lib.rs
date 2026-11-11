@@ -57,6 +57,15 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! ## Reading one as it arrives
+//!
+//! [`from_slice`](crate::Bundle::from_slice) wants the whole file, and holds several copies of it.
+//! A [`stream::Reader`] reads a bundle a piece at a time, as it comes off a socket, judges its
+//! header before any part has arrived and each part before its payload, and hands every payload on
+//! as it goes by rather than keeping it. It reaches the same verdict, with the same errors, and
+//! holds no more than the limits it is given. It does no I/O of its own, so it needs no async
+//! runtime to run under one. See [`stream`].
+//!
 //! # Nesting: cards, collections and the saves inside them
 //!
 //! A [`bundle`](crate::PartKind::Bundle) part's payload is itself a complete `.1saves` file, which
@@ -160,6 +169,7 @@ mod identity;
 mod model;
 pub mod name;
 mod shape;
+pub mod stream;
 mod validate;
 
 pub use codec::Strictness;

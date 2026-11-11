@@ -36,7 +36,12 @@ pub enum Strictness {
 }
 
 /// The keys of one map, split into the two namespaces the format defines.
-struct Fields {
+///
+/// Built from a whole map by [`split`](Fields::split), or a key at a time by
+/// [`push`](Fields::push), which is how the [streaming reader](crate::stream) builds a part's
+/// without ever holding its payload.
+#[derive(Default, Clone)]
+pub(crate) struct Fields {
     /// Integer keys, which belong to the specification.
     ints: BTreeMap<i64, CBOR>,
     /// Text keys, which belong to producers. Only the header, a part and `game` admit them.
@@ -46,28 +51,33 @@ struct Fields {
 impl Fields {
     /// Splits a map, rejecting a key that is neither an integer nor text.
     fn split(map: &Map, path: &str) -> Result<Self, Error> {
-        let mut ints = BTreeMap::new();
-        let mut texts = Vec::new();
+        let mut fields = Fields::default();
         for (key, value) in map.iter() {
-            match key.as_case() {
-                CBORCase::Unsigned(n) => {
-                    let n = i64::try_from(*n)
-                        .map_err(|_| Error::at(path, ErrorKind::Type { expected: "an integer key" }))?;
-                    ints.insert(n, value.clone());
-                }
-                CBORCase::Negative(n) => {
-                    // CBOR stores -1 - n, so the value is -(n + 1).
-                    let magnitude = i64::try_from(*n)
-                        .map_err(|_| Error::at(path, ErrorKind::Type { expected: "an integer key" }))?;
-                    ints.insert(-1 - magnitude, value.clone());
-                }
-                CBORCase::Text(text) => texts.push((text.clone(), value.clone())),
-                _ => {
-                    return Err(Error::at(path, ErrorKind::Type { expected: "an integer or text key" }));
-                }
+            fields.push(key, value.clone(), path)?;
+        }
+        Ok(fields)
+    }
+
+    /// Adds one key, rejecting a key that is neither an integer nor text.
+    pub(crate) fn push(&mut self, key: &CBOR, value: CBOR, path: &str) -> Result<(), Error> {
+        match key.as_case() {
+            CBORCase::Unsigned(n) => {
+                let n = i64::try_from(*n)
+                    .map_err(|_| Error::at(path, ErrorKind::Type { expected: "an integer key" }))?;
+                self.ints.insert(n, value);
+            }
+            CBORCase::Negative(n) => {
+                // CBOR stores -1 - n, so the value is -(n + 1).
+                let magnitude = i64::try_from(*n)
+                    .map_err(|_| Error::at(path, ErrorKind::Type { expected: "an integer key" }))?;
+                self.ints.insert(-1 - magnitude, value);
+            }
+            CBORCase::Text(text) => self.texts.push((text.clone(), value)),
+            _ => {
+                return Err(Error::at(path, ErrorKind::Type { expected: "an integer or text key" }));
             }
         }
-        Ok(Fields { ints, texts })
+        Ok(())
     }
 
     /// Takes one integer key out, leaving the rest to become `unknown`.
@@ -76,7 +86,7 @@ impl Fields {
     }
 
     /// Whatever integer keys are left, which belong to a later minor version.
-    fn unknown(self, path: &str, strictness: Strictness) -> Result<UnknownKeys, Error> {
+    pub(crate) fn unknown(self, path: &str, strictness: Strictness) -> Result<UnknownKeys, Error> {
         if strictness == Strictness::Schema
             && let Some((&key, _)) = self.ints.iter().next()
         {
@@ -89,7 +99,7 @@ impl Fields {
     ///
     /// An extension key is a reverse-DNS name or it is nothing: without that there is no way to
     /// tell whose key it is, which is the one thing the namespace buys.
-    fn extensions(&self, path: &str) -> Result<Extensions, Error> {
+    pub(crate) fn extensions(&self, path: &str) -> Result<Extensions, Error> {
         let mut extensions = Extensions::new();
         for (key, value) in &self.texts {
             let name = ReverseDnsName::parse(key)
@@ -313,7 +323,7 @@ impl Bundle {
     }
 }
 
-fn decode_header(value: &CBOR, strictness: Strictness) -> Result<Header, Error> {
+pub(crate) fn decode_header(value: &CBOR, strictness: Strictness) -> Result<Header, Error> {
     let map = want_map(value, "header")?;
     let mut fields = Fields::split(map, "header")?;
     let extensions = fields.extensions("header")?;
@@ -590,9 +600,45 @@ fn decode_parts(value: &CBOR, strictness: Strictness) -> Result<Vec<Part>, Error
 
 fn decode_part(value: &CBOR, path: &str, strictness: Strictness) -> Result<Part, Error> {
     let map = want_map(value, path)?;
-    let mut fields = Fields::split(map, path)?;
-    let extensions = fields.extensions(path)?;
+    decode_part_fields(Fields::split(map, path)?, path, strictness)
+}
 
+/// Reads a part out of its keys, the payload's among them.
+pub(crate) fn decode_part_fields(
+    mut fields: Fields,
+    path: &str,
+    strictness: Strictness,
+) -> Result<Part, Error> {
+    let extensions = fields.extensions(path)?;
+    let PartKeys { mut part, encoding, size } = decode_part_keys(&mut fields, path, strictness)?;
+
+    let payload_value = fields.take(-1).ok_or_else(|| Error::at(path, ErrorKind::MissingKey("payload")))?;
+    part.payload = decode_payload(&payload_value, encoding.as_deref(), size, path)?;
+    part.extensions = extensions;
+    part.unknown = fields.unknown(path, strictness)?;
+    Ok(part)
+}
+
+/// What a part's keys 0 to 13 say: everything but its payload, its extension keys and any key this
+/// version does not define.
+pub(crate) struct PartKeys {
+    /// The part, its payload empty and its extensions and unknown keys not yet read.
+    pub(crate) part: Part,
+    /// Key 7, which says whether the payload is compressed.
+    pub(crate) encoding: Option<String>,
+    /// Key 8, the payload's uncompressed length where it is.
+    pub(crate) size: Option<u64>,
+}
+
+/// Takes keys 0 to 13 out of a part's map.
+///
+/// Every one of them sorts ahead of the payload at `-1`, so this is everything a part says before
+/// its bytes, which is the point at which a [streaming reader](crate::stream) has to judge it.
+pub(crate) fn decode_part_keys(
+    fields: &mut Fields,
+    path: &str,
+    strictness: Strictness,
+) -> Result<PartKeys, Error> {
     let id = fields
         .take(0)
         .ok_or_else(|| Error::at(path, ErrorKind::MissingKey("id")))
@@ -663,10 +709,7 @@ fn decode_part(value: &CBOR, path: &str, strictness: Strictness) -> Result<Part,
     let system = fields.take(12).map(|v| want_slug(&v, &format!("{path}.system"))).transpose()?;
     let binding = fields.take(13).map(|v| want_slug(&v, &format!("{path}.binding"))).transpose()?;
 
-    let payload_value = fields.take(-1).ok_or_else(|| Error::at(path, ErrorKind::MissingKey("payload")))?;
-    let payload = decode_payload(&payload_value, encoding.as_deref(), size, path)?;
-
-    Ok(Part {
+    let part = Part {
         id,
         kind,
         role,
@@ -679,10 +722,11 @@ fn decode_part(value: &CBOR, path: &str, strictness: Strictness) -> Result<Part,
         game,
         system,
         binding,
-        payload,
-        extensions,
-        unknown: fields.unknown(path, strictness)?,
-    })
+        payload: Payload::default(),
+        extensions: Extensions::new(),
+        unknown: UnknownKeys::new(),
+    };
+    Ok(PartKeys { part, encoding, size })
 }
 
 /// Reads the payload, and with it which of the two forms this part is in.
@@ -696,12 +740,25 @@ fn decode_payload(
     path: &str,
 ) -> Result<Payload, Error> {
     let bytes = want_bytes(value, &format!("{path}.payload"))?;
+    Ok(match payload_form(encoding, size, path)? {
+        Some(size) => Payload::Compressed { bytes, size },
+        None => Payload::Embedded(bytes),
+    })
+}
+
+/// Which of the two forms a part's payload is in, from its `encoding` and `size`: the
+/// uncompressed length where it is compressed, and `None` where it is not.
+pub(crate) fn payload_form(
+    encoding: Option<&str>,
+    size: Option<u64>,
+    path: &str,
+) -> Result<Option<u64>, Error> {
     match (encoding, size) {
-        (Some(_), Some(size)) => Ok(Payload::Compressed { bytes, size }),
+        (Some(_), Some(size)) => Ok(Some(size)),
         (Some(_), None) => Err(Error::at(path, ErrorKind::MissingSize)),
         // An embedded uncompressed payload already states its own length.
         (None, Some(_)) => Err(Error::at(format!("{path}.size"), ErrorKind::SizeOnUncompressedPart)),
-        (None, None) => Ok(Payload::Embedded(bytes)),
+        (None, None) => Ok(None),
     }
 }
 

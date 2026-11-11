@@ -51,7 +51,7 @@ on a card is a bundle of its own, so beneath that comes the bundle it holds, lis
 
 | Crate | What it is |
 | ----- | ---------- |
-| [`one-saves`](crates/one-saves) | The format: decode, encode, validate, content hash. |
+| [`one-saves`](crates/one-saves) | The format: decode, encode, validate, content hash, and a streaming reader. |
 | [`one-saves-registry`](crates/one-saves-registry) | Systems, emulator cores, apps, platforms, save roles, vendor names. |
 | [`one-saves-convert`](crates/one-saves-convert) | Emulator saves and memory cards, both directions. |
 | [`one-saves-cli`](crates/one-saves-cli) | The `1saves` command-line tool. |
