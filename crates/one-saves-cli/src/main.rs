@@ -1028,6 +1028,10 @@ fn extract(args: Extract) -> Fallible {
 }
 
 /// What `--utc-offset` and `--rom` say about the reader and the cartridge, for writing a save.
+///
+/// Only reading the ROM can fail, so a build without `rom` never returns an error; the signature
+/// stays the one the callers share.
+#[cfg_attr(not(feature = "rom"), allow(clippy::unnecessary_wraps))]
 fn reader_of(
     args: &Extract,
     core: Option<(&'static one_saves_registry::Core, Option<&'static one_saves_registry::App>)>,

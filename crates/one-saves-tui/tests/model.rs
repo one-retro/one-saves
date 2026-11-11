@@ -300,9 +300,12 @@ fn formatting_a_card_empties_it_and_writing_makes_it_so() {
     assert_eq!(again.capacity(), capacity, "the same card, empty");
 }
 
+// The card and the directory the link tests plant beside it, which only Unix can plant.
+#[cfg(unix)]
 const PS1: &str = "macos/duckstation/shared_card_1.mcd";
 
 /// A directory of its own in the temporary one, emptied first.
+#[cfg(unix)]
 fn fresh_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(name);
     let _ = std::fs::remove_dir_all(&dir);
