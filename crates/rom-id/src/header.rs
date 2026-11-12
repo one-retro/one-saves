@@ -229,6 +229,10 @@ fn c64_cartridge(view: View<'_>, _: &[System]) -> Option<RomId> {
 }
 
 /// Nintendo 3DS cartridge image, whose NCSD header opens 0x100 bytes in.
+#[allow(
+    clippy::used_underscore_items,
+    reason = "a slug that starts with a digit takes a const that starts with an underscore"
+)]
 fn ncsd(view: View<'_>, _: &[System]) -> Option<RomId> {
     (view.bytes(0x100, 4)? == b"NCSD").then(|| found(systems::_3DS, view))
 }

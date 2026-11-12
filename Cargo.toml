@@ -52,7 +52,6 @@ saturn-backup = { version = "0.8.1", path = "crates/saturn-backup" }
 # and cartridge hardware. Each depends on the registry for the systems it names and on nothing else
 # outside this workspace, so a caller sorting a library of dumps needs neither the format nor the
 # converters.
-disc-id = { version = "0.8.1", path = "crates/disc-id" }
 rom-id = { version = "0.8.1", path = "crates/rom-id" }
 
 dcbor = "0.25"

@@ -954,6 +954,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::used_underscore_items,
+        reason = "a slug that starts with a digit takes a const that starts with an underscore"
+    )]
     fn the_consts_and_the_table_are_the_same_entries() {
         // The table is generated *from* the consts, so this is a check that the generator still
         // emits both from one source rather than a check on the data.
@@ -966,6 +970,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::used_underscore_items,
+        reason = "a slug that starts with a digit takes a const that starts with an underscore"
+    )]
     fn the_system_consts_and_the_table_are_the_same_entries() {
         assert_eq!(system("gba"), Some(&systems::GBA));
         assert_eq!(system("psx"), Some(&systems::PSX));

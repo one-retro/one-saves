@@ -18,13 +18,22 @@ fn lits(items: &[String]) -> String {
 
 /// Writes one static table: a doc comment, the array header, a row per item, and the close.
 fn table<T>(w: &mut String, doc: &str, name: &str, ty: &str, items: &[T], row: impl Fn(&T) -> String) {
+    let rows: Vec<String> = items.iter().map(row).collect();
     writeln!(w, "/// {doc}").unwrap();
+    // A slug that starts with a digit is a const that starts with an underscore, which clippy takes
+    // for a name meant to go unused.
+    if rows.iter().any(|row| row.contains("::_")) {
+        writeln!(w, "#[allow(clippy::used_underscore_items, reason = {REASON})]").unwrap();
+    }
     writeln!(w, "pub(crate) static {name}: [{ty}; {}] = [", items.len()).unwrap();
-    for item in items {
-        writeln!(w, "    {},", row(item)).unwrap();
+    for row in rows {
+        writeln!(w, "    {row},").unwrap();
     }
     writeln!(w, "];\n").unwrap();
 }
+
+/// Why a table or a test names a const that starts with an underscore.
+const REASON: &str = "\"a slug that starts with a digit takes a const that starts with an underscore\"";
 
 /// The const name a slug takes in the `cores` and `systems` modules: upper snake case, and never
 /// leading with a digit, since `3do-mister` is a perfectly good slug and not a Rust identifier.

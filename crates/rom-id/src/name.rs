@@ -6,6 +6,10 @@ use one_saves_registry::{System, system_by_any_name, systems};
 ///
 /// Most name one system. The ones that do not — `.bin` above all — are why the folder matters: a
 /// `.bin` under `genesis/` is a Mega Drive dump, and one under `atari2600/` is not.
+#[allow(
+    clippy::used_underscore_items,
+    reason = "a slug that starts with a digit takes a const that starts with an underscore"
+)]
 static EXTENSIONS: &[(&str, &[System])] = &[
     ("32x", &[systems::SEGA_32X]),
     ("3ds", &[systems::_3DS]),

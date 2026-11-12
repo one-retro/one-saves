@@ -121,6 +121,10 @@ pub mod systems {
 }
 
 /// Every system slug, sorted by slug so lookups can binary-search.
+#[allow(
+    clippy::used_underscore_items,
+    reason = "a slug that starts with a digit takes a const that starts with an underscore"
+)]
 pub(crate) static SYSTEMS: [System; 50] = [
     systems::_3DO,
     systems::_3DS,
@@ -2479,6 +2483,10 @@ pub mod cores {
 }
 
 /// Every known emulator core, sorted by slug.
+#[allow(
+    clippy::used_underscore_items,
+    reason = "a slug that starts with a digit takes a const that starts with an underscore"
+)]
 pub(crate) static CORES: [Core; 202] = [
     cores::_3DO_MISTER,
     cores::_4DO,

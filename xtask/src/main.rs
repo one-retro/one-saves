@@ -8,6 +8,11 @@ mod markdown;
 mod registry;
 mod version;
 
+// cargo-husky does all its work in its build script, which installs the git hooks, and has nothing
+// to call. Naming it here is what tells cargo the dependency is wanted.
+#[cfg(test)]
+use cargo_husky as _;
+
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = "\
