@@ -182,7 +182,8 @@ fn save_layouts(slug: &str, layouts: &Layouts) -> Result<String, String> {
 fn save_layout(who: &str, entry: &Layout) -> Result<String, String> {
     use serde_json::Value;
     let length = entry.length.as_ref();
-    let fields = (entry.fill, length, entry.eeprom_length, entry.reversed_eeprom, entry.eeprom_min);
+    let fields =
+        (entry.fill, length, entry.eeprom_length, entry.reversed_eeprom, entry.eeprom_min, entry.swapped);
     let number = |value: &Value| {
         value.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|&n| n > 0).ok_or_else(|| {
             format!("layouts.json: {who:?} gives a length that is not a number of bytes: {value}")
@@ -191,7 +192,7 @@ fn save_layout(who: &str, entry: &Layout) -> Result<String, String> {
     let option =
         |value: Option<u32>| value.map_or_else(|| "None".to_owned(), |n| format!("Some({})", separated(n)));
     match (entry.kind.as_str(), fields) {
-        ("expanded", (Some(fill), Some(length), eeprom_length, None, None)) => {
+        ("expanded", (Some(fill), Some(length), eeprom_length, None, None, None)) => {
             let length = match length {
                 Value::String(text) if text == "trimmed" => "ExpandedLength::Trimmed".to_owned(),
                 Value::String(text) if text == "doubled" => "ExpandedLength::Doubled".to_owned(),
@@ -202,22 +203,36 @@ fn save_layout(who: &str, entry: &Layout) -> Result<String, String> {
                 option(eeprom_length)
             ))
         }
-        ("packed", (None, length, None, None, None)) => {
+        ("packed", (None, length, None, None, None, None)) => {
             Ok(format!("SaveLayout::Packed {{ length: {} }}", option(length.map(number).transpose()?)))
         }
-        ("padded", (None, Some(length), None, reversed, None)) => Ok(format!(
+        ("padded", (None, Some(length), None, reversed, None, None)) => Ok(format!(
             "SaveLayout::Padded {{ length: {}, reversed_eeprom: {} }}",
             separated(number(length)?),
             reversed.unwrap_or(false)
         )),
-        ("vba-next", (None, None, None, None, None)) => Ok("SaveLayout::VbaNext".to_owned()),
-        ("chip", (None, None, None, None, Some(min))) => {
+        ("vba-next", (None, None, None, None, None, None)) => Ok("SaveLayout::VbaNext".to_owned()),
+        ("chip", (None, None, None, None, Some(min), None)) => {
             Ok(format!("SaveLayout::Chip {{ eeprom_min: {} }}", separated(min)))
+        }
+        // A length is a padding, and comes with what pads it; an entry that neither swaps nor pads
+        // keeps the chip as it is, which is what no entry at all says.
+        ("mbc7", (fill, length, None, None, None, swapped)) if fill.is_some() == length.is_some() => {
+            let swapped = swapped.unwrap_or(false);
+            let padding = match (length, fill) {
+                (Some(length), Some(fill)) => format!("Some(({}, {fill:#04X}))", separated(number(length)?)),
+                _ => "None".to_owned(),
+            };
+            if !swapped && padding == "None" {
+                return Err(format!("layouts.json: {who:?} is an mbc7 layout that changes nothing"));
+            }
+            Ok(format!("SaveLayout::Mbc7 {{ swapped: {swapped}, padding: {padding} }}"))
         }
         (layout, _) => Err(format!(
             "layouts.json: {who:?} is not one of the layouts: expanded with a fill and a length (and an \
              EEPROM length), packed (with a length), padded with a length (and reversed_eeprom), vba-next, \
-             or chip with an eeprom_min (got {layout:?} with other fields)"
+             chip with an eeprom_min, or mbc7 (swapped, and a length with a fill) (got {layout:?} with other \
+             fields)"
         )),
     }
 }

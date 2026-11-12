@@ -559,8 +559,7 @@ fn convert(args: Convert) -> Fallible {
     }
 
     let profile = args.from.as_deref().and_then(one_saves_convert::profile);
-    let named_format = args.from.as_deref().and_then(Format::from_name);
-    let format = match named_format {
+    let format = match args.from.as_deref().and_then(Format::from_name) {
         Some(format) => format,
         None => detect::detect(&bytes, &extension)?,
     };
@@ -592,6 +591,9 @@ fn convert(args: Convert) -> Fallible {
         bundle
     } else if format == Format::Raw {
         let options = raw::RawOptions {
+            // Ahead of `system`, which moves: a producer no registry lists, a cartridge reader,
+            // has its layout on its profile.
+            layout: profile.as_ref().and_then(|profile| profile.layout_in(system.as_deref()?)),
             system,
             role: args.role.clone(),
             source,
@@ -1043,7 +1045,7 @@ fn reader_of(
     };
     #[cfg(not(feature = "rom"))]
     let memory = None;
-    Ok(raw::Reader { core, utc_offset: args.utc_offset, memory })
+    Ok(raw::Reader { core, utc_offset: args.utc_offset, memory, layout: None })
 }
 
 /// Says what writing a save took that the bundle did not say.
@@ -1112,6 +1114,11 @@ fn extract_for(args: &Extract, bundle: &Bundle, name: &str) -> Fallible {
     /// The extension a reader gives the save, and the save written for it.
     type Written = (&'static str, raw::Unwrapped);
     let system = system_of_bundle(bundle);
+    if let Some(reader) =
+        one_saves_convert::profile(name).filter(|profile| profile.device_kind == "cartridge-reader")
+    {
+        return extract_for_cartridge_reader(args, bundle, &reader);
+    }
     let (app, cores) = readers_of(name, args.core.as_deref(), system)?;
     if let (Some(system), [core]) = (system, cores.as_slice())
         && !core.systems.contains(&system)
@@ -1167,6 +1174,61 @@ fn extract_for(args: &Extract, bundle: &Bundle, name: &str) -> Fallible {
         println!("note: {reader} keeps no clock for this cartridge, so the save's clock was left out");
     }
     report_unwrapped(&unwrapped, &reader);
+    Ok(())
+}
+
+/// Writes a flat save for a cartridge reader to write back to the cartridge: the save memory, laid
+/// out as its profile says the reader keeps it, under `.sav`.
+///
+/// A reader runs no core and no registry lists it, so nothing says how it keeps a cartridge's
+/// clock. The memory is written alone, and a clock the save carries is said to be left out.
+fn extract_for_cartridge_reader(
+    args: &Extract,
+    bundle: &Bundle,
+    reader: &one_saves_convert::Profile,
+) -> Fallible {
+    if args.core.is_some() {
+        return Err(format!("{} runs no core, so --core has nothing to name", reader.label).into());
+    }
+    if args.rtc_file.is_some() {
+        return Err(format!(
+            "{} keeps no clock file, so there is nothing to write to --rtc-file",
+            reader.label
+        )
+        .into());
+    }
+    let system = system_of_bundle(bundle);
+    if let Some(system) = system
+        && !reader.systems.contains(&system)
+    {
+        return Err(format!(
+            "{} reads {}, and this save is for {system}",
+            reader.label,
+            reader.systems.join(", ")
+        )
+        .into());
+    }
+    let unwrapped = raw::unwrap_as(
+        bundle,
+        &raw::Reader { layout: system.and_then(|system| reader.layout_in(system)), ..reader_of(args, None)? },
+    )?;
+    let save = &unwrapped.save[..unwrapped.memory_len];
+    let output = args.output.clone().unwrap_or_else(|| args.input.with_extension("sav"));
+    write_out(&output, save, args.force)?;
+    println!(
+        "{} -> {} (save for {}, {} bytes)",
+        args.input.display(),
+        output.display(),
+        reader.label,
+        save.len()
+    );
+    if has_clock(bundle) {
+        println!(
+            "note: nothing says how {} keeps a cartridge's clock, so the save's clock was left out",
+            reader.label
+        );
+    }
+    report_unwrapped(&unwrapped, reader.label);
     Ok(())
 }
 

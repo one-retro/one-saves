@@ -14,6 +14,7 @@
 //! `device_kind` and the systems.
 
 use one_saves::{Name, Slug, Source};
+use one_saves_registry::SaveLayout;
 
 /// A named producer of saves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +57,34 @@ impl Profile {
             _ => None,
         }
     }
+
+    /// How this producer keeps a system's save memory in its file, where it runs no core for the
+    /// registry to say.
+    ///
+    /// A listed core's layout is the registry's, through the core [`source`](Self::source) names.
+    /// This answers for the producers that run none, a cartridge reader writing what it read in an
+    /// order of its own, and is what [`RawOptions::layout`](crate::raw::RawOptions::layout) and
+    /// [`Reader::layout`](crate::raw::Reader::layout) take for them.
+    #[must_use]
+    pub fn layout_in(&self, system: &str) -> Option<SaveLayout> {
+        UNLISTED_LAYOUTS
+            .iter()
+            .find(|&&(key, on, _)| key == self.key && on == system)
+            .map(|&(_, _, layout)| layout)
+    }
 }
+
+/// How the producers no registry lists keep save memory, by profile and system.
+///
+/// Epilogue's GB Operator (Playback 1.10.0) read a Kirby Tilt 'n' Tumble cartridge's MBC7 EEPROM as
+/// 256 bytes with each 16-bit word least significant byte first, `ATAM` where the chip sends
+/// `TAMA`, as SameBoy keeps it (`data/saves/gb-operator`). A GBxCart RW needs no entry: FlashGBX's
+/// firmware sends each word most significant byte first, as the chip shifts it out.
+static UNLISTED_LAYOUTS: &[(&str, &str, SaveLayout)] =
+    &[("gboperator", "gb", OPERATOR_MBC7), ("gboperator", "gbc", OPERATOR_MBC7)];
+
+/// The GB Operator's MBC7 EEPROM, each word the other way round from the chip.
+const OPERATOR_MBC7: SaveLayout = SaveLayout::Mbc7 { swapped: true, padding: None };
 
 /// A profile for a listed core, which is most of them.
 const fn core(key: &'static str, label: &'static str, systems: &'static [&'static str]) -> Profile {

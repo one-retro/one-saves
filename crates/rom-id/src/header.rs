@@ -367,6 +367,10 @@ fn gameboy(view: View<'_>, named: &[System]) -> Option<RomId> {
     })
 }
 
+/// Command Master's game code, at 0x13F: the one MBC7 game with a 512-byte EEPROM. A dump of it
+/// (`f1d3a1ff7a76c49ce3e094ca994d488dbdadf9a2`) says `CMASTER`, `KCEJ`.
+const COMMAND_MASTER: &[u8; 4] = b"KCEJ";
+
 /// What a Game Boy cartridge holds, from its type and RAM size bytes. The types are the ones
 /// Gameboy_MiSTer's `cart.v` and SameBoy decode.
 fn gameboy_cartridge(header: &[u8]) -> Cartridge {
@@ -394,11 +398,15 @@ fn gameboy_cartridge(header: &[u8]) -> Cartridge {
         0x06 => Cartridge { save: Some(sram(512)), clock: None },
         // MBC3 with its timer, with or without RAM.
         0x0F | 0x10 => Cartridge { save: battery_ram, clock: Some(Clock::Mbc3) },
-        // MBC7 keeps its saves in a 256-byte EEPROM.
-        0x22 => Cartridge {
-            save: Some(Save { kind: SaveKind::Eeprom, size: Some(256), lane: None }),
-            clock: None,
-        },
+        // MBC7 keeps its saves in a serial EEPROM: a 93LC56 of 256 bytes, or Command Master's 93LC66
+        // of 512, as FlashGBX and ares give it, which nothing in the header but its game code says.
+        0x22 => {
+            let size = if header[0x3F..0x43] == *COMMAND_MASTER { 512 } else { 256 };
+            Cartridge {
+                save: Some(Save { kind: SaveKind::Eeprom, size: Some(size), lane: None }),
+                clock: None,
+            }
+        }
         // TAMA5, whose header states no memory at all.
         0xFD => Cartridge { save: None, clock: Some(Clock::Tc8521) },
         0xFE => Cartridge { save: battery_ram, clock: Some(Clock::Huc3) },
@@ -642,6 +650,18 @@ mod tests {
         assert_eq!(identify(None, &gb_rom(0x13, 2, 0)).unwrap().cartridge.clock, None);
         assert_eq!(identify(None, &gb_rom(0x12, 2, 0)).unwrap().cartridge.save, None);
         assert_eq!(identify(None, &gb_rom(0x06, 0, 0)).unwrap().cartridge.save, Some(sram(512)));
+    }
+
+    #[test]
+    fn an_mbc7_keeps_its_saves_in_an_eeprom_of_one_size_or_the_other() {
+        let eeprom =
+            |size| Cartridge { save: Some(Save { kind: SaveKind::Eeprom, size, lane: None }), clock: None };
+        // Kirby Tilt 'n' Tumble's 93LC56, whatever its RAM byte says, which is nothing.
+        assert_eq!(identify(None, &gb_rom(0x22, 0, 0xC0)).unwrap().cartridge, eeprom(Some(256)));
+        // Command Master's 93LC66, by its game code.
+        let mut command_master = gb_rom(0x22, 0, 0xC0);
+        command_master[0x13F..0x143].copy_from_slice(COMMAND_MASTER);
+        assert_eq!(identify(None, &command_master).unwrap().cartridge, eeprom(Some(512)));
     }
 
     #[test]

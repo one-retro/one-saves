@@ -146,7 +146,7 @@ pub struct Clocks {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Layout {
-    /// `expanded`, `packed`, `padded`, `vba-next` or `chip`; see `SaveLayout`.
+    /// `expanded`, `packed`, `padded`, `vba-next`, `chip` or `mbc7`; see `SaveLayout`.
     #[serde(rename = "layout")]
     pub kind: String,
     /// What an expanded file holds on the lane the SRAM is not on.
@@ -164,6 +164,10 @@ pub struct Layout {
     /// The shortest file a chip layout reads an EEPROM from.
     #[serde(default)]
     pub eeprom_min: Option<u32>,
+    /// Whether an MBC7 file keeps each 16-bit word least significant byte first, the other way
+    /// round from the chip.
+    #[serde(default)]
+    pub swapped: Option<bool>,
 }
 
 /// One core's layouts, by system slug, and where they were read.

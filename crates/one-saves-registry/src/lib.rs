@@ -253,8 +253,10 @@ pub enum Huc3Layout {
 /// How a core keeps one system's save memory in its file, where that is not the memory's own bytes
 /// one after another.
 ///
-/// A bundle carries the memory alone, as the console's hardware addresses it: a Mega Drive's SRAM
-/// as its own bytes, a GBA's chip without the padding a file adds. Cores disagree about the file,
+/// A bundle carries the memory alone, as the console's hardware addresses it, and a medium addressed
+/// only in whole words, such as a serial EEPROM, with each word most significant byte first: a Mega
+/// Drive's SRAM as its own bytes, a GBA's chip without the padding a file adds, an MBC7's words in
+/// the order the chip shifts them out. Cores disagree about the file,
 /// and MiSTer's cores will not read every one of them, so writing a file for a core means laying
 /// the memory out as that core keeps it. A core with no layout for a system keeps the memory as it
 /// is.
@@ -294,6 +296,18 @@ pub enum SaveLayout {
     Chip {
         /// The shortest file an EEPROM is read from.
         eeprom_min: u32,
+    },
+    /// A Game Boy MBC7 cartridge's EEPROM, kept otherwise than as the chip.
+    ///
+    /// The chip holds 16-bit words and shifts each out most significant bit first, so a payload
+    /// holds each word most significant byte first. A core can keep each word the other way round,
+    /// as SameBoy and Gearboy do, and can pad the chip out to the size of a cartridge's RAM, as TGB
+    /// Dual and DoubleCherryGB do. Every other Game Boy save it keeps as the memory.
+    Mbc7 {
+        /// Whether each word's two bytes are the other way round from the chip's.
+        swapped: bool,
+        /// The length the file is padded to, and what pads it, where the core pads it.
+        padding: Option<(u32, u8)>,
     },
 }
 
@@ -1109,6 +1123,16 @@ mod tests {
             cores::GBA_MISTER.layout_in(Some(&apps::MISTER), "gba"),
             Some(SaveLayout::Chip { eeprom_min: 8192 })
         );
+        // A Game Boy MBC7's EEPROM: SameBoy turns each word round, mGBA keeps the chip's order.
+        assert_eq!(
+            cores::SAMEBOY.layout_in(Some(&apps::RETROARCH), "gbc"),
+            Some(SaveLayout::Mbc7 { swapped: true, padding: None })
+        );
+        assert_eq!(
+            cores::TGB_DUAL.layout_in(None, "gb"),
+            Some(SaveLayout::Mbc7 { swapped: false, padding: Some((8192, 0xFF)) })
+        );
+        assert_eq!(cores::MGBA.layout_in(None, "gbc"), None);
         // An app's own build nobody has checked keeps nothing assumed: OpenEmu builds Genesis Plus GX.
         assert_eq!(cores::GENESIS_PLUS_GX.layout_in(Some(&apps::OPENEMU), "genesis"), None);
         for core in &CORES {

@@ -1,8 +1,10 @@
 //! Save memory as each core keeps it in its file.
 //!
 //! A bundle carries a cartridge's save memory and nothing else, in the order the console's hardware
-//! addresses it. Cores keep it in files of their own shapes, and the shapes disagree for two
-//! systems in ways that stop a save moving between them:
+//! addresses it. A medium addressed only in whole words, a serial EEPROM, has no such order, and the
+//! specification gives it network order: each word most significant byte first, which is also the
+//! order the chip shifts it out in. Cores keep the memory in files of their own shapes, and the
+//! shapes disagree for three systems in ways that stop a save moving between them:
 //!
 //! - **Mega Drive.** Most cartridges wire their SRAM to the odd byte lane of the 16-bit bus alone,
 //!   so it sits at every other address. Genesis Plus GX, PicoDrive and clownmdemu keep the whole
@@ -12,6 +14,10 @@
 //! - **GBA.** gpSP and SkyEmu pad every save to 128 KiB, SkyEmu keeps an EEPROM's eight-byte blocks
 //!   back to front, VBA Next keeps an EEPROM 128 KiB into its file, and MiSTer's core reads a 4 Kbit
 //!   EEPROM only from a file of 8 KiB.
+//! - **Game Boy MBC7.** The cartridge keeps its saves in a serial EEPROM of 16-bit words, which it
+//!   shifts out most significant bit first, so a payload holds each word most significant byte
+//!   first, as mGBA and the FPGA cores keep it. SameBoy and Gearboy, and Epilogue's GB Operator,
+//!   keep each word the other way round; TGB Dual and DoubleCherryGB pad the chip to 8 KiB.
 //!
 //! The registry records each core's [`SaveLayout`]. [`normalize`] takes a core's file to the
 //! memory, and [`lay_out`] the memory to a core's file.
@@ -23,6 +29,10 @@
 //! nearly every EEPROM cartridge carries, and anything longer for SRAM on the odd lane, which is
 //! most of the rest. A larger EEPROM (Frank Thomas Big Hurt Baseball's 8 KiB) needs its ROM to move
 //! into an expanding core's file.
+//!
+//! An MBC7's EEPROM is 256 bytes, which no other Game Boy cartridge keeps, so a save of that size
+//! is taken for one. A file padded past the chip, TGB Dual's or DoubleCherryGB's 8 KiB, is told from
+//! a cartridge's 8 KiB of RAM only by the ROM's header, and without it stays as it is.
 
 use one_saves_registry::{ExpandedLength, SaveLayout};
 
@@ -36,7 +46,7 @@ pub enum SaveMemory {
         /// Its size, half the range the header declares.
         size: Option<usize>,
     },
-    /// A serial EEPROM, read a bit at a time and kept as its own bytes by every core.
+    /// A serial EEPROM, read a bit at a time: a Mega Drive's, a GBA's, or a Game Boy MBC7's.
     Eeprom {
         /// Its size, where the header says: a GBA's does not say whether it is 512 bytes or 8 KiB.
         size: Option<usize>,
@@ -107,6 +117,7 @@ pub fn normalize(
     match (system, layout) {
         ("genesis", Some(layout)) => normalize_genesis(file, layout, memory, true),
         ("gba", Some(layout)) => normalize_gba(file, layout, memory),
+        ("gb" | "gbc", layout) => normalize_mbc7(file, layout, memory),
         _ => file.to_vec(),
     }
 }
@@ -129,6 +140,9 @@ pub fn normalize_stored(
     match (system, layout) {
         ("genesis", Some(layout)) => normalize_genesis(payload, layout, memory, false),
         ("gba", Some(layout)) => normalize_gba(payload, layout, memory),
+        // Whether an MBC7's words were stored swapped shows in nothing, so only the padding the
+        // header says is not the chip comes off.
+        ("gb" | "gbc", _) => normalize_mbc7(payload, None, memory),
         _ => payload.to_vec(),
     }
 }
@@ -142,6 +156,9 @@ pub fn lay_out(payload: &[u8], system: &str, layout: Option<SaveLayout>, memory:
     match (system, layout) {
         ("genesis", Some(layout)) => lay_out_genesis(payload, layout, memory),
         ("gba", Some(layout)) => Laid { bytes: lay_out_gba(payload, layout, memory), assumed: false },
+        ("gb" | "gbc", Some(SaveLayout::Mbc7 { swapped, padding })) => {
+            Laid { bytes: lay_out_mbc7(payload, swapped, padding, memory), assumed: false }
+        }
         _ => Laid { bytes: payload.to_vec(), assumed: false },
     }
 }
@@ -351,6 +368,54 @@ fn lay_out_gba(payload: &[u8], layout: SaveLayout, memory: Option<SaveMemory>) -
     }
 }
 
+/// The EEPROM nearly every MBC7 cartridge carries, a 93LC56. Command Master's 93LC66 holds 512,
+/// which only its header tells apart from an MBC2's 512 cells.
+const MBC7_EEPROM: usize = 256;
+
+/// How long a Game Boy save's chip is, where it is an MBC7's EEPROM: what the header says, or
+/// failing that the one size no other Game Boy cartridge keeps.
+fn mbc7_chip(len: usize, memory: Option<SaveMemory>) -> Option<usize> {
+    match memory {
+        Some(SaveMemory::Eeprom { size }) => Some(size.unwrap_or(MBC7_EEPROM)),
+        Some(_) => None,
+        None => (len == MBC7_EEPROM).then_some(MBC7_EEPROM),
+    }
+}
+
+/// Each 16-bit word's two bytes the other way round, which undoes itself.
+fn swap_words(bytes: &[u8]) -> Vec<u8> {
+    bytes.chunks(2).flat_map(|word| word.iter().rev().copied()).collect()
+}
+
+/// An MBC7's EEPROM out of a core's file: the chip, from the start of a file padded past it, with
+/// each word put back most significant byte first where the core keeps it the other way round.
+/// Any other Game Boy save comes back as it was.
+fn normalize_mbc7(file: &[u8], layout: Option<SaveLayout>, memory: Option<SaveMemory>) -> Vec<u8> {
+    let Some(chip) = mbc7_chip(file.len(), memory) else { return file.to_vec() };
+    let bytes = &file[..file.len().min(chip)];
+    match layout {
+        Some(SaveLayout::Mbc7 { swapped: true, .. }) => swap_words(bytes),
+        _ => bytes.to_vec(),
+    }
+}
+
+/// An MBC7's EEPROM as a core keeps it, and any other Game Boy save as it is.
+fn lay_out_mbc7(
+    payload: &[u8],
+    swapped: bool,
+    padding: Option<(u32, u8)>,
+    memory: Option<SaveMemory>,
+) -> Vec<u8> {
+    if mbc7_chip(payload.len(), memory).is_none() {
+        return payload.to_vec();
+    }
+    let bytes = if swapped { swap_words(payload) } else { payload.to_vec() };
+    match padding {
+        Some((length, fill)) if bytes.len() < len(length) => sized(bytes, len(length), fill),
+        _ => bytes,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,5 +538,55 @@ mod tests {
         assert_eq!(normalize(&vba_next, "gba", Some(SaveLayout::VbaNext), header), flash);
         assert_eq!(normalize(&vba_next, "gba", Some(SaveLayout::VbaNext), None).len(), 0x2_0000);
         assert_eq!(lay_out(&flash, "gba", Some(MISTER_GBA), None).bytes, flash, "no EEPROM, no padding");
+    }
+    const SAMEBOY: SaveLayout = SaveLayout::Mbc7 { swapped: true, padding: None };
+    const TGB_DUAL: SaveLayout = SaveLayout::Mbc7 { swapped: false, padding: Some((8192, 0xFF)) };
+    const KIRBY: Option<SaveMemory> = Some(SaveMemory::Eeprom { size: Some(256) });
+
+    fn eeprom(len: usize) -> Vec<u8> {
+        (0..len).map(|i| u8::try_from(i * 13 % 251).unwrap()).collect()
+    }
+
+    #[test]
+    fn an_mbc7_s_words_go_round_and_back_and_nothing_else_of_a_game_boy_s_does() {
+        let chip = eeprom(256);
+        let swapped = swap_words(&chip);
+        assert_eq!(swapped[..4], [chip[1], chip[0], chip[3], chip[2]]);
+        assert_eq!(normalize(&swapped, "gbc", Some(SAMEBOY), None), chip, "256 bytes is an MBC7's");
+        assert_eq!(lay_out(&chip, "gb", Some(SAMEBOY), None).bytes, swapped);
+
+        // Command Master's 93LC66, which only its header tells from an MBC2's 512 cells.
+        let large = eeprom(512);
+        let command_master = Some(SaveMemory::Eeprom { size: Some(512) });
+        assert_eq!(normalize(&swap_words(&large), "gbc", Some(SAMEBOY), command_master), large);
+        assert_eq!(lay_out(&large, "gbc", Some(SAMEBOY), command_master).bytes, swap_words(&large));
+        let mbc2 = swap_words(&large);
+        assert_eq!(normalize(&mbc2, "gb", Some(SAMEBOY), None), mbc2, "without the header, an MBC2's");
+
+        // A cartridge's RAM is bytes, never words.
+        let ram = eeprom(8192);
+        let header = Some(SaveMemory::Memory { size: Some(8192) });
+        assert_eq!(normalize(&ram, "gbc", Some(SAMEBOY), header), ram);
+        assert_eq!(lay_out(&ram, "gbc", Some(SAMEBOY), header).bytes, ram);
+    }
+
+    #[test]
+    fn a_padded_mbc7_is_cut_to_the_chip_only_where_the_header_says_how_long_it_is() {
+        let chip = eeprom(256);
+        let file = lay_out(&chip, "gbc", Some(TGB_DUAL), None).bytes;
+        assert_eq!(file.len(), 8192);
+        assert!(file[256..].iter().all(|&b| b == 0xFF));
+        assert_eq!(normalize(&file, "gbc", Some(TGB_DUAL), KIRBY), chip);
+        assert_eq!(normalize(&file, "gbc", Some(TGB_DUAL), None), file, "8 KiB is a cartridge's RAM too");
+        // Any core's file past the chip, a MiSTer's or a Pocket's, holds the chip at its start.
+        assert_eq!(normalize(&[chip.clone(), chip.clone()].concat(), "gbc", None, KIRBY), chip);
+    }
+
+    #[test]
+    fn a_bundle_from_before_mbc7_layouts_loses_only_its_padding() {
+        // Whether its words were turned round shows in nothing, so they stay as they came.
+        let file = swap_words(&lay_out(&eeprom(256), "gbc", Some(TGB_DUAL), None).bytes);
+        assert_eq!(normalize_stored(&file, "gbc", Some(SAMEBOY), KIRBY), file[..256]);
+        assert_eq!(normalize_stored(&file[..256], "gbc", Some(SAMEBOY), None), file[..256]);
     }
 }

@@ -5,7 +5,8 @@
     "save's payload holds, the medium's bytes in the order the console's hardware addresses them, and",
     "not how each core keeps them. A core absent here, or a system absent from a core's entry, keeps the",
     "memory as it is. Layouts: expanded (fill, length: trimmed | doubled | bytes, eeprom_length),",
-    "packed (length), padded (length, reversed_eeprom), vba-next, chip (eeprom_min).",
+    "packed (length), padded (length, reversed_eeprom), vba-next, chip (eeprom_min), mbc7 (swapped,",
+    "length with fill).",
     "Each entry's `evidence` says where it was read: files the cores wrote, or a MiSTer that was asked to read them."
   ],
   "cores": {
@@ -23,6 +24,37 @@
         "length": 65536
       }
     },
+    "doublecherrygb": {
+      "evidence": "corpus gbc, Kirby Tilt 'n' Tumble, which writes 'TAMA' and two calibration words to its 93LC56 at power-on: DoubleCherryGB writes 8192 bytes, mGBA's 256 in the chip's order ('TAMA 1d00 1d00'), then 0x00, its fill for any cartridge's RAM.",
+      "gb": {
+        "layout": "mbc7",
+        "length": 8192,
+        "fill": 0
+      },
+      "gbc": {
+        "layout": "mbc7",
+        "length": 8192,
+        "fill": 0
+      }
+    },
+    "gba-mister": {
+      "evidence": "A MiSTer (GBA_20260530) showed no save for Klonoa from mGBA's 512-byte 4 Kbit EEPROM, and showed it from the same bytes padded with 0xFF to 8192 and from gpSP's 131072-byte file (2026-11-10); the core writes such an EEPROM at 8192 (corpus MISTER.md, 'What the files look like').",
+      "gba": {
+        "layout": "chip",
+        "eeprom_min": 8192
+      }
+    },
+    "gearboy": {
+      "evidence": "corpus gbc, Kirby Tilt 'n' Tumble, which writes 'TAMA' and two calibration words to its 93LC56 at power-on: Gearboy's 256 bytes are SameBoy's, each word least significant byte first ('ATAM'), as MBC7MemoryRule.cpp's 16-bit store on a little-endian host leaves them.",
+      "gb": {
+        "layout": "mbc7",
+        "swapped": true
+      },
+      "gbc": {
+        "layout": "mbc7",
+        "swapped": true
+      }
+    },
     "genesis-plus-gx": {
       "evidence": "corpus genesis/NOTES.md, 'How each core lays out the same save': five cores over thirteen games, the data identical once the layout is undone: Genesis Plus GX keeps a 64 KB image of 0x200000-0x20FFFF, the even lane 0xFF, and its libretro port reports it up to the last byte that is not 0xFF (Sonic 3 604, WSB '95 63804); an EEPROM goes through the same buffer unexpanded (Evander 128, NFL QB Club 96 253). A MiSTer did not read its WSB '95 file and did read the same bytes packed (2026-11-10).",
       "genesis": {
@@ -37,13 +69,6 @@
         "layout": "expanded",
         "fill": 255,
         "length": "trimmed"
-      }
-    },
-    "gba-mister": {
-      "evidence": "A MiSTer (GBA_20260530) showed no save for Klonoa from mGBA's 512-byte 4 Kbit EEPROM, and showed it from the same bytes padded with 0xFF to 8192 and from gpSP's 131072-byte file (2026-11-10); the core writes such an EEPROM at 8192 (corpus MISTER.md, 'What the files look like').",
-      "gba": {
-        "layout": "chip",
-        "eeprom_min": 8192
       }
     },
     "gpsp": {
@@ -69,12 +94,36 @@
         "eeprom_length": 8192
       }
     },
+    "sameboy": {
+      "evidence": "corpus gbc, Kirby Tilt 'n' Tumble, which writes 'TAMA' and two calibration words to its 93LC56 at power-on: SameBoy keeps the EEPROM's 256 bytes with each 16-bit word least significant byte first ('ATAM 001d 001d' where mGBA, which keeps the chip's order, has 'TAMA 1d00 1d00'), as Core/memory.c's LE16 over mbc_ram does.",
+      "gb": {
+        "layout": "mbc7",
+        "swapped": true
+      },
+      "gbc": {
+        "layout": "mbc7",
+        "swapped": true
+      }
+    },
     "skyemu": {
       "evidence": "corpus gba/NOTES.md, 'How each core writes the save': every SkyEmu save is 131072 bytes (cart_backup[128K]), the rest 0xFF, and an EEPROM's eight-byte blocks back to front (Minish Cap 'ADLEZBGA' where mGBA has 'GBZELDA').",
       "gba": {
         "layout": "padded",
         "length": 131072,
         "reversed_eeprom": true
+      }
+    },
+    "tgb-dual": {
+      "evidence": "corpus gbc, Kirby Tilt 'n' Tumble, which writes 'TAMA' and two calibration words to its 93LC56 at power-on: TGB Dual writes 8192 bytes, the chip's order ('TAMA') with the EEPROM at the start and 0xFF from byte 512. It models a 512-byte chip and its MBC7 is not faithful: no calibration, and words the game clears left at 0xFF00, so its bytes past 'TAMA' differ from every other core's.",
+      "gb": {
+        "layout": "mbc7",
+        "length": 8192,
+        "fill": 255
+      },
+      "gbc": {
+        "layout": "mbc7",
+        "length": 8192,
+        "fill": 255
       }
     },
     "vba-next": {

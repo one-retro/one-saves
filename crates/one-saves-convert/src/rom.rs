@@ -29,9 +29,10 @@ pub struct RomInfo {
     /// The save chip an N64 cartridge carries, where the header says: only a homebrew header does,
     /// in the byte a retail one keeps its revision in.
     pub n64_save: Option<one_saves::extension::N64Save>,
-    /// What a Mega Drive or GBA cartridge keeps its saves in, which is what laying a save out for
-    /// a core takes: a Mega Drive header declares SRAM and its byte lane, or an EEPROM's two
-    /// lines, and a GBA ROM links the library of its chip.
+    /// What a Mega Drive, GBA or Game Boy cartridge keeps its saves in, which is what laying a save
+    /// out for a core takes: a Mega Drive header declares SRAM and its byte lane, or an EEPROM's two
+    /// lines, a GBA ROM links the library of its chip, and a Game Boy header's type says an MBC7's
+    /// EEPROM.
     pub memory: Option<crate::layout::SaveMemory>,
 }
 
@@ -51,7 +52,7 @@ pub fn identify(bytes: &[u8]) -> Option<RomInfo> {
         clock: id.cartridge.clock.map(rom_id::Clock::key),
         n64_save: if n64 { id.cartridge.save.and_then(n64_save) } else { None },
         memory: match id.system.slug {
-            "genesis" => id.cartridge.save.map(save_memory),
+            "genesis" | "gb" | "gbc" => id.cartridge.save.map(save_memory),
             "gba" => rom_id::gba_save(bytes).map(save_memory),
             _ => None,
         },

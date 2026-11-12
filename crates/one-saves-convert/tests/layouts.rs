@@ -283,6 +283,7 @@ fn a_mister_stamps_its_clock_in_local_time_and_says_how_far_that_is() {
         core: Some((&cores::GAMEBOY_MISTER, Some(&apps::MISTER))),
         utc_offset: Some(9 * 3600),
         memory: None,
+        layout: None,
     };
     let in_tokyo = raw::unwrap_as(&bundle, &tokyo).unwrap();
     assert_eq!(in_tokyo.rescaled_by, 17 * 3600);
@@ -360,4 +361,112 @@ fn wrap_huc3(file: &[u8], app: &str, core: &str, captured_at: Option<i64>) -> Bu
         ..RawOptions::default()
     };
     raw::wrap(file, &options).expect("wraps")
+}
+
+const KIRBY: &str = "Kirby - Tilt 'n' Tumble (USA)";
+
+/// What Kirby Tilt 'n' Tumble's header says it keeps: an MBC7's 256-byte 93LC56.
+const MBC7: Option<SaveMemory> = Some(SaveMemory::Eeprom { size: Some(256) });
+
+/// The cores that ran Kirby, and their files' lengths.
+const KIRBY_CORES: [(&str, usize); 5] =
+    [("mgba", 256), ("sameboy", 256), ("gearboy", 256), ("doublecherrygb", 8192), ("tgb-dual", 8192)];
+
+/// Kirby formats its EEPROM at power-on, and the chip shifts its first word out `T` first.
+///
+/// Every core ran the same scripted calibration, so the EEPROM is one EEPROM in all of them once
+/// SameBoy's and Gearboy's words are turned round and TGB Dual's and DoubleCherryGB's padding comes
+/// off, but for TGB Dual, whose MBC7 is not faithful: it leaves the calibration and the words the
+/// game clears as nothing else does, and models a second 256 bytes the cartridge does not have.
+#[test]
+fn kirby_is_one_eeprom_in_every_core_in_the_chips_order_and_each_gets_its_own_file_back() {
+    if skip_if_absent() {
+        return;
+    }
+    let mgba = read(&format!("retroarch/mgba/{KIRBY}.srm"));
+    for (core, len) in KIRBY_CORES {
+        let file = read(&format!("retroarch/{core}/{KIRBY}.srm"));
+        assert_eq!(file.len(), len, "{core}");
+        let bundle = wrap(&file, "retroarch", core, "gbc", MBC7);
+        let memory = payload(&bundle);
+        assert_eq!(memory.len(), 256, "{core}: the chip and nothing past it");
+        assert_eq!(&memory[..4], b"TAMA", "{core}: each word most significant byte first");
+        if core != "tgb-dual" {
+            assert_eq!(memory, mgba, "{core}: the same EEPROM");
+        }
+
+        let back = raw::unwrap(&bundle).unwrap();
+        if core == "tgb-dual" {
+            assert_eq!(back.len(), 8192);
+            assert_eq!(back[..256], file[..256], "the chip as it wrote it");
+            assert!(back[256..].iter().all(|&b| b == 0xFF), "and its fill past it");
+        } else {
+            assert_eq!(back, file, "{core}: byte for byte");
+        }
+    }
+
+    // From one to the other, each word turned round on the way.
+    let sameboy = read(&format!("retroarch/sameboy/{KIRBY}.srm"));
+    let from_sameboy = wrap(&sameboy, "retroarch", "sameboy", "gbc", MBC7);
+    assert_eq!(written_for(&from_sameboy, &cores::MGBA, &apps::RETROARCH, MBC7).save, mgba);
+    let from_mgba = wrap(&mgba, "retroarch", "mgba", "gbc", MBC7);
+    assert_eq!(written_for(&from_mgba, &cores::SAMEBOY, &apps::RETROARCH, MBC7).save, sameboy);
+    assert_eq!(written_for(&from_mgba, &cores::GEARBOY, &apps::RETROARCH, MBC7).save, sameboy);
+    let doublecherry = written_for(&from_sameboy, &cores::DOUBLECHERRYGB, &apps::RETROARCH, MBC7).save;
+    assert_eq!(doublecherry, read(&format!("retroarch/doublecherrygb/{KIRBY}.srm")));
+}
+
+/// 256 bytes is an MBC7's EEPROM whatever else is known, since no other Game Boy cartridge keeps
+/// that much; 8 KiB is as much a cartridge's RAM as a padded EEPROM, and needs the header.
+#[test]
+fn without_its_header_a_save_of_256_bytes_is_an_mbc7s_and_one_of_8_kib_is_left_alone() {
+    if skip_if_absent() {
+        return;
+    }
+    let sameboy = wrap(&read(&format!("retroarch/sameboy/{KIRBY}.srm")), "retroarch", "sameboy", "gbc", None);
+    assert_eq!(&payload(&sameboy)[..4], b"TAMA");
+
+    let tgb = read(&format!("retroarch/tgb-dual/{KIRBY}.srm"));
+    assert_eq!(payload(&wrap(&tgb, "retroarch", "tgb-dual", "gbc", None)), tgb);
+
+    // And a cartridge's RAM goes through a core that turns an MBC7's words round untouched.
+    let robopon = read(&format!("retroarch/sameboy/{ROBOPON}.srm"));
+    assert_eq!(payload(&wrap(&robopon, "retroarch", "sameboy", "gb", None)), robopon);
+    let ram = Some(SaveMemory::Memory { size: Some(32_768) });
+    assert_eq!(payload(&wrap(&robopon, "retroarch", "sameboy", "gb", ram)), robopon);
+}
+
+/// Epilogue's GB Operator read a real Kirby cartridge as SameBoy keeps one: each word least
+/// significant byte first. It runs no core, so the layout is its profile's.
+#[test]
+fn a_gb_operator_reads_each_word_the_other_way_round_from_the_chip() {
+    if skip_if_absent() {
+        return;
+    }
+    let file = read(&format!("gb-operator/{KIRBY}.sav"));
+    let operator = one_saves_convert::profile("gboperator").expect("a profile");
+    let layout = operator.layout_in("gbc");
+    let options = RawOptions {
+        system: Some("gbc".into()),
+        source: Some(operator.source()),
+        memory: MBC7,
+        layout,
+        ..RawOptions::default()
+    };
+    let bundle = raw::wrap(&file, &options).expect("wraps");
+    let memory = payload(&bundle);
+    assert_eq!(&memory[..4], b"TAMA", "the chip's order");
+    // A cartridge that was played: its accelerometer's own calibration, not an emulator's.
+    let mgba = read(&format!("retroarch/mgba/{KIRBY}.srm"));
+    assert_ne!(memory[4..8], mgba[4..8]);
+
+    let back =
+        raw::unwrap_as(&bundle, &Reader { layout, memory: MBC7, ..Reader::default() }).expect("unwraps");
+    assert_eq!(back.save, file, "back to the Operator byte for byte");
+    assert_eq!(
+        written_for(&bundle, &cores::SAMEBOY, &apps::RETROARCH, MBC7).save,
+        file,
+        "as SameBoy keeps it"
+    );
+    assert_eq!(&written_for(&bundle, &cores::MGBA, &apps::RETROARCH, MBC7).save[..4], b"TAMA");
 }

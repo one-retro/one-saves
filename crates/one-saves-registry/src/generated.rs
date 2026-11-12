@@ -767,7 +767,16 @@ pub mod cores {
         aliases: &[],
         clock: None,
         huc3: None,
-        layouts: &[],
+        layouts: &[
+            SystemLayout {
+                system: "gb",
+                layout: SaveLayout::Mbc7 { swapped: false, padding: Some((8192, 0x00)) },
+            },
+            SystemLayout {
+                system: "gbc",
+                layout: SaveLayout::Mbc7 { swapped: false, padding: Some((8192, 0x00)) },
+            },
+        ],
     };
     /// drizzt.GG — sega-gg.
     pub const DRIZZT_GG: Core = Core {
@@ -1056,7 +1065,10 @@ pub mod cores {
         aliases: &[],
         clock: None,
         huc3: None,
-        layouts: &[],
+        layouts: &[
+            SystemLayout { system: "gb", layout: SaveLayout::Mbc7 { swapped: true, padding: None } },
+            SystemLayout { system: "gbc", layout: SaveLayout::Mbc7 { swapped: true, padding: None } },
+        ],
     };
     /// Gearcoleco — colecovision.
     pub const GEARCOLECO: Core = Core {
@@ -1897,7 +1909,10 @@ pub mod cores {
         aliases: &[],
         clock: Some(crate::ClockLayout::Sidecar(crate::SidecarRecord::SameBoy)),
         huc3: Some(crate::Huc3Layout::NotKept),
-        layouts: &[],
+        layouts: &[
+            SystemLayout { system: "gb", layout: SaveLayout::Mbc7 { swapped: true, padding: None } },
+            SystemLayout { system: "gbc", layout: SaveLayout::Mbc7 { swapped: true, padding: None } },
+        ],
     };
     /// Saturn_MiSTer — saturn.
     pub const SATURN_MISTER: Core = Core {
@@ -2241,7 +2256,16 @@ pub mod cores {
         aliases: &[],
         clock: None,
         huc3: None,
-        layouts: &[],
+        layouts: &[
+            SystemLayout {
+                system: "gb",
+                layout: SaveLayout::Mbc7 { swapped: false, padding: Some((8192, 0xFF)) },
+            },
+            SystemLayout {
+                system: "gbc",
+                layout: SaveLayout::Mbc7 { swapped: false, padding: Some((8192, 0xFF)) },
+            },
+        ],
     };
     /// tia — atari-2600.
     pub const TIA: Core = Core {

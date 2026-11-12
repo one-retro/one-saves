@@ -69,6 +69,11 @@ pub struct RawOptions {
     /// Drive file's SRAM from its EEPROM and a GBA file's chip from its padding. See
     /// [`layout`](crate::layout).
     pub memory: Option<crate::layout::SaveMemory>,
+    /// How the producer keeps the save memory in its file, for one the registry does not list and
+    /// so cannot say: a cartridge reader such as Epilogue's GB Operator, whose
+    /// [profile](crate::profile::Profile::layout_in) knows. Otherwise the layout is the registry's,
+    /// for the core [`source`](Self::source) names.
+    pub layout: Option<one_saves_registry::SaveLayout>,
 }
 
 impl Default for RawOptions {
@@ -85,6 +90,7 @@ impl Default for RawOptions {
             clock_chip: None,
             captured_at: None,
             memory: None,
+            layout: None,
         }
     }
 }
@@ -197,7 +203,8 @@ pub fn wrap(bytes: &[u8], options: &RawOptions) -> Result<Bundle> {
     // The memory alone, out of the file the core keeps it in.
     let payload = match system_slug {
         Some(system) => {
-            crate::layout::normalize(file, system, layout_of(options.source.as_ref(), system), options.memory)
+            let layout = options.layout.or_else(|| layout_of(options.source.as_ref(), system));
+            crate::layout::normalize(file, system, layout, options.memory)
         }
         None => file.to_vec(),
     };
@@ -335,6 +342,9 @@ pub struct Reader {
     pub utc_offset: Option<i32>,
     /// What the cartridge keeps its saves in, as its ROM's header says.
     pub memory: Option<crate::layout::SaveMemory>,
+    /// How the reader keeps the save memory, for one the registry does not list; see
+    /// [`RawOptions::layout`]. Otherwise the layout is the registry's, for [`core`](Self::core).
+    pub layout: Option<one_saves_registry::SaveLayout>,
 }
 
 /// A save written for a [`Reader`]: the file, the clock file to write beside it, and what was
@@ -400,7 +410,7 @@ pub fn unwrap_as(bundle: &Bundle, reader: &Reader) -> Result<Unwrapped> {
                 layout_of(bundle.header.source.as_ref(), system),
                 reader.memory,
             );
-            let layout = core.and_then(|core| core.layout_in(app, system));
+            let layout = reader.layout.or_else(|| core.and_then(|core| core.layout_in(app, system)));
             crate::layout::lay_out(&normal, system, layout, reader.memory)
         }
         None => crate::layout::Laid { bytes: memory, assumed: false },

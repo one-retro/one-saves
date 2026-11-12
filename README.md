@@ -321,8 +321,10 @@ files yet. A footer for one of them stays in the save, as any tail this crate ca
 
 ## Save memory layouts
 
-A bundle holds the cartridge's save memory and nothing else, in the order the console addresses it.
-Cores keep it in files of their own shapes, and for two systems the shapes stop a save moving:
+A bundle holds the cartridge's save memory and nothing else, in the order the console addresses it,
+and a medium addressed only in whole words, such as a serial EEPROM, with each word most significant
+byte first. Cores keep it in files of their own shapes, and for three systems the shapes stop a
+save moving:
 
 - **Mega Drive.** Most cartridges put their SRAM on the odd byte lane of the 16-bit bus. Genesis
   Plus GX, PicoDrive and clownmdemu keep the whole address window with the other lane filled;
@@ -331,6 +333,11 @@ Cores keep it in files of their own shapes, and for two systems the shapes stop 
 - **GBA.** gpSP and SkyEmu pad every save to 128 KiB, SkyEmu keeps an EEPROM's eight-byte blocks
   back to front, VBA Next keeps an EEPROM 128 KiB into its file, and a MiSTer reads a 4 Kbit EEPROM
   only from a file of 8 KiB.
+- **Game Boy MBC7.** Kirby Tilt 'n' Tumble and Command Master keep their saves in a serial EEPROM of
+  16-bit words, which the chip shifts out most significant bit first. mGBA, the MiSTer and Pocket
+  cores and a GBxCart RW keep each word in that order; SameBoy, Gearboy and Epilogue's GB Operator
+  keep it the other way round, and TGB Dual and DoubleCherryGB pad the chip to 8 KiB. `--from
+  gboperator` and `--to gboperator` read and write the Operator's.
 
 `convert` takes the memory out of the file its core keeps, and `extract` lays it out as the reader
 keeps it, from `one-saves-registry`'s record of each core. Each core gets its own file back byte for
@@ -348,9 +355,13 @@ has SRAM or an EEPROM, which its header says and the save does not. Pass the ROM
 covers the 128- and 256-byte chips nearly every EEPROM cartridge has, and anything longer for SRAM,
 and `extract` says so; Frank Thomas Big Hurt Baseball's 8 KiB EEPROM is one that needs the ROM. A
 GBA ROM says which chip it links the library of, which is what cuts gpSP's and SkyEmu's padding off.
+A Game Boy save of 256 bytes is an MBC7's EEPROM whatever else is known, but TGB Dual's and
+DoubleCherryGB's 8 KiB is told from a cartridge's 8 KiB of RAM only by the ROM.
 
 A bundle written before this kept Genesis Plus GX's file as it was. `extract` recognises one by the
-lane its core fills and lays it out like any other.
+lane its core fills and lays it out like any other. An MBC7 bundle written before this from SameBoy, Gearboy or
+the Operator holds each word the other way round, and nothing in it says so; converting the
+original file again puts it right.
 
 ## Conformance
 
