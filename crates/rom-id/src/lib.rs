@@ -37,6 +37,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::ops::Range;
 
 mod header;
+pub mod n64;
 mod name;
 
 pub use header::gba_save;

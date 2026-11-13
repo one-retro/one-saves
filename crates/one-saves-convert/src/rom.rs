@@ -26,8 +26,9 @@ pub struct RomInfo {
     /// `x.1sav.rtc.huc3`: what [`RawOptions::clock_chip`](crate::raw::RawOptions::clock_chip)
     /// takes.
     pub clock: Option<&'static str>,
-    /// The save chip an N64 cartridge carries, where the header says: only a homebrew header does,
-    /// in the byte a retail one keeps its revision in.
+    /// The save chip an N64 cartridge carries: what a homebrew header says in the byte a retail one
+    /// keeps its revision in, or for a retail game what [`rom_id::n64::cartridge`] holds for its
+    /// game ID. `None` for a game with no chip, and for one the table does not hold.
     pub n64_save: Option<one_saves::extension::N64Save>,
     /// What a Mega Drive, GBA or Game Boy cartridge keeps its saves in, which is what laying a save
     /// out for a core takes: a Mega Drive header declares SRAM and its byte lane, or an EEPROM's two
@@ -124,6 +125,7 @@ pub fn game_from_rom(bytes: &[u8], filename: Option<&str>) -> Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use one_saves::extension::N64Save;
 
     /// The opening bytes of the Nintendo logo a Game Boy boot ROM checks.
     const GB_LOGO: [u8; 8] = [0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B];
@@ -186,7 +188,21 @@ mod tests {
             assert_eq!(info.system, Some("n64"), "{name}");
             assert_eq!(info.title.as_deref(), Some("SUPER MARIO 64"), "{name}");
             assert_eq!(info.serial.as_deref(), Some("NUS-NSME"), "{name}");
+            assert_eq!(info.n64_save, Some(N64Save::Eeprom4k), "{name}: a retail game's chip, by its ID");
         }
+    }
+
+    #[test]
+    fn a_retail_n64_game_with_no_chip_names_none() {
+        let mut rom = vec![0u8; 0x40];
+        rom[..4].copy_from_slice(&0x8037_1240u32.to_be_bytes());
+        rom[0x3B..0x3F].copy_from_slice(b"ND3E");
+        assert_eq!(identify(&rom).unwrap().n64_save, None, "Castlevania saves to a Controller Pak");
+        rom[0x3B..0x3F].copy_from_slice(b"NK4J");
+        rom[0x3F] = 1;
+        assert_eq!(identify(&rom).unwrap().n64_save, Some(N64Save::Sram256k), "Hoshi no Kirby 64 1.1");
+        rom[0x3F] = 2;
+        assert_eq!(identify(&rom).unwrap().n64_save, Some(N64Save::Eeprom16k), "and 1.2");
     }
 
     #[test]

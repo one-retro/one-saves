@@ -30,7 +30,9 @@ Beside the system, an answer carries what a save manager needs:
 
 - **The save memory**, its kind and size, from the header where it says: a Game Boy's RAM size and
   battery, a SNES board's SRAM, NES 2.0's battery-backed RAM, a Mega Drive's `RA` record, a
-  WonderSwan's footer, an N64 homebrew header.
+  WonderSwan's footer, an N64 homebrew header. A retail N64 header says nothing about its chip, so
+  that comes from the game ID: `n64::cartridge("NSME", None)` answers for every retail game, with
+  or without the ROM, and says whether the game also keeps saves in a Controller Pak.
 - **The clock chip**, one for each chip key of the Universal Saves Format: the MBC3, HuC-3, TAMA5
   and TPP1 on the Game Boy, the S-RTC and RTC-4513 on the SNES, the Seiko S-3511A on the GBA and
   WonderSwan, the Joybus clock on the N64. The GBA header says nothing about a clock, so those

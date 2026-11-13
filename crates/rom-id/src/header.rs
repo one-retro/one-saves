@@ -26,7 +26,7 @@ pub(crate) type Parser = fn(View<'_>, &[System]) -> Option<RomId>;
 
 /// Every parser, strongest first, so a weak check never shadows a strong one.
 pub(crate) static PARSERS: &[(Strength, Parser)] = &[
-    (Strength::Strong, n64),
+    (Strength::Strong, crate::n64::header),
     (Strength::Strong, ines),
     (Strength::Strong, unif),
     (Strength::Strong, fds),
@@ -87,7 +87,7 @@ pub(crate) fn windows(len: u64) -> Vec<Range<u64>> {
 }
 
 /// A ROM a header identified, before the header's own fields are filled in.
-fn found(system: System, view: View<'_>) -> RomId {
+pub(crate) fn found(system: System, view: View<'_>) -> RomId {
     RomId {
         system,
         evidence: Evidence::Header,
@@ -101,54 +101,15 @@ fn found(system: System, view: View<'_>) -> RomId {
 }
 
 /// A fixed-width header field: up to the first NUL, trimmed, or `None` when that leaves nothing.
-fn field(bytes: &[u8]) -> Option<String> {
+pub(crate) fn field(bytes: &[u8]) -> Option<String> {
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     let text = String::from_utf8_lossy(&bytes[..end]).trim().to_owned();
     (!text.is_empty()).then_some(text)
 }
 
 /// Battery-backed SRAM of a stated size.
-fn sram(size: u32) -> Save {
+pub(crate) fn sram(size: u32) -> Save {
     Save { kind: SaveKind::Sram, size: Some(size), lane: None }
-}
-
-/// Nintendo 64, in any of the three byte orders its dumps come in.
-fn n64(view: View<'_>, _: &[System]) -> Option<RomId> {
-    let head = view.bytes(0, 0x40)?;
-    let (byte_order, header): (ByteOrder, Vec<u8>) = match u32::from_be_bytes(head[..4].try_into().ok()?) {
-        0x8037_1240 => (ByteOrder::Native, head.to_vec()),
-        0x3780_4012 => (ByteOrder::Swapped16, head.chunks(2).flat_map(|w| [w[1], w[0]]).collect()),
-        0x4012_3780 => {
-            (ByteOrder::Swapped32, head.chunks(4).flat_map(|w| [w[3], w[2], w[1], w[0]]).collect())
-        }
-        _ => return None,
-    };
-    // A homebrew ROM sets its game ID to `ED` and puts its save type and clock in the byte a retail
-    // cartridge keeps its version in, since no retail game says either. Doubutsu no Mori, `NAFJ`,
-    // is the one retail cartridge with a clock.
-    let homebrew = &header[0x3C..0x3E] == b"ED";
-    let flags = header[0x3F];
-    let cartridge = if homebrew {
-        let save = match flags >> 4 {
-            1 => Some(Save { kind: SaveKind::Eeprom, size: Some(512), lane: None }),
-            2 => Some(Save { kind: SaveKind::Eeprom, size: Some(2048), lane: None }),
-            3 => Some(sram(32 * 1024)),
-            4 => Some(sram(96 * 1024)),
-            5 => Some(Save { kind: SaveKind::Flash, size: Some(128 * 1024), lane: None }),
-            _ => None,
-        };
-        Cartridge { save, clock: (flags & 1 != 0).then_some(Clock::Joybus) }
-    } else {
-        Cartridge { save: None, clock: (&header[0x3C..0x3E] == b"AF").then_some(Clock::Joybus) }
-    };
-    Some(RomId {
-        title: field(&header[0x20..0x34]),
-        serial: field(&header[0x3B..0x3F]),
-        revision: (!homebrew).then_some(flags),
-        cartridge,
-        byte_order,
-        ..found(systems::N64, view)
-    })
 }
 
 /// NES, in the iNES or NES 2.0 container.
