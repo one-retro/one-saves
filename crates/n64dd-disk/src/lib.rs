@@ -393,13 +393,15 @@ impl<'a> Disk<'a> {
             })
             .ok_or(Error::NoSystemArea)?;
         let disk = Disk { image, layout, system };
-        // A defect table that sends a block off the end of the image is no table at all.
-        if layout == Layout::Mame {
-            for block in 0..BLOCKS {
-                let at = disk.system.mame_offset(block)?;
-                if at + block_len(disk.system.disk_type, block) > MAME_LEN {
-                    return Err(Error::Corrupt(format!("block {block} falls past the end of the image")));
-                }
+        // A defect table that sends a block off the end of MAME's image is no table at all. It is
+        // checked whichever layout this image is, since a retail one converts into MAME's too, and
+        // the table is the system record's to state: what a file says, not what a disk can hold.
+        for block in 0..BLOCKS {
+            let at = disk.system.mame_offset(block)?;
+            if at + block_len(disk.system.disk_type, block) > MAME_LEN {
+                return Err(Error::Corrupt(format!(
+                    "its defect table puts block {block} past the end of the disk"
+                )));
             }
         }
         Ok(disk)
@@ -640,6 +642,25 @@ mod tests {
         assert_eq!(&image[0x43670..0x43670 + 0xE8], disk.disk_id());
         assert_eq!(&mame[0x48378..0x48378 + 0xE8], disk.disk_id());
         assert_eq!(SystemArea::from_record(&image[..0x200]).as_ref(), Some(disk.system_area()));
+    }
+
+    /// A system record whose defect table pushes the last zone's blocks past the disk's last
+    /// track, which a retail image can state as easily as MAME's, is refused before anything is
+    /// read through it.
+    #[test]
+    fn a_defect_table_that_runs_off_the_disk_is_refused_in_either_layout() {
+        let mut image = retail_disk(0);
+        let offsets = retail_offsets(0);
+        for block in [0, 1, 8, 9] {
+            for sector in 0..SECTORS_PER_BLOCK {
+                let record = &mut image[offsets[block] + sector * SYSTEM_RECORD..][..SYSTEM_RECORD];
+                // Every one of the 192 defects in the innermost zone, at its first cylinder.
+                record[8..0x17].fill(0);
+                record[0x17] = 192;
+                record[0x20..0xE0].fill(0);
+            }
+        }
+        assert!(matches!(Disk::parse(&image), Err(Error::Corrupt(_))));
     }
 
     #[test]
