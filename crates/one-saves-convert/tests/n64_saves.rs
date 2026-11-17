@@ -52,7 +52,7 @@ fn pak_in(device: &Bundle, port: usize) -> Bundle {
         .iter()
         .find(|part| part.role.as_ref().is_some_and(|r| r.as_str() == role))
         .expect("a pak in that port");
-    Bundle::from_slice(&component.bytes().expect("inline")).expect("a card")
+    Bundle::from_slice(&component.payload).expect("a card")
 }
 
 fn serial(part: &Part) -> Option<&str> {
@@ -60,7 +60,7 @@ fn serial(part: &Part) -> Option<&str> {
 }
 
 fn label(part: &Part) -> String {
-    let save = Bundle::from_slice(&part.bytes().expect("inline")).expect("a save");
+    let save = Bundle::from_slice(&part.payload).expect("a save");
     save.header.extensions.get::<Label>().expect("a label").title.clone()
 }
 
@@ -115,8 +115,8 @@ fn a_note_is_named_by_its_serial_and_spelled_through_its_pak_s_table() {
             assert_eq!(note.path.as_deref(), Some(path));
             assert_eq!(note.slot, Some(0));
             assert_eq!(label(note), title);
-            let save = Bundle::from_slice(&note.bytes().expect("inline")).expect("a save");
-            assert_eq!(save.parts[0].bytes().expect("inline").len(), pages * 256);
+            let save = Bundle::from_slice(&note.payload).expect("a save");
+            assert_eq!(save.parts[0].payload.as_slice().len(), pages * 256);
         }
     }
 }
@@ -137,7 +137,7 @@ fn a_game_that_saves_only_to_its_pak_is_a_device_of_one_pak() {
     let paks =
         read_paks(&mupen64plus("Tony Hawk's Pro Skater (U) (V1.1-AFF424A1.mpk"), &N64Options::default())
             .expect("reads");
-    assert_eq!(pak_in(&paks, 1).parts[0].bytes().unwrap(), pak_in(&device, 1).parts[0].bytes().unwrap());
+    assert_eq!(pak_in(&paks, 1).parts[0].payload.as_slice(), pak_in(&device, 1).parts[0].payload.as_slice());
 }
 
 #[test]
@@ -218,15 +218,22 @@ fn one_game_s_save_cut_out_of_a_device_goes_back_where_it_was() {
 
     let save = game_save(&device, "NUS-NPDE").expect("cuts");
     save.validate().expect("valid");
-    assert_eq!(save.header.shape, Shape::Save);
-    assert_eq!(save.parts.len(), 2, "the cartridge and its note");
+    // A note is a save on a card, so the cartridge and its note are a device of two components.
+    assert_eq!(save.header.shape, Shape::Device);
+    assert_eq!(save.parts.len(), 2, "the cartridge and its pak");
     assert!(write_srm(&save, Some(&file)).expect("writes") == file, "the file it came out of");
 
-    // With no ROM to name it, the save is named by the serial its note carries, and listed as the
-    // pak lists the note.
-    let game = save.header.game.as_ref().expect("a game");
-    assert_eq!(game.serial.as_deref(), Some("NUS-NPDE"));
-    assert_eq!(save.header.extensions.get::<Label>().expect("a label").title, "PERFECT DARK");
+    // With no ROM to name it, the note is named by the serial it carries, and listed as the pak
+    // lists it.
+    let note = only_note(&Bundle::from_slice(&save.parts[1].payload).expect("a pak"));
+    assert_eq!(note.header.game.as_ref().and_then(|game| game.serial.as_deref()), Some("NUS-NPDE"));
+    assert_eq!(note.header.extensions.get::<Label>().expect("a label").title, "PERFECT DARK");
+}
+
+/// The save a card holds, where it holds one.
+fn only_note(card: &Bundle) -> Bundle {
+    let [part] = card.parts.as_slice() else { panic!("{} parts, not one note", card.parts.len()) };
+    Bundle::from_slice(&part.payload).expect("a note")
 }
 
 /// The pak in port 1 of a file of four, which is the whole file a producer keeping one per pak
@@ -246,11 +253,13 @@ fn one_game_s_notes_cut_out_of_a_lone_pak_are_those_cut_out_of_all_four() {
 
     let from_pak = game_save(&card, "NUS-NTFE").expect("cuts");
     from_pak.validate().expect("valid");
+    assert_eq!(from_pak.header.shape, Shape::Card, "the pak holding that game's notes alone");
     let from_paks =
         game_save(&read_paks(&file, &N64Options::default()).expect("reads"), "NTFE").expect("cuts");
     assert_eq!(from_pak.to_vec().unwrap(), from_paks.to_vec().unwrap());
-    assert_eq!(from_pak.header.game.as_ref().and_then(|game| game.serial.as_deref()), Some("NUS-NTFE"));
-    assert_eq!(from_pak.header.extensions.get::<Label>().expect("a label").title, "TH-AA");
+    let note = only_note(&from_pak);
+    assert_eq!(note.header.game.as_ref().and_then(|game| game.serial.as_deref()), Some("NUS-NTFE"));
+    assert_eq!(note.header.extensions.get::<Label>().expect("a label").title, "TH-AA");
     let written = write_pak(&from_pak, 1, Some(pak)).expect("writes").expect("a pak in port 1");
     assert!(written == pak, "the pak it came out of");
 

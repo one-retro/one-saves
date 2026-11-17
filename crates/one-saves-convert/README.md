@@ -80,7 +80,7 @@ may have no use for — compression libraries, a PNG encoder and a set of atomic
 | `dat-cmpro` | The ClrMamePro syntax as well as Logiqx XML | `winnow` |
 | `rom` | The `rom` module: ROM headers and digests | `crc32fast`, `md-5`, `sha1`, `sha2` |
 | `shift-jis` | Titles a console stored in Shift-JIS | `encoding_rs` |
-| `zstd` | Forwarded to `one-saves` | `zstd`, and the C library it compiles |
+| `zstd` (off) | The states an emulator compresses with zstd; brings `states` with it | `zstd`, and the C library it compiles |
 | `icon` (off) | Decoding a console's icon to PNG for `x.1sav.icon` | `png`, and a deflate encoder |
 | `archive` (off) | The `archive` module: reading a card, or the loose saves off one, out of a `.zip` | `zip`, and a deflate decoder |
 | `states` (off) | Reading and writing RetroArch's, mGBA's and DuckStation's save states | `flate2` and `png`; with `zstd`, a DuckStation state as DuckStation compresses it by default |
@@ -102,7 +102,7 @@ Without `dat-cmpro` a ClrMamePro catalog is refused, and the error names the fea
 have read it rather than reporting the file as broken.
 
 ```toml
-one-saves-convert = { version = "0.7", default-features = false, features = ["ps1", "zstd"] }
+one-saves-convert = { version = "0.10", default-features = false, features = ["ps1", "zstd"] }
 ```
 
 [spec]: https://docs.1retro.com/specifications/universal-saves-format/

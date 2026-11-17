@@ -380,20 +380,16 @@ fn a_new_card_is_not_written_through_a_link_planted_where_it_goes() {
     assert!(Card::open(&path).expect("reopens").entries().is_empty());
 }
 
-/// A bundle is not a card, so nothing in one is inflated here.
+/// A bundle is not a card, so nothing in one is read here.
 ///
-/// A `.1saves` part can be compressed, and the size it says it inflates to is its producer's say:
-/// the CLI holds what it inflates to a budget for that reason. This opens cards, which carry their
-/// saves uncompressed, and a bundle is refused for not being one before any part of it is looked
+/// This opens cards, and a bundle is refused for not being one before any part of it is looked
 /// at, under its own extension or a card's.
 #[test]
-fn a_bundle_is_refused_rather_than_inflated() {
-    use one_saves::{Bundle, Header, Part, Payload, Shape};
+fn a_bundle_is_refused_rather_than_read() {
+    use one_saves::{Bundle, Header, Part, Shape};
 
-    // A zstd frame's magic and nothing else, claiming to inflate to 4 GiB.
-    let mut part = Part::new(0, Vec::new());
-    part.payload = Payload::Compressed { bytes: vec![0x28, 0xb5, 0x2f, 0xfd], size: 4 << 30 };
-    let bundle = Bundle::new(Header::new(Shape::Card), vec![part]).to_cbor().to_cbor_data();
+    let bundle =
+        Bundle::new(Header::new(Shape::Card), vec![Part::new(0, Vec::new())]).to_cbor().to_cbor_data();
 
     for name in ["1cards-bundle.1saves", "1cards-bundle.mcr"] {
         let path = std::env::temp_dir().join(name);

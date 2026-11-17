@@ -13,10 +13,11 @@ use std::fs;
 use std::path::Path;
 
 use one_saves::dcbor::CBOR;
+use one_saves::extension::{N64, N64Save};
 use one_saves::stream::{Event, Limit, Limits, Reader};
 use one_saves::{
-    Bundle, Card, Error, ErrorKind, Game, HashValue, Header, Name, Part, PartKind, Payload, ReverseDnsName,
-    Shape, Slug, Source, Strictness,
+    Bundle, Card, Error, ErrorKind, Game, HashValue, Header, Name, Part, PartKind, ReverseDnsName, Shape,
+    Slug, Source, Strictness,
 };
 
 mod differential;
@@ -30,7 +31,7 @@ use differential::{
 fn corpus() -> Vec<(String, Vec<u8>)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/conformance");
     let mut cases = Vec::new();
-    for tier in ["valid", "invalid"] {
+    for tier in ["valid", "round-trip", "invalid"] {
         for entry in fs::read_dir(dir.join(tier)).expect("read the corpus") {
             let path = entry.expect("a corpus entry").path();
             let name = format!("{tier}/{}", path.file_stem().unwrap().to_string_lossy());
@@ -38,7 +39,7 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
         }
     }
     cases.sort();
-    assert_eq!(cases.len(), 144, "the corpus is not the size it should be");
+    assert_eq!(cases.len(), 217, "the corpus is not the size it should be");
     cases
 }
 
@@ -92,27 +93,6 @@ fn the_reader_agrees_with_from_slice_on_every_corpus_case() {
     assert!(differences.is_empty(), "{}", differences.join("\n"));
 }
 
-/// The one valid case the reader refuses, and why it has to.
-///
-/// The corpus writes `encoding: "zstd"` over bytes that are not a zstd frame: its note says only
-/// the parts around a compressed one can be read without inflating, which is true of `from_slice`.
-/// A reader that hands over every payload uncompressed cannot hand that one over, and
-/// `Part::verify`, which is what a caller of `from_slice` reading the part would run, refuses it in
-/// the same words.
-#[test]
-fn a_compressed_payload_that_is_not_zstd_is_refused_though_from_slice_reads_around_it() {
-    let bytes = fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/conformance/valid/compressed-and-aux.cbor"),
-    )
-    .unwrap();
-    assert!(Bundle::from_slice(&bytes).is_ok(), "from_slice does not inflate it");
-    let refused = stream(&bytes, Strictness::Decoder, Limits::NONE, WHOLE).unwrap_err();
-    #[cfg(feature = "zstd")]
-    assert_eq!(refused, ("parts[0]".into(), ErrorKind::ZstdInvalid("Unknown frame descriptor".into())));
-    #[cfg(not(feature = "zstd"))]
-    assert_eq!(refused, ("parts[0]".into(), ErrorKind::ZstdUnavailable));
-}
-
 // ---- bundles the corpus does not have ------------------------------------------------------------
 
 fn slug(text: &str) -> Slug {
@@ -128,20 +108,6 @@ fn rdns(text: &str) -> ReverseDnsName {
 fn patterned(len: usize, seed: u8) -> Vec<u8> {
     let low = |n: usize| n.to_le_bytes()[0];
     (0..len).map(|i| low(i).wrapping_mul(31).wrapping_add(seed) ^ low(i >> 7)).collect()
-}
-
-/// A part of these bytes, stored compressed with zstd: `frames` of them, one after the other.
-#[cfg(feature = "zstd")]
-fn compressed(id: u64, plain: &[u8], frames: usize) -> Part {
-    // An empty payload is still a frame, of nothing.
-    let mut bytes = zstd::stream::encode_all(&plain[..plain.len().min(1)], 3).unwrap();
-    let step = plain.len().div_ceil(frames.max(1)).max(1);
-    for piece in plain.get(1..).unwrap_or_default().chunks(step) {
-        bytes.extend(zstd::stream::encode_all(piece, 3).unwrap());
-    }
-    let mut part = Part::new(id, plain.to_vec());
-    part.payload = Payload::Compressed { bytes, size: plain.len() as u64 };
-    part
 }
 
 /// A save as a card or a device holds one.
@@ -225,10 +191,15 @@ fn deepest() -> Bundle {
                 .dirent(vec![0; 32]),
         ],
     );
+    // A device holds nothing but bundles, so the cartridge's chip is a save of its own.
+    let cartridge = Bundle::new(
+        Header::new(Shape::Save).system(slug("n64")),
+        vec![Part::new(0, patterned(512, 6)).role(slug("cartridge")).extension(N64::new(N64Save::Eeprom4k))],
+    );
     let device = Bundle::new(
         Header::new(Shape::Device).system(slug("n64")),
         vec![
-            Part::new(0, patterned(512, 6)).role(slug("cartridge")),
+            Part::new(0, cartridge.to_vec().unwrap()).kind(PartKind::Bundle).role(slug("cartridge")),
             Part::new(1, pak.to_vec().unwrap()).kind(PartKind::Bundle).role(slug("controller-pak-1")),
         ],
     );
@@ -253,28 +224,6 @@ fn state() -> Bundle {
     )
 }
 
-/// Bundles with compressed parts: plain ones, ones of two frames, an empty one, and a card whose
-/// entry is compressed on the outside.
-#[cfg(feature = "zstd")]
-fn compressed_bundles() -> Vec<Bundle> {
-    let save = Bundle::new(
-        Header::new(Shape::Save).system(slug("snes")),
-        vec![
-            compressed(0, &patterned(40_000, 1), 1).role(slug("cartridge")),
-            compressed(1, &patterned(7_000, 2), 3).path("frames"),
-            compressed(2, &[], 1).path("empty"),
-            Part::new(3, patterned(100, 3)).path("plain"),
-        ],
-    );
-    let mut entry = compressed(0, &save_bytes("Crash Bandicoot", &patterned(8192, 3)), 1);
-    entry = entry.kind(PartKind::Bundle).path("BASCUS-94900").dirent(vec![0; 128]);
-    let card = Bundle::new(
-        Header::new(Shape::Card).system(slug("psx")).card(Card::new(slug("ps1-mc"), 131_072)),
-        vec![entry],
-    );
-    vec![save, card]
-}
-
 /// Every bundle built here, encoded.
 fn built() -> Vec<(String, Vec<u8>)> {
     let mut bundles = vec![("busy-save".to_owned(), busy_save())];
@@ -283,10 +232,6 @@ fn built() -> Vec<(String, Vec<u8>)> {
     }
     bundles.push(("deepest".into(), deepest()));
     bundles.push(("state".into(), state()));
-    #[cfg(feature = "zstd")]
-    for (index, bundle) in compressed_bundles().into_iter().enumerate() {
-        bundles.push((format!("compressed-{index}"), bundle));
-    }
     bundles.into_iter().map(|(name, bundle)| (name, bundle.to_vec().expect("a valid bundle"))).collect()
 }
 
@@ -346,33 +291,18 @@ fn one_thing_wrong_is_named_as_from_slice_names_it() {
     assert!(refused * 50 > faults * 49, "only {refused} of {faults} refused");
 }
 
-/// `Done::content_hash` is `Bundle::content_hash` for the same bytes.
-///
-/// `agree` checks it of everything both accept; this makes sure that includes bundles where the
-/// two hashes part, which is only where a part is compressed and the content hash is taken over the
-/// bundle as it would be with every part stored.
+/// `Done::content_hash` is `Bundle::content_hash` for the same bytes, which is the hash of those
+/// bytes: with nothing compressed, a bundle has one hash.
 #[test]
 fn the_content_hash_is_bundle_content_hash() {
-    let mut parted = 0;
     for (name, bytes) in built().into_iter().chain(corpus()) {
         let Ok(bundle) = reference(&bytes, Strictness::Decoder) else { continue };
         for pieces in [WHOLE, UNEVEN] {
             let done = stream(&bytes, Strictness::Decoder, Limits::NONE, pieces).unwrap().done;
             assert_eq!(done.content_hash, bundle.content_hash().unwrap(), "{name}");
-            assert_eq!(done.file_hash, bundle.file_hash().unwrap(), "{name}");
-            if done.content_hash != done.file_hash {
-                parted += 1;
-                assert!(
-                    bundle.parts.iter().any(|part| matches!(part.payload, Payload::Compressed { .. })),
-                    "{name}"
-                );
-            }
+            assert_eq!(done.content_hash, HashValue::sha256_of(&bytes), "{name}");
         }
     }
-    #[cfg(feature = "zstd")]
-    assert!(parted >= 4, "only {parted} readings of a bundle with a compressed part");
-    #[cfg(not(feature = "zstd"))]
-    assert_eq!(parted, 0);
 }
 
 // ---- mutations -----------------------------------------------------------------------------------
@@ -514,13 +444,13 @@ fn a_part_is_described_before_its_payload_arrives() {
         }
     }
     let [head] = heads.as_slice() else { panic!("one part head, before its payload: {heads:?}") };
-    assert_eq!((head.id, head.size, head.compressed), (7, payload.len() as u64, None));
+    assert_eq!((head.id, head.size), (7, payload.len() as u64));
     assert_eq!(head.sha256, HashValue::sha256_of(&payload));
     assert_eq!(head.path.as_deref(), Some("SAVE"));
 }
 
 #[test]
-fn an_uncompressed_payload_is_handed_over_from_the_input_itself() {
+fn a_payload_is_handed_over_from_the_input_itself() {
     let payload = patterned(10_000, 1);
     let bytes = Bundle::new(Header::default(), vec![Part::new(0, payload.clone())]).to_vec().unwrap();
     let mut reader = Reader::new(Limits::NONE);
@@ -544,12 +474,13 @@ fn an_uncompressed_payload_is_handed_over_from_the_input_itself() {
 
 #[test]
 fn a_digest_that_does_not_match_is_refused_at_the_end_of_its_part() {
-    // `from_slice` leaves a plain part's digest to whoever reads it, and the reader reads it.
+    // Both refuse it; the reader does once the payload has gone by, before the part ends.
     let mut bundle =
         Bundle::new(Header::default(), vec![Part::new(0, *b"SAVE"), Part::new(1, *b"MORE").path("b")]);
     bundle.parts[0].sha256 = HashValue::sha256_of(b"something else");
-    let bytes = bundle.to_vec().unwrap();
-    assert!(Bundle::from_slice(&bytes).is_ok());
+    let bytes = bundle.to_cbor().to_cbor_data();
+    let refused = Bundle::from_slice(&bytes).unwrap_err();
+    assert_eq!((refused.path(), refused.kind()), ("parts[0]", &ErrorKind::PayloadHashMismatch));
 
     let mut reader = Reader::new(Limits::NONE);
     let mut input = bytes.as_slice();
@@ -675,10 +606,10 @@ fn a_nested_bundle_is_held_to_what_from_slice_holds_it_to() {
     ));
     // It is a card, which a card does not hold.
     cases.push(("card in a card", card_holding(save.clone())));
-    // Its part is compressed.
-    let mut squeezed = Bundle::new(Header::new(Shape::Save), vec![Part::new(0, *b"SAVE")]);
-    squeezed.parts[0].payload = Payload::Compressed { bytes: b"not even zstd".to_vec(), size: 4 };
-    cases.push(("compressed inside", unchecked(&squeezed)));
+    // Its part's digest names other bytes.
+    let mut corrupt = Bundle::new(Header::new(Shape::Save), vec![Part::new(0, *b"SAVE")]);
+    corrupt.parts[0].sha256 = HashValue::sha256_of(b"LOAD");
+    cases.push(("inner digest", unchecked(&corrupt)));
     // Its part's entry is the wrong length for the card around it.
     cases.push((
         "inner dirent",
@@ -743,129 +674,8 @@ trait PayloadBytes {
 
 impl PayloadBytes for Part {
     fn payload_bytes(&self) -> Vec<u8> {
-        self.bytes().unwrap().into_owned()
+        self.payload.clone()
     }
-}
-
-// ---- zstd ------------------------------------------------------------------------------------------
-
-#[cfg(feature = "zstd")]
-mod zstd_payloads {
-    use super::*;
-
-    /// A save of one part whose payload is these compressed bytes, claiming `size`.
-    fn claiming(bytes: Vec<u8>, size: u64, plain: &[u8]) -> Vec<u8> {
-        let mut part = Part::new(0, plain.to_vec());
-        part.payload = Payload::Compressed { bytes, size };
-        Bundle::new(Header::default(), vec![part]).to_vec().unwrap()
-    }
-
-    #[test]
-    fn a_payload_that_inflates_past_its_size_is_abandoned_there() {
-        // Four megabytes of nothing, in a few hundred bytes, claiming 64.
-        let plain = vec![0u8; 4 << 20];
-        let bomb = zstd::stream::encode_all(&plain[..], 3).unwrap();
-        let bytes = claiming(bomb, 64, &plain[..64]);
-
-        let mut reader = Reader::new(Limits::NONE);
-        let mut input = bytes.as_slice();
-        let mut handed = 0;
-        let error = loop {
-            match reader.read(input) {
-                Ok(step) => {
-                    match &step.event {
-                        Some(Event::Data(data)) => handed += data.len(),
-                        Some(_) => {}
-                        None => panic!("the whole bundle taken without a verdict"),
-                    }
-                    input = &input[step.consumed..];
-                }
-                Err(error) => break error,
-            }
-        };
-        assert!(handed <= 64, "{handed} bytes handed over of a payload that claimed 64");
-        assert_eq!(error.kind(), &ErrorKind::ZstdInvalid("inflated past the stated 64 bytes".into()));
-        assert!(matches!(agree("bomb", &bytes, Strictness::Decoder), Agreement::SameError));
-    }
-
-    #[test]
-    fn a_payload_that_falls_short_or_trails_off_is_refused_in_part_bytes_words() {
-        let plain = patterned(5000, 3);
-        let frame = zstd::stream::encode_all(&plain[..], 3).unwrap();
-        let mut trailing = frame.clone();
-        trailing.extend_from_slice(b"junk");
-        let cases = [
-            ("short", claiming(frame.clone(), 6000, &plain)),
-            ("trailing", claiming(trailing, 5000, &plain)),
-            ("truncated", claiming(frame[..frame.len() - 3].to_vec(), 5000, &plain)),
-            ("empty", claiming(Vec::new(), 0, &[])),
-            ("corrupt", {
-                let mut corrupt = frame.clone();
-                let middle = corrupt.len() / 2;
-                corrupt[middle] ^= 0xff;
-                claiming(corrupt, 5000, &plain)
-            }),
-        ];
-        for (name, bytes) in cases {
-            match agree(name, &bytes, Strictness::Decoder) {
-                Agreement::SameError => {}
-                Agreement::Accepted => panic!("{name} accepted"),
-                Agreement::OtherError { reference, streamed } => {
-                    panic!("{name}: {reference:?} / {streamed:?}")
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn a_window_past_the_limit_is_refused_and_one_within_it_is_not() {
-        // zstd's streaming encoder, which does not know the input's size, takes the window level
-        // 19 takes for anything: 8 MiB.
-        let plain = patterned(100_000, 5);
-        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 19).unwrap();
-        std::io::Write::write_all(&mut encoder, &plain).unwrap();
-        let frame = encoder.finish().unwrap();
-        let bytes = claiming(frame, plain.len() as u64, &plain);
-
-        let refused =
-            stream(&bytes, Strictness::Decoder, Limits::NONE.zstd_window(1 << 20), WHOLE).unwrap_err();
-        assert_eq!(
-            refused,
-            ("parts[0]".into(), ErrorKind::OverLimit { limit: Limit::ZstdWindow, max: 1 << 20 })
-        );
-        stream(&bytes, Strictness::Decoder, Limits::NONE.zstd_window(8 << 20), WHOLE)
-            .expect("8 MiB is enough");
-        stream(&bytes, Strictness::Decoder, Limits::NONE, WHOLE).expect("and no limit is zstd's own");
-    }
-
-    #[test]
-    fn a_compressed_part_is_judged_by_its_size_before_it_inflates() {
-        let plain = patterned(10_000, 5);
-        let bytes = claiming(zstd::stream::encode_all(&plain[..], 3).unwrap(), 10_000, &plain);
-        let error = stream(&bytes, Strictness::Decoder, Limits::NONE.part_size(9_999), BYTES).unwrap_err();
-        assert_eq!(error, ("parts[0]".into(), ErrorKind::OverLimit { limit: Limit::PartSize, max: 9_999 }));
-    }
-}
-
-#[cfg(not(feature = "zstd"))]
-#[test]
-fn a_compressed_part_cannot_be_handed_over_without_zstd() {
-    let mut part = Part::new(0, *b"SAVE");
-    part.payload = Payload::Compressed { bytes: vec![0; 13], size: 4 };
-    let bytes = Bundle::new(Header::default(), vec![part]).to_vec().unwrap();
-    let mut reader = Reader::new(Limits::NONE);
-    let payload_at = bytes.len() - 13;
-    let mut input = &bytes[..payload_at];
-    let error = loop {
-        match reader.read(input) {
-            Ok(step) => {
-                assert!(step.event.is_some(), "the part's head taken without a verdict");
-                input = &input[step.consumed..];
-            }
-            Err(error) => break error,
-        }
-    };
-    assert_eq!((error.path(), error.kind()), ("parts[0]", &ErrorKind::ZstdUnavailable));
 }
 
 // ---- limits ----------------------------------------------------------------------------------------
@@ -1050,7 +860,7 @@ fn read_from_drives_the_reader_from_a_reader() {
         })
         .unwrap();
     assert_eq!(parts, 2);
-    assert_eq!(done.file_hash, HashValue::sha256_of(&bytes));
+    assert_eq!(done.content_hash, HashValue::sha256_of(&bytes));
     assert!(data > 0);
 
     let error = Reader::new(Limits::NONE)

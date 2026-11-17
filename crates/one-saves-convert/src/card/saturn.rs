@@ -362,7 +362,7 @@ mod tests {
             let bundle = read(&image, &CardOptions::default()).expect("reads");
             assert_eq!(bundle.parts.len(), 1, ".{extension}");
             assert_eq!(bundle.parts[0].kind, one_saves::PartKind::CardImage);
-            assert_eq!(bundle.parts[0].bytes().expect("bytes").len(), size);
+            assert_eq!(bundle.parts[0].payload.as_slice().len(), size);
             assert_eq!(write(&bundle).expect("writes"), image, ".{extension} is not a byte copy");
         }
     }

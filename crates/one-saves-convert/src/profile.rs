@@ -226,7 +226,9 @@ mod tests {
         // The registry carries 200 cores; this module lists a dozen and defers for the rest.
         let fceumm = profile("fceumm").expect("resolves through the registry");
         assert_eq!(fceumm.core, Some("fceumm"));
-        assert_eq!(fceumm.only_system(), Some("nes"));
+        // It runs the Famicom Disk System as well as the NES, so no one system is its.
+        assert_eq!(fceumm.only_system(), None);
+        assert_eq!(profile("pcsx-rearmed").and_then(|p| p.only_system()), Some("psx"));
         assert_eq!(profile("Genesis_MiSTer").and_then(|p| p.core), Some("megadrive-mister"));
         // And the apps, by slug or by the name they go by.
         assert_eq!(profile("Analogue Pocket").and_then(|p| p.app), Some("analogue-pocket"));

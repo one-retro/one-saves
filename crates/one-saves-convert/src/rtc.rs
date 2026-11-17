@@ -191,7 +191,11 @@ pub struct S3511aClock {
     pub components: [u8; 7],
     /// The control register as read. Bit 6 is 24-hour mode; bit 7 of the hour byte is PM when it
     /// is clear.
-    pub control: u8,
+    ///
+    /// `None` where the file keeps no register, as the MiSTer GBA core and its Pocket port do not.
+    /// Both power the chip up in 24-hour mode, and loading a clock leaves the register alone, so a
+    /// rebuild takes [`RtcS3511a::DEFAULT_CONTROL`], which is that mode.
+    pub control: Option<u8>,
     /// When the producer took the components, in epoch seconds on its own clock: the anchor it
     /// advances the chip from on the next load, which is key 2 of `x.1sav.rtc.s3511a`.
     ///
@@ -205,7 +209,13 @@ impl S3511aClock {
     /// Whether the chip is in 24-hour mode, which is bit 6 of the control register.
     #[must_use]
     pub fn hour24(self) -> bool {
-        self.control & 0x40 != 0
+        self.control_or_default() & 0x40 != 0
+    }
+
+    /// The control register, or 24-hour mode where the file kept none.
+    #[must_use]
+    pub fn control_or_default(self) -> u8 {
+        self.control.unwrap_or(RtcS3511a::DEFAULT_CONTROL)
     }
 
     /// What this chip showed, on the Unix scale: its components, read as though they were UTC,
@@ -359,7 +369,7 @@ impl From<Mbc3Clock> for RtcMbc3 {
         RtcMbc3 {
             live: clock.live(),
             latched: clock.latched,
-            taken_at: clock.taken_at,
+            taken_at: Some(clock.taken_at),
             timestamp_width: clock.timestamp_width.map(|width| u8::try_from(width).expect("4 or 8")),
         }
     }
@@ -727,7 +737,7 @@ pub fn rescale(bundle: &mut one_saves::Bundle, seconds: i64) {
     let extensions = &mut bundle.header.extensions;
     let moved = |at: i64| at.saturating_add(seconds);
     if let Some(&chip) = extensions.get::<RtcMbc3>() {
-        extensions.insert(RtcMbc3 { taken_at: moved(chip.taken_at), ..chip });
+        extensions.insert(RtcMbc3 { taken_at: chip.taken_at.map(moved), ..chip });
     }
     if let Some(&chip) = extensions.get::<RtcS3511a>() {
         extensions.insert(RtcS3511a { taken_at: chip.taken_at.map(moved), ..chip });
@@ -942,7 +952,7 @@ pub fn footer_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec
     }
     if let ClockForm::S3511aPacked(reserved) = form {
         let (chip, anchor) = s3511a_of(bundle)?;
-        return Some(build_s3511a_packed(&chip.components, chip.control, anchor, reserved));
+        return Some(build_s3511a_packed(&chip.components, chip.control_or_default(), anchor, reserved));
     }
     if let ClockForm::Huc3Packed(reserved) = form {
         return huc3_of(bundle).map(|clock| build_packed_huc3(&clock, reserved));
@@ -971,12 +981,13 @@ pub fn footer_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Vec
 fn footer_of_mbc3(bundle: &one_saves::Bundle, width: u8) -> Option<Vec<u8>> {
     let extensions = &bundle.header.extensions;
     if let Some((chip, anchor)) = s3511a_of(bundle) {
-        return Some(build_s3511a(&chip.components, chip.control, anchor));
+        return Some(build_s3511a(&chip.components, chip.control_or_default(), anchor));
     }
     // A source that kept no latched copy gets what the specification fills it with: the live
-    // registers.
+    // registers. One that kept no anchor resumes the clock from now, with no time passed.
     let clock = extensions.get::<RtcMbc3>()?;
-    Some(build_mbc3(&clock.live, &clock.latched_or_live(), clock.taken_at, usize::from(width)))
+    let anchor = clock.taken_at.unwrap_or_else(now);
+    Some(build_mbc3(&clock.live, &clock.latched_or_live(), anchor, usize::from(width)))
 }
 
 /// The MBC3 a bundle carries, and nothing for any other chip: a record that holds an MBC3 is no
@@ -991,7 +1002,8 @@ fn mbc3_of(bundle: &one_saves::Bundle) -> Option<Mbc3Clock> {
         days_low,
         days_high,
         latched: clock.latched,
-        taken_at: clock.taken_at,
+        // A clock with no anchor resumes from now, with no time passed.
+        taken_at: clock.taken_at.unwrap_or_else(now),
         timestamp_width: clock.timestamp_width.map(usize::from),
     })
 }
@@ -1027,7 +1039,7 @@ pub fn parse_s3511a(footer: &[u8]) -> Option<S3511aClock> {
         && minute <= 59
         && second <= 59
         && taken_at >= 0;
-    sane.then_some(S3511aClock { components, control, taken_at })
+    sane.then_some(S3511aClock { components, control: Some(control), taken_at })
 }
 
 /// Writes the S-3511A footer back out: the latched components, the control register, then the
@@ -1618,7 +1630,7 @@ pub fn sidecar_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Ve
     let ClockForm::Sidecar(record) = form else { return None };
     if holds_seiko(record) {
         let (chip, anchor) = s3511a_of(bundle)?;
-        return Some(build_mincer_sidecar(&chip.components, chip.control, anchor));
+        return Some(build_mincer_sidecar(&chip.components, chip.control_or_default(), anchor));
     }
     // An origin is the one record kept for a HuC-3 as well as an MBC3.
     if let SidecarRecord::Origin { timestamp_width, big_endian } = record
@@ -1702,14 +1714,6 @@ pub fn build_sameboy_sidecar(clock: &Mbc3Clock) -> Vec<u8> {
     record.resize(SAMEBOY_RTC_LEN, 0);
     record
 }
-
-/// The control register the MiSTer GBA core and its Pocket port start with: 24-hour mode.
-///
-/// Neither core's record has room for the register, so neither stores it. It is the value the
-/// register powers up with, and loading a clock leaves it alone, so it is what a game first reads
-/// from a core just started. A game that writes another keeps it on MiSTer until the core itself
-/// is reloaded, but no save says so. Neither core counts hours in 12-hour mode in any case.
-const MISTER_GBA_CONTROL: u8 = 0x40;
 
 /// Unpacks the calendar the MiSTer GBA core keeps beside a clock, `RTC_savedtimeOut`: the
 /// S-3511A's seven BCD components at their natural widths, in 42 bits.
@@ -1817,7 +1821,8 @@ pub fn parse_mincer_sidecar(bytes: &[u8]) -> Option<S3511aClock> {
     let mut packed = [0u8; 8];
     packed[..6].copy_from_slice(&bytes[4..10]);
     let components = unpack_calendar(u64::from_le_bytes(packed))?;
-    Some(S3511aClock { components, control: MISTER_GBA_CONTROL, taken_at: i64::from(timestamp) })
+    // The record has no room for the control register, so it keeps none.
+    Some(S3511aClock { components, control: None, taken_at: i64::from(timestamp) })
 }
 
 /// Writes mincer_ray's sidecar back out, from the chip's components and the instant they show.
@@ -1884,7 +1889,8 @@ pub fn parse_s3511a_packed(footer: &[u8]) -> Option<S3511aClock> {
     }
     let components = unpack_calendar(u64::try_from(value & ((1 << 42) - 1)).ok()?)?;
     let taken_at = i64::try_from(value >> 42).ok()?;
-    Some(S3511aClock { components, control: MISTER_GBA_CONTROL, taken_at })
+    // The record has no room for the control register, so it keeps none.
+    Some(S3511aClock { components, control: None, taken_at })
 }
 
 /// Writes GBA_MiSTer's block back out: the record, repeated to fill the reserved size.
@@ -2148,7 +2154,7 @@ mod tests {
         assert_eq!((clock.components[4], clock.components[5]), (0x10, 0x39));
         // Bit 6 of the control register is 24-hour mode, which is why the schema has no separate
         // flag for it: the two would be one value with two spellings.
-        assert_eq!(clock.control, 0x40);
+        assert_eq!(clock.control, Some(0x40));
         assert!(clock.hour24());
         // The latch instant agrees with the components rather than merely being plausible.
         assert_eq!(clock.taken_at, 1_786_556_383);
@@ -2169,7 +2175,7 @@ mod tests {
         // Both keys go on, and the chip key carries only what the chip holds.
         let extensions = split.extensions();
         assert!(extensions.get::<Rtc>().is_some());
-        assert_eq!(extensions.get::<RtcS3511a>().expect("chip state").control, 0x40);
+        assert_eq!(extensions.get::<RtcS3511a>().expect("chip state").control, Some(0x40));
         // The anchor rides in the chip key as key 2, since it is not the reading. Key 3 is null:
         // mGBA's footer has no room for the alarm, so a game that set one lost it.
         let native = extensions.cbor(&RtcS3511a::KEY).unwrap();
@@ -2179,7 +2185,7 @@ mod tests {
         assert_eq!(chip.alarm, S3511aAlarm::Unknown);
 
         let Clock::S3511a(clock) = split.clock else { panic!("wrong chip") };
-        assert_eq!(build_s3511a(&clock.components, clock.control, clock.taken_at), RUBY_FOOTER);
+        assert_eq!(build_s3511a(&clock.components, clock.control_or_default(), clock.taken_at), RUBY_FOOTER);
     }
 
     #[test]
@@ -2252,11 +2258,15 @@ mod tests {
         // The seven components mGBA latched for the same moment, out of a different layout.
         assert_eq!(clock.components, RUBY_FOOTER[..7]);
         // The core never stores the register, and comes up in 24-hour mode.
-        assert_eq!(clock.control, 0x40);
+        assert_eq!(clock.control, None);
+        assert!(clock.hour24());
         // The calendar is the reading and the timestamp the anchor, so no instant needs supplying.
         assert_eq!(clock.reading().expect("a date").reading, 1_786_531_183);
         assert_eq!(clock.taken_at, 1_786_556_383);
-        assert_eq!(build_mincer_sidecar(&clock.components, clock.control, clock.taken_at), MINCER_SIDECAR);
+        assert_eq!(
+            build_mincer_sidecar(&clock.components, clock.control_or_default(), clock.taken_at),
+            MINCER_SIDECAR
+        );
     }
 
     /// The `.rtc` mGBA's libretro core had RetroArch write beside a real Pokémon Crystal save: the
@@ -2442,11 +2452,16 @@ mod tests {
         let clock = parse_s3511a_packed(&mister_gba_block()).expect("a Seiko S-3511A");
         // The calendar mincer_ray's port keeps, with the instant after it rather than before.
         assert_eq!(clock.components, RUBY_FOOTER[..7]);
-        assert_eq!(clock.control, 0x40);
+        assert_eq!(clock.control, None, "the record has no room for it");
         assert_eq!(clock.reading().expect("a date").reading, 1_786_531_183);
         assert_eq!(clock.taken_at, 1_786_556_383);
         assert_eq!(
-            build_s3511a_packed(&clock.components, clock.control, clock.taken_at, PACKED_LEN_MISTER),
+            build_s3511a_packed(
+                &clock.components,
+                clock.control_or_default(),
+                clock.taken_at,
+                PACKED_LEN_MISTER
+            ),
             mister_gba_block()
         );
     }
@@ -2530,14 +2545,14 @@ mod tests {
         // never set it later, it reads 2010-01-01 00:08:47 while the host says 2026.
         let clock = S3511aClock {
             components: [0x10, 0x01, 0x01, 0x00, 0x00, 0x08, 0x47],
-            control: 0x40,
+            control: Some(0x40),
             taken_at: 1_792_576_838,
         };
         assert_eq!(clock.reading().expect("a date").reading, 1_262_304_527);
         // In 12-hour mode the PM flag is what puts the hour after noon.
         let pm = S3511aClock {
             components: [0x26, 0x08, 0x12, 0x03, 0x80 | 0x10, 0x39, 0x43],
-            control: 0,
+            control: Some(0),
             ..clock
         };
         assert_eq!(pm.reading().expect("a date").reading, 1_786_531_183 + 12 * 3_600);
@@ -2561,7 +2576,7 @@ mod tests {
         extensions.insert(Rtc::new(1_786_556_383));
         extensions.insert(RtcS3511a {
             components: RUBY_FOOTER[..7].try_into().unwrap(),
-            control: 0x40,
+            control: Some(0x40),
             taken_at: None,
             alarm: S3511aAlarm::NeverSet,
         });

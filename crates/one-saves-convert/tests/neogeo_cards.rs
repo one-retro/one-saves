@@ -101,7 +101,7 @@ fn a_neo_geo_cd_card_is_the_same_format_at_a_bigger_size() {
     assert_eq!(bundle.parts[0].path.as_deref(), Some("0201-0"));
     assert_eq!(bundle.parts[0].game.as_ref().unwrap().serial.as_deref(), Some("NGH-0201"));
     // The only save here that spans more than one block: fourteen of them, chained.
-    let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).expect("inner bundle");
+    let inner = Bundle::from_slice(&bundle.parts[0].payload).expect("inner bundle");
     assert_eq!(inner.parts[0].payload.len(), 14 * 64);
     assert_eq!(system_of(&inner), "neogeo-cd", "a save sliced out still says it is a CD's");
     assert_eq!(bundle.parts[0].role.as_ref().unwrap().as_str(), "internal");
@@ -121,9 +121,8 @@ fn a_bare_card_is_a_neo_geo_cd_s_only_when_the_caller_says() {
     let cd = read(&bare, &said("neogeo-cd")).expect("reads");
     assert_eq!(system_of(&cd), "neogeo-cd");
     assert_eq!(cd.parts[0].role.as_ref().unwrap().as_str(), "internal");
-    let save = |bundle: &Bundle| {
-        Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap().parts[0].payload.clone()
-    };
+    let save =
+        |bundle: &Bundle| Bundle::from_slice(&bundle.parts[0].payload).unwrap().parts[0].payload.clone();
     assert_eq!(save(&cd), save(&unsaid), "the same save either way");
 
     // A system the format does not hold saves for came from a core or a ROM, not from the card,
@@ -239,7 +238,7 @@ fn metal_slug_x_in_a_cabinet() -> Vec<u8> {
 }
 
 fn nested(bundle: &Bundle, index: usize) -> Bundle {
-    Bundle::from_slice(&bundle.parts[index].bytes().expect("nested")).expect("a bundle")
+    Bundle::from_slice(&bundle.parts[index].payload).expect("a bundle")
 }
 
 /// The cabinet's RAM is the machine's memory rather than anything on the card, so a file holding
@@ -259,7 +258,7 @@ fn a_cabinet_s_backup_ram_beside_its_card_is_a_device() {
     // The RAM in the 68000's order, and naming the game the BIOS recorded in it.
     let ram = nested(&bundle, 0);
     assert_eq!(ram.header.shape, Shape::Save);
-    assert_eq!(ram.parts[0].bytes().expect("reads").as_ref(), bios_ram(0x0250, "METAL SLUG X"));
+    assert_eq!(ram.parts[0].payload.as_slice(), bios_ram(0x0250, "METAL SLUG X"));
     let game = Game::default().serial("NGH-0250").title("METAL SLUG X");
     assert_eq!(ram.header.game.as_ref(), Some(&game));
     assert_eq!(bundle.parts[0].game.as_ref(), Some(&game));
@@ -284,7 +283,7 @@ fn a_real_cabinet_reads_as_its_ram_and_its_card() {
     assert_eq!(roles, ["internal", "neogeo-card"]);
     let game = Game::default().serial("NGH-0250").title("METAL SLUG X");
     assert_eq!(nested(&bundle, 0).header.game.as_ref(), Some(&game));
-    assert_eq!(nested(&bundle, 0).parts[0].payload.len(), MISTER_BACKUP_RAM as u64);
+    assert_eq!(nested(&bundle, 0).parts[0].payload.len() as u64, MISTER_BACKUP_RAM as u64);
 
     let card = nested(&bundle, 1);
     assert_eq!(card.header.card.as_ref().expect("a card").capacity, 2048);
@@ -303,7 +302,7 @@ fn cabinet_ram_the_bios_did_not_set_up_names_no_game() {
         read(&with_cabinet_ram(&fixture("Metal Slug X"), &ram), &CardOptions::default()).expect("reads");
     assert_eq!(bundle.header.shape, Shape::Device);
     assert_eq!(nested(&bundle, 0).header.game, None);
-    assert_eq!(nested(&bundle, 0).parts[0].bytes().expect("reads").as_ref(), ram);
+    assert_eq!(nested(&bundle, 0).parts[0].payload.as_slice(), ram);
 }
 
 /// The device is everything the MiSTer file held, so it writes back as that file.
@@ -359,7 +358,7 @@ fn a_cartridge_s_own_ram_in_the_card_s_place_is_the_cartridge_s() {
         }
         let cart = nested(&bundle, 1);
         assert_eq!(cart.header.shape, Shape::Save);
-        let bytes = cart.parts[0].bytes().expect("reads");
+        let bytes = cart.parts[0].payload.as_slice();
         assert_eq!(bytes.len(), 8192, "{name}: the whole region");
         assert_eq!(&bytes[at..at + text.len()], text, "{name}: in the 68000's order");
 
@@ -418,7 +417,7 @@ fn a_saves_title_is_carried_as_a_label() {
 
     let bundle = read(&fixture("Metal Slug X"), &CardOptions::default()).expect("reads");
     let part = bundle.parts.iter().find(|p| p.kind == PartKind::Bundle).expect("a save");
-    let save = Bundle::from_slice(&part.bytes().expect("nested")).expect("a save");
+    let save = Bundle::from_slice(&part.payload).expect("a save");
 
     let title = save.header.extensions.get::<Label>().expect("a label").title.clone();
 
@@ -446,7 +445,7 @@ fn a_save_with_no_title_carries_no_label() {
         .parts
         .iter()
         .filter(|p| p.kind == PartKind::Bundle)
-        .map(|p| Bundle::from_slice(&p.bytes().expect("nested")).expect("a save"))
+        .map(|p| Bundle::from_slice(&p.payload).expect("a save"))
         .collect();
     assert_eq!(saves.len(), 2, "one console's memory, two games' saves");
 

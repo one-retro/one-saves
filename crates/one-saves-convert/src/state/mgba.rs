@@ -257,12 +257,11 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let contents = Contents::of(bundle)?;
     crate::state::require_core(bundle, "mgba", "mGBA")?;
 
-    // Each part is held to what mGBA's file has room for before it is inflated, since a
-    // compressed part's length is its own claim and inflating it is what costs the memory.
+    // Each part is held to what mGBA's file has room for before anything is copied.
     let data = crate::state::bytes_within(contents.state, MAX_STATE, "an mGBA state")?;
     let mut room = MAX_ITEMS;
     let mut item = |part: &Part| -> Result<Vec<u8>> {
-        let bytes = crate::state::bytes_within(part, room, "an mGBA state")?.into_owned();
+        let bytes = crate::state::bytes_within(part, room, "an mGBA state")?.to_vec();
         room = room.saturating_sub(bytes.len());
         Ok(bytes)
     };
@@ -277,7 +276,7 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
             // file of their own, but in a state they are where the core keeps them.
             let form =
                 crate::rtc::ClockForm::Mbc3Appended(one_saves::extension::RtcMbc3::DEFAULT_TIMESTAMP_WIDTH);
-            if Machine::of(&data) == Some(Machine::Gb)
+            if Machine::of(data) == Some(Machine::Gb)
                 && let Some(footer) = crate::rtc::footer_of_form(bundle, form)
             {
                 save.extend_from_slice(&footer);
@@ -317,7 +316,7 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let png = match contents.screenshot {
         Some(part) => {
             let png = (part.content_type.as_deref() == Some("image/png"))
-                .then(|| rgb_png(&part.bytes().ok()?).ok())
+                .then(|| rgb_png(&part.payload).ok())
                 .flatten();
             if png.is_none() {
                 left_out.push(part.id);
@@ -327,8 +326,8 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
         None => None,
     };
     let bytes = match png {
-        Some(png) => pack_png(&png, &data, &items)?,
-        None => pack_bare(&data, &items)?,
+        Some(png) => pack_png(&png, data, &items)?,
+        None => pack_bare(data, &items)?,
     };
 
     let stem = crate::state::component(stem);
@@ -632,10 +631,14 @@ mod tests {
         assert_eq!(source.app_version.as_deref(), Some("0.10.5"));
         let kinds: Vec<_> = bundle.parts.iter().map(|part| part.kind.clone()).collect();
         assert_eq!(kinds, [PartKind::State, PartKind::Screenshot, PartKind::Save, PartKind::Aux]);
-        assert_eq!(bundle.parts[0].bytes().unwrap(), gba_data().as_slice());
+        assert_eq!(bundle.parts[0].payload.as_slice(), gba_data().as_slice());
         assert_eq!(bundle.parts[0].slot, Some(1));
-        assert_eq!(bundle.parts[1].bytes().unwrap(), screen().as_slice(), "the image, without mGBA's chunks");
-        assert_eq!(bundle.parts[2].bytes().unwrap(), save.as_slice());
+        assert_eq!(
+            bundle.parts[1].payload.as_slice(),
+            screen().as_slice(),
+            "the image, without mGBA's chunks"
+        );
+        assert_eq!(bundle.parts[2].payload.as_slice(), save.as_slice());
         assert_eq!(bundle.parts[3].path.as_deref(), Some("extdata/4"));
         let sets = &bundle.parts[0].extensions.get::<CheatsMgba>().unwrap().sets;
         assert_eq!(sets[0].directives, ["GSAv1"]);
@@ -716,9 +719,13 @@ mod tests {
 
         let state = StateFile { bytes: &file, name: "Pokemon Gold.ss1", screenshot: None };
         let bundle = read(&state, &StateOptions::default()).unwrap();
-        assert_eq!(bundle.parts[1].bytes().unwrap().as_ref(), &save[..0x8000], "the SRAM alone");
+        assert_eq!(bundle.parts[1].payload.as_slice(), &save[..0x8000], "the SRAM alone");
         let clock = bundle.header.extensions.get::<RtcMbc3>().expect("the footer's clock");
-        assert_eq!((clock.live, clock.taken_at), (registers, anchor), "anchored when the footer was written");
+        assert_eq!(
+            (clock.live, clock.taken_at),
+            (registers, Some(anchor)),
+            "anchored when the footer was written"
+        );
         assert_eq!(bundle.header.taken_at, Some(anchor + 50));
         assert!(bundle.header.extensions.get::<Rtc>().is_some());
 
@@ -736,7 +743,7 @@ mod tests {
         let file = pack_bare(&gba_data(), &[(SAVEDATA, save.clone())]).unwrap();
         let state = StateFile { bytes: &file, name: "game.ss1", screenshot: None };
         let bundle = read(&state, &StateOptions::default()).unwrap();
-        assert_eq!(bundle.parts[1].bytes().unwrap().as_ref(), save.as_slice());
+        assert_eq!(bundle.parts[1].payload.as_slice(), save.as_slice());
         assert!(bundle.header.extensions.is_empty());
     }
 
@@ -768,7 +775,7 @@ mod tests {
         let bundle = read(&state, &StateOptions::default()).unwrap();
         assert_eq!(bundle.header.origin, Some(Origin::Auto), "slot 0 is the one mGBA resumes from");
         assert_eq!(bundle.parts[1].content_type.as_deref(), Some("image/png"), "the framebuffer, made a PNG");
-        assert_eq!(bundle.parts[2].bytes().unwrap().as_ref(), &[1; 512]);
+        assert_eq!(bundle.parts[2].payload.as_slice(), &[1; 512]);
         assert_eq!(unpack_bare(&pack_bare(&gba_data(), &[]).unwrap()).unwrap().1, []);
     }
 
@@ -808,22 +815,10 @@ mod tests {
     }
 
     #[test]
-    fn a_part_claiming_more_than_mgbas_file_holds_is_refused_before_it_is_inflated() {
-        // Each claims more than its length in the file has room for, or more than mGBA's reader
-        // takes back. An item past 2 GiB once panicked here, after it had been inflated.
+    fn a_part_longer_than_mgbas_file_holds_is_refused() {
         let bundle = read_as(&pack_bare(&gba_data(), &[]).unwrap(), "game.ss1").unwrap();
-        let claims = [
-            crate::state::part_claiming(1, (1 << 31) + 16).kind(PartKind::Aux).path("extdata/4"),
-            crate::state::part_claiming(1, MAX_ITEMS as u64 + 1),
-        ];
-        for part in claims {
-            let mut odd = bundle.clone();
-            odd.parts.push(part);
-            let error = write(&odd, "game").unwrap_err();
-            assert!(matches!(error, Error::NotConvertible(_)), "{error}");
-        }
         let mut odd = bundle;
-        odd.parts[0] = crate::state::part_claiming(0, MAX_STATE as u64 + 1).kind(PartKind::State);
+        odd.parts[0] = crate::state::part_of_length(0, MAX_STATE + 1).kind(PartKind::State);
         let error = write(&odd, "game").unwrap_err();
         assert!(matches!(error, Error::NotConvertible(_)), "the core's data: {error}");
     }
@@ -929,8 +924,8 @@ mod tests {
             pack_bare(&gba_data(), &[(SCREENSHOT, screen.clone()), (SCREENSHOT_DIMENSIONS, dimensions)])
                 .unwrap();
         let bundle = read_as(&file, "game.ss1").unwrap();
-        let png = bundle.parts[1].bytes().unwrap();
-        assert_eq!(image::decode_rgba(&png, LARGEST_SCREEN).unwrap().0, 8, "eight wide, as the item says");
+        let png = bundle.parts[1].payload.as_slice();
+        assert_eq!(image::decode_rgba(png, LARGEST_SCREEN).unwrap().0, 8, "eight wide, as the item says");
         assert_eq!(bundle.parts.len(), 2, "the dimensions are how it was read, and nothing of their own");
 
         // With no item, or one the framebuffer's length belies, a size no screen of mGBA's has is

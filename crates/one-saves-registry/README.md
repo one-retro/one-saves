@@ -1,7 +1,7 @@
 # one-saves-registry
 
-The registries the [Universal Saves Format][spec] draws its vocabularies from: 49 systems, 200
-emulator cores, 17 apps, 13 platforms, save roles, card formats, device kinds, bindings and vendor
+The registries the [Universal Saves Format][spec] draws its vocabularies from: 226 systems, 207
+emulator cores, 29 apps, 12 platforms, save roles, card formats, device kinds, bindings and vendor
 names.
 
 ```rust

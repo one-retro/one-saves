@@ -293,7 +293,7 @@ fn directories(bundle: &Bundle) -> Result<Vec<Save>> {
                         Ok(File {
                             name: part.path.clone().unwrap_or_else(|| name.clone()),
                             dirent: part.dirent.clone().unwrap_or_default(),
-                            data: part.bytes()?.into_owned(),
+                            data: part.payload.clone(),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -335,7 +335,7 @@ fn directories(bundle: &Bundle) -> Result<Vec<Save>> {
                         directories[index].files.push(File {
                             name: name.to_owned(),
                             dirent,
-                            data: part.bytes()?.into_owned(),
+                            data: part.payload.clone(),
                         });
                     }
                 }
@@ -457,7 +457,7 @@ mod tests {
         // The directory's own entry rides on the outer part.
         assert_eq!(outer.dirent.as_ref().map(Vec::len), Some(512));
 
-        let inner = Bundle::from_slice(&outer.bytes().unwrap()).expect("inner bundle");
+        let inner = Bundle::from_slice(&outer.payload).expect("inner bundle");
         assert_eq!(inner.parts.len(), 3);
         assert_eq!(inner.parts[0].path.as_deref(), Some("icon.sys"));
         assert_eq!(inner.parts[2].payload.len(), 40960);
@@ -476,10 +476,10 @@ mod tests {
         // the check is that the saves survive, which is what the representation promises.
         let again = read(&rebuilt, &CardOptions::default()).expect("reads what it wrote");
         assert_eq!(again.parts.len(), bundle.parts.len());
-        let before = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap();
-        let after = Bundle::from_slice(&again.parts[0].bytes().unwrap()).unwrap();
+        let before = Bundle::from_slice(&bundle.parts[0].payload).unwrap();
+        let after = Bundle::from_slice(&again.parts[0].payload).unwrap();
         for (a, b) in before.parts.iter().zip(&after.parts) {
-            assert_eq!((&a.path, a.bytes().unwrap()), (&b.path, b.bytes().unwrap()));
+            assert_eq!((&a.path, a.payload.as_slice()), (&b.path, b.payload.as_slice()));
         }
     }
 
@@ -537,7 +537,7 @@ mod tests {
         let directory = &bundle.parts[1];
         assert!(directory.payload.is_empty(), "a directory holds nothing but what comes after it");
         assert_eq!(directory.dirent.as_ref().map(Vec::len), Some(ps2_memcard::ENTRY));
-        assert_eq!(bundle.parts[3].bytes().unwrap().as_ref(), [3u8; 100]);
+        assert_eq!(bundle.parts[3].payload.as_slice(), [3u8; 100]);
         assert!(bundle.parts[1..4].iter().all(|part| part.game.is_none()));
 
         // A folder that is not the console's stays a save even when it names no game, because the

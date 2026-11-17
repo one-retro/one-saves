@@ -28,35 +28,37 @@ println!("content hash: {}", bundle.content_hash()?);
 - **Reads a bundle as it arrives**, with `stream::Reader`: a push parser that judges the header
   before any part has arrived and each part before its payload, hands each payload on as it goes
   by, and holds no more than the limits it is given, whatever the input. It accepts exactly what
-  `Bundle::from_slice` accepts with every part's digest checked, refuses the rest with the same
-  errors, and does no I/O of its own, so it runs under an async runtime without depending on one.
-- **Hashes** a bundle two ways. The *file hash* identifies this exact file; the *content hash* is
-  a pure function of what the bundle says, and is what a content-addressable store keys on.
-- **Types the extension keys the specification defines** — a clock reading, a label, an icon, a
-  directory's dates — so a caller asks `extensions.get::<Label>()` rather than walking CBOR. A
-  producer's own key is a type implementing the same `Extension` trait.
+  `Bundle::from_slice` accepts, refuses the rest with the same errors, and does no I/O of its own,
+  so it runs under an async runtime without depending on one.
+- **Checks every part's digest** against its payload, at every depth, on the way in and on the
+  way out. A part's bytes are inline and never compressed, so a bundle's *content hash* is the
+  hash of its file: a pure function of what it says, and what a content-addressable store keys on.
+- **Types the extension keys the specification defines** — a clock reading and every clock chip
+  under it, a label, an icon, a directory's dates and entries, an N64 cartridge's chip — so a
+  caller asks `extensions.get::<Label>()` rather than walking CBOR. A producer's own key is a type
+  implementing the same `Extension` trait.
 - **Round-trips what it does not understand**: an extension key from a producer you have never
-  heard of, and an integer key from a later minor version, both survive unchanged. Decoding and
-  re-encoding gives back the bytes it was handed, for every file it accepts.
+  heard of, wherever it sits and whatever it holds, an integer key from a later version, and a
+  name a later version adds to a list the specification owns all survive unchanged. Decoding and
+  re-encoding gives back the bytes it was handed, for every file it accepts. The one extension
+  value it checks is `x.1sav.n64`, since an N64 cartridge's chip fixes how long its payload is.
 
 ## Two strictness modes
 
-`Strictness::Decoder` is what to ship: an unrecognised integer key is kept and round-tripped,
-because the only thing it can be is a field a later minor version assigned.
+`Strictness::Decoder` is what to ship: an unrecognised integer key, or a value a list the
+specification owns does not hold — a shape, a card format, a binding, a device kind, an origin, a
+part's kind — is kept and round-tripped, because the only thing it can be is a later version's.
 
 `Strictness::Schema` is the schema of the version this crate implements, exactly, which rejects
-such a key. It is what the conformance corpus tests, and it is not what a shipped decoder should
-do.
+both. It is what the conformance corpus tests, and it is not what a shipped decoder should do.
 
 ## Conformance
 
-Passes all 129 cases of the corpus published with the specification, plus direct tests for the four
+Passes all 217 cases of the corpus published with the specification, plus direct tests for the four
 properties the corpus README says a green run cannot prove. See the [workspace README][root].
 
 ## Features
 
-- `zstd` (default) — read and write parts whose payload carries `encoding: "zstd"`. Without it,
-  such a part still decodes and round-trips; its payload just cannot be inflated.
 - `multithread` (off) — `Arc` rather than `Rc` under `dcbor`, which is what makes `Bundle` and
   everything reachable from it `Send` and `Sync`. Turn it on to hold a bundle across an `.await`
   in a future that has to be `Send`. It changes no behaviour and no encoding; the cost is atomic

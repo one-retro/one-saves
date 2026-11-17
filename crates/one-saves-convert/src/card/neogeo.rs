@@ -331,15 +331,15 @@ fn write_cabinet(device: &Bundle) -> Result<Vec<u8>> {
     let mut ram = None;
     let mut region = None;
     for part in device.parts.iter().filter(|part| part.kind == PartKind::Bundle) {
-        let inner = Bundle::from_slice(&part.bytes()?)?;
+        let inner = Bundle::from_slice(&part.payload)?;
         let role = part.role.as_ref().map_or("primary", Slug::as_str);
         let beside = match (role, inner.shape()) {
             (INTERNAL_ROLE, Shape::Save) => {
-                ram = Some(concatenated(&inner)?);
+                ram = Some(concatenated(&inner));
                 continue;
             }
             (_, Shape::Card) => card_on_cartridge_medium(&inner)?,
-            (CARTRIDGE_ROLE, Shape::Save) => concatenated(&inner)?,
+            (CARTRIDGE_ROLE, Shape::Save) => concatenated(&inner),
             _ => {
                 return Err(Error::NotConvertible(format!(
                     "a MiSTer save holds a cabinet's RAM and a card or a cartridge's RAM beside it, and this \
@@ -396,12 +396,8 @@ fn card_on_cartridge_medium(card: &Bundle) -> Result<Vec<u8>> {
 }
 
 /// A save's bytes: its parts', end to end.
-fn concatenated(save: &Bundle) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    for part in &save.parts {
-        bytes.extend_from_slice(&part.bytes()?);
-    }
-    Ok(bytes)
+fn concatenated(save: &Bundle) -> Vec<u8> {
+    save.parts.iter().flat_map(|part| part.payload.iter().copied()).collect()
 }
 
 /// The NGH number out of a nested save's `serial`, for a save that arrived without an entry.

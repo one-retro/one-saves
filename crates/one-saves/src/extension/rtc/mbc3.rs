@@ -4,8 +4,9 @@ use std::fmt;
 
 use dcbor::{CBOR, Map};
 
+use super::optional_epoch;
 use super::{Rtc, array, elapsed, field, nullable, or_null, want_array, write_taken};
-use crate::extension::{Extension, epoch, only_keys, want_epoch, want_map, want_uint};
+use crate::extension::{Extension, epoch, only_keys, want_map, want_uint};
 use crate::name::ReverseDnsName;
 
 /// The clock an MBC3 Game Boy cartridge keeps, register by register.
@@ -24,11 +25,12 @@ pub struct RtcMbc3 {
     /// [`latched_or_live`](Self::latched_or_live).
     pub latched: Option<[u32; 5]>,
     /// The host clock the emulator advances the counters from, in epoch seconds. SameBoy takes it
-    /// when it writes the save, and VBA-M and mGBA when the game last latched the clock.
+    /// when it writes the save, and VBA-M and mGBA when the game last latched the clock. `None`
+    /// where the source keeps none, as the EverDrive GB X7 does not.
     ///
     /// The anchor, not the reading, and on the producer's own scale: MiSTer gives its cores local
     /// standard time counted as though it were UTC.
-    pub taken_at: i64,
+    pub taken_at: Option<i64>,
     /// How many bytes that timestamp occupied in the footer: 4 or 8, depending on the emulator.
     /// `None` where the source keeps the clock outside a footer. A footer built without it gives
     /// the timestamp 8; see [`footer_width`](Self::footer_width).
@@ -95,8 +97,9 @@ fn registers(values: [u32; 5]) -> CBOR {
     array(&values, CBOR::from)
 }
 
+/// Five registers, each a byte, which is all the chip holds.
 fn read_registers(value: &CBOR) -> dcbor::Result<[u32; 5]> {
-    want_array(value, want_uint)
+    want_array(value, |register| want_uint::<u8>(register).map(u32::from))
 }
 
 impl From<RtcMbc3> for CBOR {
@@ -104,7 +107,9 @@ impl From<RtcMbc3> for CBOR {
         let mut map = Map::new();
         map.insert(0u64, registers(clock.live));
         map.insert(1u64, or_null(clock.latched, registers));
-        map.insert(2u64, epoch(clock.taken_at));
+        if let Some(taken_at) = clock.taken_at {
+            map.insert(2u64, epoch(taken_at));
+        }
         if let Some(width) = clock.timestamp_width {
             map.insert(3u64, u64::from(width));
         }
@@ -127,7 +132,7 @@ impl TryFrom<CBOR> for RtcMbc3 {
         Ok(RtcMbc3 {
             live: read_registers(&field(map, 0)?)?,
             latched: nullable(&field(map, 1)?, read_registers)?,
-            taken_at: want_epoch(&field(map, 2)?)?,
+            taken_at: optional_epoch(map, 2)?,
             timestamp_width,
         })
     }
@@ -140,7 +145,7 @@ impl fmt::Display for RtcMbc3 {
         if self.halted() {
             f.write_str(" (halted)")?;
         }
-        write_taken(f, Some(self.taken_at))
+        write_taken(f, self.taken_at)
     }
 }
 
@@ -151,7 +156,7 @@ mod tests {
     const CLOCK: RtcMbc3 = RtcMbc3 {
         live: [30, 45, 13, 44, 1],
         latched: Some([30, 45, 13, 44, 1]),
-        taken_at: 1_700_000_000,
+        taken_at: Some(1_700_000_000),
         timestamp_width: Some(8),
     };
 
@@ -162,6 +167,16 @@ mod tests {
         assert_eq!(CLOCK.to_string(), "day 300 13:45:30, taken 2023-11-14 22:13:20");
         // The width is 4 or 8 and nothing else, since the footer is rebuilt from it.
         assert!(RtcMbc3::try_from(CBOR::from(RtcMbc3 { timestamp_width: Some(6), ..CLOCK })).is_err());
+    }
+
+    #[test]
+    fn a_clock_with_no_anchor_and_registers_past_a_byte() {
+        // The EverDrive GB X7 keeps the registers and no anchor.
+        let everdrive = RtcMbc3 { taken_at: None, timestamp_width: None, ..CLOCK };
+        assert_eq!(RtcMbc3::try_from(CBOR::from(everdrive)).unwrap(), everdrive);
+        assert_eq!(everdrive.to_string(), "day 300 13:45:30");
+        let wide = RtcMbc3 { live: [256, 0, 0, 0, 0], ..CLOCK };
+        assert!(RtcMbc3::try_from(CBOR::from(wide)).is_err(), "a register is a byte");
     }
 
     #[test]

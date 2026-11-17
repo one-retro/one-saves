@@ -15,7 +15,7 @@
     "format": "n64-cpak",
     "dirent_len": 32,
     "block_size": 256,
-    "notes": "The pak's own word for a block is a page."
+    "notes": "The pak's own word for a block is a page. A pak of several banks is one filesystem whose notes can span banks, so its capacity is 32768 times its bank count. Its ID block records that count, and a writer sets it from capacity."
   },
   {
     "format": "gc-mc",
@@ -39,6 +39,6 @@
     "format": "saturn-bup",
     "dirent_len": 30,
     "block_size": 64,
-    "notes": "The entry sits at the head of the save's own first block rather than in a directory region, and the block list that follows it is the writer's. The 64 is the console's internal memory; a backup cartridge is a separate device carrying its own."
+    "notes": "The entry sits at the head of the save's own first block rather than in a directory region, and the block list that follows it is the writer's. The 64 is the console's internal memory. A backup cartridge's block is larger, and this table does not give it yet."
   }
 ]

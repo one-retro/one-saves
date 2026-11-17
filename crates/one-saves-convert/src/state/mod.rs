@@ -382,25 +382,21 @@ impl<'a> Contents<'a> {
     }
 }
 
-/// A part's bytes, refused before they are inflated where the part claims more than `limit`.
+/// A part's bytes, refused where they run past `limit`.
 ///
-/// `room` names what the bytes go into, for the message. A compressed part's length is its own claim, and inflating it is what costs the memory, so a
-/// writer whose file has a cap asks before it inflates rather than after: the bundle is anyone's
-/// to write, and a part claiming gigabytes is otherwise gigabytes before anything says no.
+/// `room` names what the bytes go into, for the message. The bundle is anyone's to write, and an
+/// emulator's file states each length in a field of its own width, so a writer whose file has a cap
+/// asks before it copies anything.
 #[cfg(feature = "states")]
-pub(crate) fn bytes_within<'a>(
-    part: &'a one_saves::Part,
-    limit: usize,
-    room: &str,
-) -> Result<std::borrow::Cow<'a, [u8]>> {
+pub(crate) fn bytes_within<'a>(part: &'a one_saves::Part, limit: usize, room: &str) -> Result<&'a [u8]> {
     let length = part.payload.len();
-    if length > limit as u64 {
+    if length > limit {
         return Err(Error::NotConvertible(format!(
             "part {} holds {length} bytes, more than {room} has room for",
             part.id
         )));
     }
-    Ok(part.bytes()?)
+    Ok(part.payload.as_slice())
 }
 
 /// Refuses a bundle that loads into another core than the one an emulator runs.
@@ -552,14 +548,10 @@ pub(crate) fn screenshot_part(image: Vec<u8>) -> Result<one_saves::Part> {
     Ok(one_saves::Part::new(0, image).kind(one_saves::PartKind::Screenshot).content_type(content_type))
 }
 
-/// A part whose payload claims `size` bytes compressed into nothing: what a bundle built to cost a
-/// writer its memory looks like. Inflating it fails, so a writer that gets past refusing it on
-/// its claim says so with an error of the wrong kind.
+/// A part of `len` bytes, to hold a writer to what an emulator's file has room for.
 #[cfg(all(test, feature = "states"))]
-pub(crate) fn part_claiming(id: u64, size: u64) -> one_saves::Part {
-    let mut part = one_saves::Part::new(id, Vec::new());
-    part.payload = one_saves::Payload::Compressed { bytes: Vec::new(), size };
-    part
+pub(crate) fn part_of_length(id: u64, len: usize) -> one_saves::Part {
+    one_saves::Part::new(id, vec![0; len])
 }
 
 #[cfg(test)]

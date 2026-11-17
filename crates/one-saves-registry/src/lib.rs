@@ -596,6 +596,9 @@ pub struct Binding {
     pub name: &'static str,
     /// What the payload is bound to.
     pub bound_to: &'static str,
+    /// The keys of a part's `bound_to` that may name it: 0 for the console, 1 for the account
+    /// and 2 for the medium.
+    pub keys: &'static [u64],
 }
 
 /// An assigned name in the `x` tree.
@@ -850,13 +853,23 @@ mod tests {
 
     #[test]
     fn the_registries_are_the_size_the_documents_are() {
-        assert_eq!(SYSTEMS.len(), 50);
-        assert_eq!(CORES.len(), 202);
-        assert_eq!(APPS.len(), 24);
-        assert_eq!(PLATFORMS.len(), 13);
+        assert_eq!(SYSTEMS.len(), 226);
+        assert_eq!(CORES.len(), 207);
+        assert_eq!(APPS.len(), 29);
+        assert_eq!(PLATFORMS.len(), 12);
         assert_eq!(CARD_FORMATS.len(), 7);
         assert_eq!(DEVICE_KINDS.len(), 5);
         assert_eq!(BINDINGS.len(), 4);
+    }
+
+    #[test]
+    fn a_binding_names_the_keys_its_target_is_named_under() {
+        let keys =
+            |name: &str| BINDINGS.iter().find(|binding| binding.name == name).map(|binding| binding.keys);
+        assert_eq!(keys("device"), Some(&[0][..]));
+        assert_eq!(keys("account"), Some(&[1][..]));
+        assert_eq!(keys("device-account"), Some(&[0, 1][..]));
+        assert_eq!(keys("medium"), Some(&[2][..]));
     }
 
     #[test]

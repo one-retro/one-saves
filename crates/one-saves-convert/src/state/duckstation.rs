@@ -173,7 +173,7 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let screenshot = match contents.screenshot {
         Some(part) => {
             let decoded = (part.content_type.as_deref() == Some("image/png"))
-                .then(|| image::decode_rgba(&part.bytes().ok()?, (MAX_SIDE, MAX_SIDE)).ok())
+                .then(|| image::decode_rgba(&part.payload, (MAX_SIDE, MAX_SIDE)).ok())
                 .flatten();
             if decoded.is_none() {
                 left_out.push(part.id);
@@ -186,7 +186,7 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     // Held to DuckStation's cap before it is inflated, which also keeps every length and offset
     // below in the `u32` DuckStation gives it.
     let data = crate::state::bytes_within(contents.state, MAX_DATA, "a DuckStation state")?;
-    let (compression, stored) = compress(&data, version);
+    let (compression, stored) = compress(data, version);
     let mut out = vec![0u8; HEADER];
     let mut put = |at: usize, value: u32| out[at..at + 4].copy_from_slice(&value.to_le_bytes());
     put(0, MAGIC);
@@ -396,8 +396,8 @@ mod tests {
     /// The pixels of a bundle's screenshot, and its PNG's colour type.
     fn picture(bundle: &Bundle) -> (u32, u32, Vec<u8>, u8) {
         let part = bundle.parts.iter().find(|part| part.kind == PartKind::Screenshot).expect("a screenshot");
-        let png = part.bytes().unwrap();
-        let (width, height, rgba) = image::decode_rgba(&png, (MAX_SIDE, MAX_SIDE)).unwrap();
+        let png = part.payload.as_slice();
+        let (width, height, rgba) = image::decode_rgba(png, (MAX_SIDE, MAX_SIDE)).unwrap();
         // The colour type is the tenth byte of IHDR's data, which opens at 16.
         (width, height, rgba, png[25])
     }
@@ -415,7 +415,7 @@ mod tests {
             (&Some(Recorded::Known(72)), &Some(Recorded::Unknown))
         );
         assert_eq!(bundle.parts[0].slot, Some(3));
-        assert_eq!(bundle.parts[0].bytes().unwrap().len(), 70_000, "the data, inflated");
+        assert_eq!(bundle.parts[0].payload.as_slice().len(), 70_000, "the data, inflated");
         assert_eq!(bundle.parts[1].content_type.as_deref(), Some("image/png"));
     }
 
@@ -430,11 +430,7 @@ mod tests {
         for compression in types {
             let bundle = read_as(&file_of(93, compression, compression, &screen()), "SLUS-00875_1.sav")
                 .unwrap_or_else(|e| panic!("compression {compression}: {e}"));
-            assert_eq!(
-                bundle.parts[0].bytes().unwrap().as_ref(),
-                data().as_slice(),
-                "compression {compression}"
-            );
+            assert_eq!(bundle.parts[0].payload.as_slice(), data().as_slice(), "compression {compression}");
             assert_eq!(picture(&bundle), (16, 8, screen(), 2), "compression {compression}: opaque, so RGB");
         }
     }
@@ -613,14 +609,11 @@ mod tests {
     }
 
     #[test]
-    fn data_claiming_more_than_duckstation_loads_is_refused_before_it_is_inflated() {
-        // Past 4 GiB this once panicked on the header's `u32`, after it had been inflated.
-        for size in [MAX_DATA as u64 + 1, (1 << 32) + 16] {
-            let mut bundle = bundle_at(72);
-            bundle.parts[0] = crate::state::part_claiming(0, size).kind(PartKind::State);
-            let error = write(&bundle, "ignored").unwrap_err();
-            assert!(matches!(error, Error::NotConvertible(_)), "{size}: {error}");
-        }
+    fn data_longer_than_duckstation_loads_is_refused() {
+        let mut bundle = bundle_at(72);
+        bundle.parts[0] = crate::state::part_of_length(0, MAX_DATA + 1).kind(PartKind::State);
+        let error = write(&bundle, "ignored").unwrap_err();
+        assert!(matches!(error, Error::NotConvertible(_)), "{error}");
     }
 
     #[test]

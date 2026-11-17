@@ -12,7 +12,7 @@ use crate::error::{Error, ErrorKind};
 use crate::extension::Extensions;
 use crate::hash::{HashAlgorithm, HashValue};
 use crate::model::{
-    Bundle, ByteOrder, Card, Game, GameId, Header, Origin, Part, PartKind, Payload, Recorded, Source,
+    BoundTo, Bundle, ByteOrder, Card, Game, GameId, Header, Origin, Part, PartKind, Recorded, Source,
     TakenWith, UnknownKeys, WordSize,
 };
 use crate::name::{Name, ReverseDnsName, Slug};
@@ -20,19 +20,42 @@ use crate::shape::Shape;
 
 /// How strictly to read a bundle.
 ///
-/// The two differ over exactly one thing: an integer key this version does not define.
+/// The two differ over what only a later version could have written: an integer key this version
+/// does not define, and a value it does not list in a vocabulary the specification owns — a shape,
+/// a card `format`, a `binding`, a `device_kind`, an `origin` or a part's `kind`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Strictness {
-    /// What a shipped decoder does: ignore an unrecognised integer key and round-trip it
-    /// unchanged, because the only thing it can be is a later minor version's field.
+    /// What a shipped decoder does: keep an unrecognised integer key or listed value and
+    /// round-trip it unchanged, because the only thing it can be is a later version's.
     #[default]
     Decoder,
-    /// What the schema does: reject an integer key it does not list.
+    /// What the schema does: reject an integer key or a listed value it does not know.
     ///
     /// A schema describes one version exactly and cannot state a rule about the next one, so
     /// this is the stricter reading and it is the one the conformance corpus tests. Do not ship
-    /// a decoder in this mode; it will refuse bundles a later minor version writes.
+    /// a decoder in this mode; it will refuse bundles a later version writes.
     Schema,
+}
+
+/// The `device_kind` values this version lists.
+pub(crate) const DEVICE_KINDS: [&str; 5] =
+    ["console", "emulator", "cartridge-reader", "flashcart", "service"];
+
+/// The card formats this version lists.
+pub(crate) const CARD_FORMATS: [&str; 7] =
+    ["ps1-mc", "ps2-mc", "n64-cpak", "gc-mc", "neogeo-mc", "vmu", "saturn-bup"];
+
+/// The bindings this version lists, each with the keys of `bound_to` that name what it binds a
+/// payload to.
+pub(crate) const BINDINGS: [(&str, &[u64]); 4] =
+    [("device", &[0]), ("account", &[1]), ("device-account", &[0, 1]), ("medium", &[2])];
+
+/// Refuses, at [`Strictness::Schema`], a value a list the specification owns does not hold.
+fn listed(strictness: Strictness, field: &'static str, value: &str, known: bool) -> Result<(), Error> {
+    if strictness == Strictness::Schema && !known {
+        return Err(Error::at(field, ErrorKind::UnknownValue { field, value: value.to_owned() }));
+    }
+    Ok(())
 }
 
 /// The keys of one map, split into the two namespaces the format defines.
@@ -220,6 +243,24 @@ fn want_bytes(value: &CBOR, path: &str) -> Result<Vec<u8>, Error> {
         .ok_or_else(|| Error::at(path, ErrorKind::Type { expected: "a byte string" }))
 }
 
+/// An optional text string, which is absent rather than empty.
+fn want_filled_text(value: &CBOR, path: &str) -> Result<String, Error> {
+    let text = want_text(value, path)?;
+    if text.is_empty() {
+        return Err(Error::at(path, ErrorKind::EmptyContainer));
+    }
+    Ok(text)
+}
+
+/// An optional byte string, which is absent rather than empty.
+fn want_filled_bytes(value: &CBOR, path: &str) -> Result<Vec<u8>, Error> {
+    let bytes = want_bytes(value, path)?;
+    if bytes.is_empty() {
+        return Err(Error::at(path, ErrorKind::EmptyContainer));
+    }
+    Ok(bytes)
+}
+
 fn want_uint(value: &CBOR, path: &str) -> Result<u64, Error> {
     match value.as_case() {
         CBORCase::Unsigned(n) => Ok(*n),
@@ -347,12 +388,15 @@ pub(crate) fn decode_header(value: &CBOR, strictness: Strictness) -> Result<Head
     let game = fields.take(2).map(|v| decode_game(&v, "header.game", strictness)).transpose()?;
     let source = fields.take(3).map(|v| decode_source(&v, "header.source", strictness)).transpose()?;
     let card = fields.take(4).map(|v| decode_card(&v, "header.card", strictness)).transpose()?;
-    let description = fields.take(5).map(|v| want_text(&v, "header.description")).transpose()?;
+    let description = fields.take(5).map(|v| want_filled_text(&v, "header.description")).transpose()?;
     let bundled_at = fields.take(6).map(|v| want_epoch(&v, "header.bundled_at")).transpose()?;
     let taken_at = fields.take(7).map(|v| want_epoch(&v, "header.taken_at")).transpose()?;
     let taken_with =
         fields.take(8).map(|v| decode_taken_with(&v, "header.taken_with", strictness)).transpose()?;
     let origin = fields.take(9).map(|v| want_slug(&v, "header.origin").map(Origin::from_slug)).transpose()?;
+    if let Some(origin) = &origin {
+        listed(strictness, "origin", origin.as_str(), !matches!(origin, Origin::Unknown(_)))?;
+    }
 
     // Which keys each shape admits is checked by `validate`, which a bundle built rather than read
     // goes through as well, so a contradiction is refused on the way out as on the way in.
@@ -473,6 +517,9 @@ fn decode_game(value: &CBOR, path: &str, strictness: Strictness) -> Result<Game,
                 .map_err(|e| Error::at(format!("{path}[{text:?}]"), ErrorKind::Name(e)))?;
             let id = match id.as_case() {
                 CBORCase::Unsigned(n) => GameId::Uint(*n),
+                CBORCase::Text(t) if t.is_empty() => {
+                    return Err(Error::at(format!("{path}[{text:?}]"), ErrorKind::EmptyContainer));
+                }
                 CBORCase::Text(t) => GameId::Text(t.clone()),
                 _ => {
                     return Err(Error::at(
@@ -501,9 +548,10 @@ fn decode_game(value: &CBOR, path: &str, strictness: Strictness) -> Result<Game,
         }
     }
 
-    let rom_filename = fields.take(2).map(|v| want_text(&v, path)).transpose()?;
-    let serial = fields.take(3).map(|v| want_text(&v, path)).transpose()?;
-    let title = fields.take(4).map(|v| want_text(&v, path)).transpose()?;
+    let rom_filename =
+        fields.take(2).map(|v| want_filled_text(&v, &format!("{path}.rom_filename"))).transpose()?;
+    let serial = fields.take(3).map(|v| want_filled_text(&v, &format!("{path}.serial"))).transpose()?;
+    let title = fields.take(4).map(|v| want_filled_text(&v, &format!("{path}.title"))).transpose()?;
     let system = fields.take(5).map(|v| want_slug(&v, &format!("{path}.system"))).transpose()?;
 
     let game = Game {
@@ -528,18 +576,24 @@ fn decode_source(value: &CBOR, path: &str, strictness: Strictness) -> Result<Sou
     let mut fields = Fields::split(map, path)?;
     fields.no_extensions(path)?;
 
+    let text = |fields: &mut Fields, key: i64, name: &str| {
+        fields.take(key).map(|v| want_filled_text(&v, &format!("{path}.{name}"))).transpose()
+    };
     let device_kind = fields.take(0).map(|v| want_slug(&v, &format!("{path}.device_kind"))).transpose()?;
-    let fingerprint = fields.take(1).map(|v| want_text(&v, path)).transpose()?;
+    if let Some(kind) = &device_kind {
+        listed(strictness, "device_kind", kind.as_str(), DEVICE_KINDS.contains(&kind.as_str()))?;
+    }
+    let fingerprint = text(&mut fields, 1, "fingerprint")?;
     let app = fields.take(2).map(|v| want_name(&v, &format!("{path}.app"))).transpose()?;
-    let app_version = fields.take(3).map(|v| want_text(&v, path)).transpose()?;
+    let app_version = text(&mut fields, 3, "app_version")?;
     let core = fields.take(4).map(|v| want_name(&v, &format!("{path}.core"))).transpose()?;
-    let core_version = fields.take(5).map(|v| want_text(&v, path)).transpose()?;
+    let core_version = text(&mut fields, 5, "core_version")?;
     let platform = fields.take(6).map(|v| want_name(&v, &format!("{path}.platform"))).transpose()?;
-    let platform_version = fields.take(7).map(|v| want_text(&v, path)).transpose()?;
+    let platform_version = text(&mut fields, 7, "platform_version")?;
     let utc_offset =
         fields.take(8).map(|v| want_utc_offset(&v, &format!("{path}.utc_offset"))).transpose()?;
 
-    Ok(Source {
+    let source = Source {
         device_kind,
         fingerprint,
         app,
@@ -550,7 +604,12 @@ fn decode_source(value: &CBOR, path: &str, strictness: Strictness) -> Result<Sou
         platform_version,
         utc_offset,
         unknown: fields.unknown(path, strictness)?,
-    })
+    };
+    // An optional map has one encoding of empty, and that is not being there.
+    if source.is_empty() {
+        return Err(Error::at(path, ErrorKind::EmptyContainer));
+    }
+    Ok(source)
 }
 
 /// Reads a UTC offset: whole seconds east of UTC, within the span real zones occupy.
@@ -560,6 +619,10 @@ fn want_utc_offset(value: &CBOR, path: &str) -> Result<i32, Error> {
         CBORCase::Negative(n) => i64::try_from(*n).ok().map(|n| -1 - n),
         _ => return Err(Error::at(path, ErrorKind::Type { expected: "an integer" })),
     };
+    // Zero is UTC, which is what leaving the key out says.
+    if seconds == Some(0) {
+        return Err(Error::at(path, ErrorKind::DefaultSpelledOut("UTC")));
+    }
     seconds
         .filter(|seconds| Source::UTC_OFFSETS.contains(seconds))
         .and_then(|seconds| i32::try_from(seconds).ok())
@@ -575,11 +638,13 @@ fn decode_card(value: &CBOR, path: &str, strictness: Strictness) -> Result<Card,
         .take(0)
         .ok_or_else(|| Error::at(path, ErrorKind::MissingKey("format")))
         .and_then(|v| want_slug(&v, &format!("{path}.format")))?;
+    listed(strictness, "format", format.as_str(), CARD_FORMATS.contains(&format.as_str()))?;
     let capacity = fields
         .take(1)
         .ok_or_else(|| Error::at(path, ErrorKind::MissingKey("capacity")))
         .and_then(|v| want_uint(&v, &format!("{path}.capacity")))?;
-    let system_area = fields.take(2).map(|v| want_bytes(&v, &format!("{path}.system_area"))).transpose()?;
+    let system_area =
+        fields.take(2).map(|v| want_filled_bytes(&v, &format!("{path}.system_area"))).transpose()?;
 
     Ok(Card { format, capacity, system_area, unknown: fields.unknown(path, strictness)? })
 }
@@ -610,27 +675,19 @@ pub(crate) fn decode_part_fields(
     strictness: Strictness,
 ) -> Result<Part, Error> {
     let extensions = fields.extensions(path)?;
-    let PartKeys { mut part, encoding, size } = decode_part_keys(&mut fields, path, strictness)?;
+    let mut part = decode_part_keys(&mut fields, path, strictness)?;
 
     let payload_value = fields.take(-1).ok_or_else(|| Error::at(path, ErrorKind::MissingKey("payload")))?;
-    part.payload = decode_payload(&payload_value, encoding.as_deref(), size, path)?;
+    part.payload = want_bytes(&payload_value, &format!("{path}.payload"))?;
     part.extensions = extensions;
     part.unknown = fields.unknown(path, strictness)?;
     Ok(part)
 }
 
-/// What a part's keys 0 to 13 say: everything but its payload, its extension keys and any key this
-/// version does not define.
-pub(crate) struct PartKeys {
-    /// The part, its payload empty and its extensions and unknown keys not yet read.
-    pub(crate) part: Part,
-    /// Key 7, which says whether the payload is compressed.
-    pub(crate) encoding: Option<String>,
-    /// Key 8, the payload's uncompressed length where it is.
-    pub(crate) size: Option<u64>,
-}
-
-/// Takes keys 0 to 13 out of a part's map.
+/// Takes the unsigned keys out of a part's map: everything but its payload, its extension keys and
+/// any later version's negative key.
+///
+/// The part comes back with its payload empty and its extensions and unknown keys not yet read.
 ///
 /// Every one of them sorts ahead of the payload at `-1`, so this is everything a part says before
 /// its bytes, which is the point at which a [streaming reader](crate::stream) has to judge it.
@@ -638,7 +695,7 @@ pub(crate) fn decode_part_keys(
     fields: &mut Fields,
     path: &str,
     strictness: Strictness,
-) -> Result<PartKeys, Error> {
+) -> Result<Part, Error> {
     let id = fields
         .take(0)
         .ok_or_else(|| Error::at(path, ErrorKind::MissingKey("id")))
@@ -652,7 +709,13 @@ pub(crate) fn decode_part_keys(
             if name.as_str() == "save" {
                 return Err(Error::at(format!("{path}.kind"), ErrorKind::DefaultSpelledOut("save")));
             }
-            PartKind::from_name(name)
+            let kind = PartKind::from_name(name);
+            // A minted kind is a reverse-DNS name, which no list holds; a slug is the spec's, and
+            // one this version does not list is a later version's.
+            if let PartKind::Other(name @ Name::Slug(_)) = &kind {
+                listed(strictness, "kind", name.as_str(), false)?;
+            }
+            kind
         }
     };
 
@@ -677,27 +740,18 @@ pub(crate) fn decode_part_keys(
     };
 
     let slot = fields.take(4).map(|v| want_uint(&v, &format!("{path}.slot"))).transpose()?;
-    let dirent = fields.take(5).map(|v| want_bytes(&v, &format!("{path}.dirent"))).transpose()?;
-    let content_type = fields.take(6).map(|v| want_text(&v, &format!("{path}.content_type"))).transpose()?;
+    let dirent = fields.take(5).map(|v| want_filled_bytes(&v, &format!("{path}.dirent"))).transpose()?;
+    let content_type =
+        fields.take(6).map(|v| want_filled_text(&v, &format!("{path}.content_type"))).transpose()?;
 
-    let encoding = match fields.take(7) {
-        None => None,
-        Some(v) => {
-            let text = want_text(&v, &format!("{path}.encoding"))?;
-            match text.as_str() {
-                "zstd" => Some(text),
-                // "none" is the default and is written by leaving the key out.
-                "none" => {
-                    return Err(Error::at(format!("{path}.encoding"), ErrorKind::DefaultSpelledOut("none")));
-                }
-                _ => {
-                    return Err(Error::at(format!("{path}.encoding"), ErrorKind::UnknownEncoding(text)));
-                }
-            }
+    // `encoding` and `size` went with compression, and a retired key is never free again: unlike
+    // an integer key nobody has assigned yet, neither can be a later version's.
+    for retired in [7, 8] {
+        if fields.take(retired).is_some() {
+            return Err(Error::at(path, ErrorKind::RetiredKey(retired)));
         }
-    };
+    }
 
-    let size = fields.take(8).map(|v| want_uint(&v, &format!("{path}.size"))).transpose()?;
     let sha256 = fields
         .take(9)
         .ok_or_else(|| Error::at(path, ErrorKind::MissingKey("sha256")))
@@ -708,8 +762,14 @@ pub(crate) fn decode_part_keys(
     let game = fields.take(11).map(|v| decode_game(&v, &format!("{path}.game"), strictness)).transpose()?;
     let system = fields.take(12).map(|v| want_slug(&v, &format!("{path}.system"))).transpose()?;
     let binding = fields.take(13).map(|v| want_slug(&v, &format!("{path}.binding"))).transpose()?;
+    if let Some(binding) = &binding {
+        let known = BINDINGS.iter().any(|(name, _)| *name == binding.as_str());
+        listed(strictness, "binding", binding.as_str(), known)?;
+    }
+    let bound_to =
+        fields.take(14).map(|v| decode_bound_to(&v, &format!("{path}.bound_to"), strictness)).transpose()?;
 
-    let part = Part {
+    Ok(Part {
         id,
         kind,
         role,
@@ -722,47 +782,39 @@ pub(crate) fn decode_part_keys(
         game,
         system,
         binding,
-        payload: Payload::default(),
+        bound_to,
+        payload: Vec::new(),
         extensions: Extensions::new(),
         unknown: UnknownKeys::new(),
-    };
-    Ok(PartKeys { part, encoding, size })
-}
-
-/// Reads the payload, and with it which of the two forms this part is in.
-///
-/// `size` is carried only where it cannot be derived, which since 0.2 means a compressed payload
-/// and nothing else: the thin form that also needed it is gone.
-fn decode_payload(
-    value: &CBOR,
-    encoding: Option<&str>,
-    size: Option<u64>,
-    path: &str,
-) -> Result<Payload, Error> {
-    let bytes = want_bytes(value, &format!("{path}.payload"))?;
-    Ok(match payload_form(encoding, size, path)? {
-        Some(size) => Payload::Compressed { bytes, size },
-        None => Payload::Embedded(bytes),
     })
 }
 
-/// Which of the two forms a part's payload is in, from its `encoding` and `size`: the
-/// uncompressed length where it is compressed, and `None` where it is not.
-pub(crate) fn payload_form(
-    encoding: Option<&str>,
-    size: Option<u64>,
-    path: &str,
-) -> Result<Option<u64>, Error> {
-    match (encoding, size) {
-        (Some(_), Some(size)) => Ok(Some(size)),
-        (Some(_), None) => Err(Error::at(path, ErrorKind::MissingSize)),
-        // An embedded uncompressed payload already states its own length.
-        (None, Some(_)) => Err(Error::at(format!("{path}.size"), ErrorKind::SizeOnUncompressedPart)),
-        (None, None) => Ok(None),
+/// Reads `bound_to`: the identifiers a bound payload is bound to, each a byte string.
+///
+/// Which of them a part may carry follows from its `binding`, which [`validate`](Bundle::validate)
+/// holds it to, so a bundle a caller built is held to it too.
+fn decode_bound_to(value: &CBOR, path: &str, strictness: Strictness) -> Result<BoundTo, Error> {
+    let map = want_map(value, path)?;
+    let mut fields = Fields::split(map, path)?;
+    fields.no_extensions(path)?;
+    let mut id = |key: i64, name: &str| {
+        fields.take(key).map(|v| want_filled_bytes(&v, &format!("{path}.{name}"))).transpose()
+    };
+    let device = id(0, "device")?;
+    let account = id(1, "account")?;
+    let medium = id(2, "medium")?;
+    let bound_to = BoundTo { device, account, medium, unknown: fields.unknown(path, strictness)? };
+    if bound_to.is_empty() {
+        return Err(Error::at(path, ErrorKind::EmptyContainer));
     }
+    Ok(bound_to)
 }
 
-/// Checks a `path`: non-empty, at most 512 bytes, no leading `/` and no `..` segment.
+/// Checks a `path`: relative, at most 512 bytes, `/` between segments, and no segment empty, `.`
+/// or `..`.
+///
+/// Each of those is a second spelling of an address, or one that climbs out of the container it
+/// names.
 pub(crate) fn check_path(text: &str, path: &str) -> Result<(), Error> {
     if text.is_empty() {
         return Err(Error::at(path, ErrorKind::DefaultSpelledOut("absent")));
@@ -772,7 +824,8 @@ pub(crate) fn check_path(text: &str, path: &str) -> Result<(), Error> {
     if text.len() > crate::MAX_PATH_LEN {
         return Err(Error::at(path, ErrorKind::PathTooLong(text.len())));
     }
-    if text.starts_with('/') || text.split('/').any(|segment| segment == "..") {
+    // A leading or trailing `/`, or two together, leaves an empty segment.
+    if text.split('/').any(|segment| matches!(segment, "" | "." | "..")) {
         return Err(Error::at(path, ErrorKind::PathForbidden));
     }
     Ok(())
@@ -1006,13 +1059,6 @@ impl Part {
         if let Some(content_type) = &self.content_type {
             map.insert(6u64, content_type.as_str());
         }
-        match &self.payload {
-            Payload::Embedded(_) => {}
-            Payload::Compressed { size, .. } => {
-                map.insert(7u64, "zstd");
-                map.insert(8u64, *size);
-            }
-        }
         map.insert(9u64, hash_cbor(&self.sha256));
         if let Some(source) = &self.source {
             map.insert(10u64, source.to_cbor());
@@ -1026,15 +1072,25 @@ impl Part {
         if let Some(binding) = &self.binding {
             map.insert(13u64, binding.as_str());
         }
-        map.insert(
-            -1i64,
-            match &self.payload {
-                // Both go out as a byte string; what differs is whether keys 7 and 8 above
-                // said the bytes are compressed.
-                Payload::Embedded(bytes) | Payload::Compressed { bytes, .. } => CBOR::to_byte_string(bytes),
-            },
-        );
+        if let Some(bound_to) = &self.bound_to {
+            map.insert(14u64, bound_to.to_cbor());
+        }
+        map.insert(-1i64, CBOR::to_byte_string(&self.payload));
         finish(map, &self.unknown, &self.extensions)
+    }
+}
+
+impl BoundTo {
+    /// Writes what a payload is bound to as a CBOR map.
+    #[must_use]
+    pub fn to_cbor(&self) -> CBOR {
+        let mut map = Map::new();
+        for (key, id) in [(0u64, &self.device), (1, &self.account), (2, &self.medium)] {
+            if let Some(id) = id {
+                map.insert(key, CBOR::to_byte_string(id));
+            }
+        }
+        finish(map, &self.unknown, &Extensions::new())
     }
 }
 

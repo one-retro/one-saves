@@ -42,8 +42,8 @@ impl Target {
         match save {
             N64Save::Eeprom4k | N64Save::Eeprom16k => "eep",
             N64Save::Flash1m => "fla",
-            N64Save::Sram256k | N64Save::Sram768k if self == Target::Everdrive => "srm",
-            N64Save::Sram256k | N64Save::Sram768k => "sra",
+            N64Save::Sram256k | N64Save::Sram768k | N64Save::Sram1m if self == Target::Everdrive => "srm",
+            N64Save::Sram256k | N64Save::Sram768k | N64Save::Sram1m => "sra",
         }
     }
 }

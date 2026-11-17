@@ -70,7 +70,7 @@ fn a_gamecube_save_carries_its_icon_and_banner_as_png() {
 
         // The picture belongs to the save, so it is in the header of the bundle that is the save
         // and not on the card's part naming it: it has to survive the save being sliced out.
-        let save = Bundle::from_slice(&bundle.parts[0].bytes().expect("the nested bundle")).expect("a save");
+        let save = Bundle::from_slice(&bundle.parts[0].payload).expect("a save");
         assert!(
             bundle.parts[0].extensions.get::<Icon>().is_none(),
             "{path}: the icon does not ride on the card's part"
@@ -82,8 +82,9 @@ fn a_gamecube_save_carries_its_icon_and_banner_as_png() {
         let (w, h, px) = pixels(&frame.png);
         assert_eq!((w, h), (32, 32), "{path}: an icon is 32x32");
         assert_eq!(digest(&px), frame_digest, "{path}: icon pixels");
-        // Three twelfths of a second, which is what the entry's `anim_speed` asks for.
-        assert_eq!(frame.hold_ms, Some(250), "{path}");
+        // The entry's `anim_speed` asks three twelfths of a second for the frame, but a still icon's
+        // one frame shows for as long as the icon does, so it carries no hold.
+        assert_eq!(frame.hold_ms, None, "{path}");
 
         let banner = icon.banner.as_ref().expect("a banner");
         let (w, h, px) = pixels(banner);
@@ -106,7 +107,7 @@ fn a_gamecube_save_is_labelled_by_the_lines_the_console_shows() {
         let card = card_from_gci(path);
         let bundle = one_saves_convert::card::read(Format::GcCard, &card, &CardOptions::default())
             .expect("reads the card");
-        let save = Bundle::from_slice(&bundle.parts[0].bytes().expect("nested")).expect("a save");
+        let save = Bundle::from_slice(&bundle.parts[0].payload).expect("a save");
 
         let label = save.header.extensions.get::<Label>().expect("a label");
         assert_eq!(label.title, title, "{path}");

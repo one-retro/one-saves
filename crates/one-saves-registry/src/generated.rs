@@ -9,115 +9,655 @@ use crate::{App, Binding, CardFormat, Core, DeviceKind, Platform, Role, RolePref
 pub mod systems {
     use crate::System;
 
-    /// 3DO — also seen as threedo.
-    pub const _3DO: System = System { slug: "3do", name: "3DO", aliases: &["threedo"] };
-    /// Nintendo 3DS.
-    pub const _3DS: System = System { slug: "3ds", name: "Nintendo 3DS", aliases: &[] };
-    /// Atari 2600 — also seen as 2600.
-    pub const ATARI_2600: System = System { slug: "atari-2600", name: "Atari 2600", aliases: &["2600"] };
-    /// Atari 5200 — also seen as 5200.
-    pub const ATARI_5200: System = System { slug: "atari-5200", name: "Atari 5200", aliases: &["5200"] };
-    /// Atari 7800 — also seen as 7800.
-    pub const ATARI_7800: System = System { slug: "atari-7800", name: "Atari 7800", aliases: &["7800"] };
-    /// Atari Jaguar — also seen as jaguar.
-    pub const ATARI_JAGUAR: System =
-        System { slug: "atari-jaguar", name: "Atari Jaguar", aliases: &["jaguar"] };
-    /// Atari Jaguar CD.
-    pub const ATARI_JAGUAR_CD: System =
-        System { slug: "atari-jaguar-cd", name: "Atari Jaguar CD", aliases: &[] };
-    /// Atari Lynx — also seen as lynx.
-    pub const ATARI_LYNX: System = System { slug: "atari-lynx", name: "Atari Lynx", aliases: &["lynx"] };
-    /// Commodore 64 — also seen as commodore64.
-    pub const C64: System = System { slug: "c64", name: "Commodore 64", aliases: &["commodore64"] };
-    /// ColecoVision — also seen as coleco.
+    /// 3DO — also seen as threedo, panasonic.
+    pub const _3DO: System = System { slug: "3do", name: "3DO", aliases: &["threedo", "panasonic"] };
+    /// Nintendo 3DS — also seen as n3ds.
+    pub const _3DS: System = System { slug: "3ds", name: "Nintendo 3DS", aliases: &["n3ds"] };
+    /// Acorn Archimedes — also seen as archimedes, archie, arch.
+    pub const ACORN_ARCHIMEDES: System = System {
+        slug: "acorn-archimedes",
+        name: "Acorn Archimedes",
+        aliases: &["archimedes", "archie", "arch"],
+    };
+    /// Acorn Atom — also seen as atom, acornatom.
+    pub const ACORN_ATOM: System =
+        System { slug: "acorn-atom", name: "Acorn Atom", aliases: &["atom", "acornatom"] };
+    /// Acorn Electron — also seen as electron, acornelectron.
+    pub const ACORN_ELECTRON: System =
+        System { slug: "acorn-electron", name: "Acorn Electron", aliases: &["electron", "acornelectron"] };
+    /// Adventure Vision — also seen as advision, adventurevision, avision.
+    pub const ADVENTURE_VISION: System = System {
+        slug: "adventure-vision",
+        name: "Adventure Vision",
+        aliases: &["advision", "adventurevision", "avision"],
+    };
+    /// Adventure Game Studio.
+    pub const AGS: System = System { slug: "ags", name: "Adventure Game Studio", aliases: &[] };
+    /// Amiga — also seen as amiga500, amiga600, commodore_amiga, minimig, acd.
+    pub const AMIGA: System = System {
+        slug: "amiga",
+        name: "Amiga",
+        aliases: &["amiga500", "amiga600", "commodore_amiga", "minimig", "acd"],
+    };
+    /// Amiga AGA — also seen as amiga1200, amiga4000, aga.
+    pub const AMIGA_AGA: System =
+        System { slug: "amiga-aga", name: "Amiga AGA", aliases: &["amiga1200", "amiga4000", "aga"] };
+    /// Amiga CD32 — also seen as amigacd32, cd32, amigacd.
+    pub const AMIGA_CD32: System =
+        System { slug: "amiga-cd32", name: "Amiga CD32", aliases: &["amigacd32", "cd32", "amigacd"] };
+    /// Amstrad CPC — also seen as amstradcpc, cpc, amstrad.
+    pub const AMSTRAD_CPC: System =
+        System { slug: "amstrad-cpc", name: "Amstrad CPC", aliases: &["amstradcpc", "cpc", "amstrad"] };
+    /// GX4000 — also seen as gx4000.
+    pub const AMSTRAD_GX4000: System =
+        System { slug: "amstrad-gx4000", name: "GX4000", aliases: &["gx4000"] };
+    /// APF M-1000 — also seen as apfm1000.
+    pub const APF_M1000: System = System { slug: "apf-m1000", name: "APF M-1000", aliases: &["apfm1000"] };
+    /// Apogee BK-01.
+    pub const APOGEE_BK_01: System = System { slug: "apogee-bk-01", name: "Apogee BK-01", aliases: &[] };
+    /// Apple II — also seen as apple2, apple_ii.
+    pub const APPLE_II: System =
+        System { slug: "apple-ii", name: "Apple II", aliases: &["apple2", "apple_ii"] };
+    /// Apple IIGS — also seen as apple2gs.
+    pub const APPLE_IIGS: System = System { slug: "apple-iigs", name: "Apple IIGS", aliases: &["apple2gs"] };
+    /// Arcadia 2001 — also seen as arcadia.
+    pub const ARCADIA_2001: System =
+        System { slug: "arcadia-2001", name: "Arcadia 2001", aliases: &["arcadia"] };
+    /// Arduboy.
+    pub const ARDUBOY: System = System { slug: "arduboy", name: "Arduboy", aliases: &[] };
+    /// Bally Astrocade — also seen as astrocde.
+    pub const ASTROCADE: System =
+        System { slug: "astrocade", name: "Bally Astrocade", aliases: &["astrocde"] };
+    /// Atari 2600 — also seen as 2600, atari2600, atari_2600, a26.
+    pub const ATARI_2600: System = System {
+        slug: "atari-2600",
+        name: "Atari 2600",
+        aliases: &["2600", "atari2600", "atari_2600", "a26"],
+    };
+    /// Atari 5200 — also seen as 5200, atari5200, atari_5200, a52, fiftytwohundred.
+    pub const ATARI_5200: System = System {
+        slug: "atari-5200",
+        name: "Atari 5200",
+        aliases: &["5200", "atari5200", "atari_5200", "a52", "fiftytwohundred"],
+    };
+    /// Atari 7800 — also seen as 7800, atari7800, atari_7800, seventyeighthundred.
+    pub const ATARI_7800: System = System {
+        slug: "atari-7800",
+        name: "Atari 7800",
+        aliases: &["7800", "atari7800", "atari_7800", "seventyeighthundred"],
+    };
+    /// Atari 8-bit computers — also seen as atari800, atarixe, xegs, atari8bit, eighthundred.
+    pub const ATARI_800: System = System {
+        slug: "atari-800",
+        name: "Atari 8-bit computers",
+        aliases: &["atari800", "atarixe", "xegs", "atari8bit", "eighthundred"],
+    };
+    /// Atari Falcon — also seen as falcon.
+    pub const ATARI_FALCON: System =
+        System { slug: "atari-falcon", name: "Atari Falcon", aliases: &["falcon"] };
+    /// Atari Jaguar — also seen as jaguar, atarijaguar, atari_jaguar.
+    pub const ATARI_JAGUAR: System = System {
+        slug: "atari-jaguar",
+        name: "Atari Jaguar",
+        aliases: &["jaguar", "atarijaguar", "atari_jaguar"],
+    };
+    /// Atari Jaguar CD — also seen as atarijaguarcd, jaguarcd, ajcd.
+    pub const ATARI_JAGUAR_CD: System = System {
+        slug: "atari-jaguar-cd",
+        name: "Atari Jaguar CD",
+        aliases: &["atarijaguarcd", "jaguarcd", "ajcd"],
+    };
+    /// Atari Lynx — also seen as lynx, atarilynx, atari_lynx.
+    pub const ATARI_LYNX: System =
+        System { slug: "atari-lynx", name: "Atari Lynx", aliases: &["lynx", "atarilynx", "atari_lynx"] };
+    /// Atari ST — also seen as atarist, atari_st.
+    pub const ATARI_ST: System =
+        System { slug: "atari-st", name: "Atari ST", aliases: &["atarist", "atari_st"] };
+    /// Super Vision 8000 — also seen as sv8000, supervision8000, super_vision_8000.
+    pub const BANDAI_SUPER_VISION_8000: System = System {
+        slug: "bandai-super-vision-8000",
+        name: "Super Vision 8000",
+        aliases: &["sv8000", "supervision8000", "super_vision_8000"],
+    };
+    /// BBC Bridge Companion — also seen as bbcbridgecompanion.
+    pub const BBC_BRIDGE_COMPANION: System = System {
+        slug: "bbc-bridge-companion",
+        name: "BBC Bridge Companion",
+        aliases: &["bbcbridgecompanion"],
+    };
+    /// BBC Micro — also seen as bbcmicro.
+    pub const BBC_MICRO: System = System { slug: "bbc-micro", name: "BBC Micro", aliases: &["bbcmicro"] };
+    /// Commodore 128 — also seen as commodore_c128.
+    pub const C128: System = System { slug: "c128", name: "Commodore 128", aliases: &["commodore_c128"] };
+    /// Commodore 64 — also seen as commodore64, commodore_c64.
+    pub const C64: System =
+        System { slug: "c64", name: "Commodore 64", aliases: &["commodore64", "commodore_c64"] };
+    /// C64 Direct-to-TV — also seen as c64dtv, x64dtv.
+    pub const C64_DTV: System =
+        System { slug: "c64-dtv", name: "C64 Direct-to-TV", aliases: &["c64dtv", "x64dtv"] };
+    /// Camputers Lynx — also seen as camplynx, lynx48.
+    pub const CAMPUTERS_LYNX: System =
+        System { slug: "camputers-lynx", name: "Camputers Lynx", aliases: &["camplynx", "lynx48"] };
+    /// Loopy — also seen as loopy.
+    pub const CASIO_LOOPY: System = System { slug: "casio-loopy", name: "Loopy", aliases: &["loopy"] };
+    /// PV-1000 — also seen as pv1000, casio_pv-1000.
+    pub const CASIO_PV_1000: System =
+        System { slug: "casio-pv-1000", name: "PV-1000", aliases: &["pv1000", "casio_pv-1000"] };
+    /// PV-2000 — also seen as pv2000, casio_pv-2000.
+    pub const CASIO_PV_2000: System =
+        System { slug: "casio-pv-2000", name: "PV-2000", aliases: &["pv2000", "casio_pv-2000"] };
+    /// Cassette Vision — also seen as cassettevision, epochcv.
+    pub const CASSETTE_VISION: System =
+        System { slug: "cassette-vision", name: "Cassette Vision", aliases: &["cassettevision", "epochcv"] };
+    /// Philips CD-i — also seen as cdimono1, cdi.
+    pub const CD_I: System = System { slug: "cd-i", name: "Philips CD-i", aliases: &["cdimono1", "cdi"] };
+    /// CDTV — also seen as amigacdtv.
+    pub const CDTV: System = System { slug: "cdtv", name: "CDTV", aliases: &["amigacdtv"] };
+    /// Channel F — also seen as channelf, channel_f, fairchild, chf.
+    pub const CHANNEL_F: System = System {
+        slug: "channel-f",
+        name: "Channel F",
+        aliases: &["channelf", "channel_f", "fairchild", "chf"],
+    };
+    /// CHIP-8 — also seen as chip_8, chip8.
+    pub const CHIP_8: System = System { slug: "chip-8", name: "CHIP-8", aliases: &["chip_8", "chip8"] };
+    /// TRS-80 Color Computer — also seen as coco2.
+    pub const COCO: System = System { slug: "coco", name: "TRS-80 Color Computer", aliases: &["coco2"] };
+    /// TRS-80 Color Computer 3 — also seen as coco3.
+    pub const COCO_3: System =
+        System { slug: "coco-3", name: "TRS-80 Color Computer 3", aliases: &["coco3"] };
+    /// Coleco Adam — also seen as adam, colecoadam.
+    pub const COLECO_ADAM: System =
+        System { slug: "coleco-adam", name: "Coleco Adam", aliases: &["adam", "colecoadam"] };
+    /// ColecoVision — also seen as coleco, cv.
     pub const COLECOVISION: System =
-        System { slug: "colecovision", name: "ColecoVision", aliases: &["coleco"] };
+        System { slug: "colecovision", name: "ColecoVision", aliases: &["coleco", "cv"] };
+    /// Colour Genie — also seen as cgenie, eg2000.
+    pub const COLOUR_GENIE: System =
+        System { slug: "colour-genie", name: "Colour Genie", aliases: &["cgenie", "eg2000"] };
+    /// Commander X16 — also seen as commander_x16, commanderx16.
+    pub const COMMANDER_X16: System =
+        System { slug: "commander-x16", name: "Commander X16", aliases: &["commander_x16", "commanderx16"] };
+    /// Commodore PET — also seen as pet, commodore_pet, pet2001, xpet.
+    pub const COMMODORE_PET: System = System {
+        slug: "commodore-pet",
+        name: "Commodore PET",
+        aliases: &["pet", "commodore_pet", "pet2001", "xpet"],
+    };
+    /// Commodore Plus/4 — also seen as plus4, cplus4, commodore_plus4, c16, xplus4.
+    pub const COMMODORE_PLUS_4: System = System {
+        slug: "commodore-plus-4",
+        name: "Commodore Plus/4",
+        aliases: &["plus4", "cplus4", "commodore_plus4", "c16", "xplus4"],
+    };
+    /// CreatiVision — also seen as crvision.
+    pub const CREATIVISION: System =
+        System { slug: "creativision", name: "CreatiVision", aliases: &["crvision"] };
+    /// MS-DOS — also seen as pc, pcxt, ao486, pcjr, tandy1000.
+    pub const DOS: System =
+        System { slug: "dos", name: "MS-DOS", aliases: &["pc", "pcxt", "ao486", "pcjr", "tandy1000"] };
+    /// Dragon 32 — also seen as dragon32, dragon64, tanodragon.
+    pub const DRAGON_32: System =
+        System { slug: "dragon-32", name: "Dragon 32", aliases: &["dragon32", "dragon64", "tanodragon"] };
     /// Dreamcast — also seen as dc.
     pub const DREAMCAST: System = System { slug: "dreamcast", name: "Dreamcast", aliases: &["dc"] };
+    /// Nintendo DSi — also seen as nintendodsi.
+    pub const DSI: System = System { slug: "dsi", name: "Nintendo DSi", aliases: &["nintendodsi"] };
+    /// RPG Maker 2000 and 2003.
+    pub const EASYRPG: System = System { slug: "easyrpg", name: "RPG Maker 2000 and 2003", aliases: &[] };
+    /// Elektronika BK — also seen as bk, ebk, bk0011m.
+    pub const ELEKTRONIKA_BK: System =
+        System { slug: "elektronika-bk", name: "Elektronika BK", aliases: &["bk", "ebk", "bk0011m"] };
+    /// Enterprise 128 — also seen as enterprise, ep128.
+    pub const ENTERPRISE_128: System =
+        System { slug: "enterprise-128", name: "Enterprise 128", aliases: &["enterprise", "ep128"] };
     /// Famicom Disk System — also seen as famicomdisk.
     pub const FDS: System = System { slug: "fds", name: "Famicom Disk System", aliases: &["famicomdisk"] };
-    /// Game Boy — also seen as gameboy.
-    pub const GB: System = System { slug: "gb", name: "Game Boy", aliases: &["gameboy"] };
-    /// Game Boy Advance — also seen as gameboyadvance.
-    pub const GBA: System = System { slug: "gba", name: "Game Boy Advance", aliases: &["gameboyadvance"] };
+    /// Adobe Flash.
+    pub const FLASH: System = System { slug: "flash", name: "Adobe Flash", aliases: &[] };
+    /// FM-7 — also seen as fm7.
+    pub const FM_7: System = System { slug: "fm-7", name: "FM-7", aliases: &["fm7"] };
+    /// FM Towns — also seen as fmtowns, fm_towns, fmt, marty.
+    pub const FM_TOWNS: System =
+        System { slug: "fm-towns", name: "FM Towns", aliases: &["fmtowns", "fm_towns", "fmt", "marty"] };
+    /// Galaksija.
+    pub const GALAKSIJA: System = System { slug: "galaksija", name: "Galaksija", aliases: &[] };
+    /// Gamate.
+    pub const GAMATE: System = System { slug: "gamate", name: "Gamate", aliases: &[] };
+    /// Game & Watch — also seen as gameandwatch, gw, gamenwatch, gnw.
+    pub const GAME_AND_WATCH: System = System {
+        slug: "game-and-watch",
+        name: "Game & Watch",
+        aliases: &["gameandwatch", "gw", "gamenwatch", "gnw"],
+    };
+    /// Game.com — also seen as gamecom.
+    pub const GAME_COM: System = System { slug: "game-com", name: "Game.com", aliases: &["gamecom"] };
+    /// GameKing — also seen as gameking.
+    pub const GAME_KING: System = System { slug: "game-king", name: "GameKing", aliases: &["gameking"] };
+    /// Game Pocket Computer — also seen as gamepock.
+    pub const GAME_POCKET_COMPUTER: System =
+        System { slug: "game-pocket-computer", name: "Game Pocket Computer", aliases: &["gamepock"] };
+    /// Game Wave — also seen as gamewave.
+    pub const GAME_WAVE: System = System { slug: "game-wave", name: "Game Wave", aliases: &["gamewave"] };
+    /// GameTank.
+    pub const GAMETANK: System = System { slug: "gametank", name: "GameTank", aliases: &[] };
+    /// Game Boy — also seen as gameboy, sgb.
+    pub const GB: System = System { slug: "gb", name: "Game Boy", aliases: &["gameboy", "sgb"] };
+    /// Game Boy Advance — also seen as gameboyadvance, game_boy_advance.
+    pub const GBA: System =
+        System { slug: "gba", name: "Game Boy Advance", aliases: &["gameboyadvance", "game_boy_advance"] };
     /// Game Boy Color — also seen as gameboycolor.
     pub const GBC: System = System { slug: "gbc", name: "Game Boy Color", aliases: &["gameboycolor"] };
     /// GameCube — also seen as gamecube, ngc.
     pub const GC: System = System { slug: "gc", name: "GameCube", aliases: &["gamecube", "ngc"] };
-    /// Sega Genesis — also seen as megadrive, md.
-    pub const GENESIS: System =
-        System { slug: "genesis", name: "Sega Genesis", aliases: &["megadrive", "md"] };
+    /// Sega Genesis — also seen as megadrive, md, mega_drive, megadrivejp.
+    pub const GENESIS: System = System {
+        slug: "genesis",
+        name: "Sega Genesis",
+        aliases: &["megadrive", "md", "mega_drive", "megadrivejp"],
+    };
+    /// Gizmondo.
+    pub const GIZMONDO: System = System { slug: "gizmondo", name: "Gizmondo", aliases: &[] };
+    /// GP2X.
+    pub const GP2X: System = System { slug: "gp2x", name: "GP2X", aliases: &[] };
+    /// GP32.
+    pub const GP32: System = System { slug: "gp32", name: "GP32", aliases: &[] };
+    /// Game Master — also seen as gmaster.
+    pub const HARTUNG_GAME_MASTER: System =
+        System { slug: "hartung-game-master", name: "Game Master", aliases: &["gmaster"] };
+    /// Hitachi Basic Master.
+    pub const HITACHI_BASIC_MASTER: System =
+        System { slug: "hitachi-basic-master", name: "Hitachi Basic Master", aliases: &[] };
+    /// Homelab.
+    pub const HOMELAB: System = System { slug: "homelab", name: "Homelab", aliases: &[] };
+    /// HyperScan — also seen as hs.
+    pub const HYPERSCAN: System = System { slug: "hyperscan", name: "HyperScan", aliases: &["hs"] };
     /// Intellivision — also seen as intv.
     pub const INTELLIVISION: System =
         System { slug: "intellivision", name: "Intellivision", aliases: &["intv"] };
-    /// Arcade — also seen as arcade.
-    pub const MAME: System = System { slug: "mame", name: "Arcade", aliases: &["arcade"] };
-    /// Master System — also seen as sms.
-    pub const MASTERSYSTEM: System =
-        System { slug: "mastersystem", name: "Master System", aliases: &["sms"] };
-    /// MSX.
-    pub const MSX: System = System { slug: "msx", name: "MSX", aliases: &[] };
+    /// Interact Home Computer.
+    pub const INTERACT: System = System { slug: "interact", name: "Interact Home Computer", aliases: &[] };
+    /// VC 4000 — also seen as vc4000.
+    pub const INTERTON_VC_4000: System =
+        System { slug: "interton-vc-4000", name: "VC 4000", aliases: &["vc4000"] };
+    /// IQ 151.
+    pub const IQ151: System = System { slug: "iq151", name: "IQ 151", aliases: &[] };
+    /// iQue Player — also seen as ique, bbplayer.
+    pub const IQUE_PLAYER: System =
+        System { slug: "ique-player", name: "iQue Player", aliases: &["ique", "bbplayer"] };
+    /// Java ME — also seen as java.
+    pub const J2ME: System = System { slug: "j2me", name: "Java ME", aliases: &["java"] };
+    /// Jupiter Ace.
+    pub const JUPITER_ACE: System = System { slug: "jupiter-ace", name: "Jupiter Ace", aliases: &[] };
+    /// Laser 310 — also seen as laser310, laser.
+    pub const LASER_310: System =
+        System { slug: "laser-310", name: "Laser 310", aliases: &["laser310", "laser"] };
+    /// Leapster.
+    pub const LEAPSTER: System = System { slug: "leapster", name: "Leapster", aliases: &[] };
+    /// LowRes NX — also seen as lowresnx.
+    pub const LOWRES_NX: System = System { slug: "lowres-nx", name: "LowRes NX", aliases: &["lowresnx"] };
+    /// Lutro.
+    pub const LUTRO: System = System { slug: "lutro", name: "Lutro", aliases: &[] };
+    /// Arcade — also seen as arcade, fbneo, fba, cps1, cps2, cps3, naomi, naomi2, atomiswave, model2, model3, daphne.
+    pub const MAME: System = System {
+        slug: "mame",
+        name: "Arcade",
+        aliases: &[
+            "arcade",
+            "fbneo",
+            "fba",
+            "cps1",
+            "cps2",
+            "cps3",
+            "naomi",
+            "naomi2",
+            "atomiswave",
+            "model2",
+            "model3",
+            "daphne",
+        ],
+    };
+    /// Master System — also seen as sms, master_system, mark3, ms.
+    pub const MASTERSYSTEM: System = System {
+        slug: "mastersystem",
+        name: "Master System",
+        aliases: &["sms", "master_system", "mark3", "ms"],
+    };
+    /// Mattel Aquarius — also seen as aquarius.
+    pub const MATTEL_AQUARIUS: System =
+        System { slug: "mattel-aquarius", name: "Mattel Aquarius", aliases: &["aquarius"] };
+    /// TRS-80 MC-10 — also seen as mc10.
+    pub const MC_10: System = System { slug: "mc-10", name: "TRS-80 MC-10", aliases: &["mc10"] };
+    /// Mega Duck — also seen as megaduck, mega_duck.
+    pub const MEGA_DUCK: System =
+        System { slug: "mega-duck", name: "Mega Duck", aliases: &["megaduck", "mega_duck"] };
+    /// LaserActive Mega-LD.
+    pub const MEGA_LD: System = System { slug: "mega-ld", name: "LaserActive Mega-LD", aliases: &[] };
+    /// Memotech MTX.
+    pub const MEMOTECH_MTX: System = System { slug: "memotech-mtx", name: "Memotech MTX", aliases: &[] };
+    /// MicroW8 — also seen as uw8.
+    pub const MICROW8: System = System { slug: "microw8", name: "MicroW8", aliases: &["uw8"] };
+    /// MSX — also seen as msx1.
+    pub const MSX: System = System { slug: "msx", name: "MSX", aliases: &["msx1"] };
+    /// MSX turbo R — also seen as msxturbor.
+    pub const MSX_TURBO_R: System =
+        System { slug: "msx-turbo-r", name: "MSX turbo R", aliases: &["msxturbor"] };
     /// MSX2.
     pub const MSX2: System = System { slug: "msx2", name: "MSX2", aliases: &[] };
-    /// Nintendo 64.
-    pub const N64: System = System { slug: "n64", name: "Nintendo 64", aliases: &[] };
+    /// MSX2+ — also seen as msx2plus, msx2p.
+    pub const MSX2_PLUS: System =
+        System { slug: "msx2-plus", name: "MSX2+", aliases: &["msx2plus", "msx2p"] };
+    /// M.U.G.E.N.
+    pub const MUGEN: System = System { slug: "mugen", name: "M.U.G.E.N", aliases: &[] };
+    /// My Vision — also seen as myvision.
+    pub const MY_VISION: System = System { slug: "my-vision", name: "My Vision", aliases: &["myvision"] };
+    /// N-Gage — also seen as ngage.
+    pub const N_GAGE: System = System { slug: "n-gage", name: "N-Gage", aliases: &["ngage"] };
+    /// Nintendo 64 — also seen as nintendo_64.
+    pub const N64: System = System { slug: "n64", name: "Nintendo 64", aliases: &["nintendo_64"] };
+    /// Nintendo 64DD — also seen as 64dd.
+    pub const N64DD: System = System { slug: "n64dd", name: "Nintendo 64DD", aliases: &["64dd"] };
+    /// National JR-100.
+    pub const NATIONAL_JR_100: System =
+        System { slug: "national-jr-100", name: "National JR-100", aliases: &[] };
     /// Nintendo DS.
     pub const NDS: System = System { slug: "nds", name: "Nintendo DS", aliases: &[] };
-    /// Neo Geo.
-    pub const NEOGEO: System = System { slug: "neogeo", name: "Neo Geo", aliases: &[] };
-    /// Neo Geo CD — also seen as neocd, neogeocd.
-    pub const NEOGEO_CD: System =
-        System { slug: "neogeo-cd", name: "Neo Geo CD", aliases: &["neocd", "neogeocd"] };
-    /// NES.
-    pub const NES: System = System { slug: "nes", name: "NES", aliases: &[] };
+    /// Neo Geo — also seen as ng.
+    pub const NEOGEO: System = System { slug: "neogeo", name: "Neo Geo", aliases: &["ng"] };
+    /// Neo Geo CD — also seen as neocd, neogeocd, neo_geo_cd, ngcd, neogeocdjp.
+    pub const NEOGEO_CD: System = System {
+        slug: "neogeo-cd",
+        name: "Neo Geo CD",
+        aliases: &["neocd", "neogeocd", "neo_geo_cd", "ngcd", "neogeocdjp"],
+    };
+    /// NES — also seen as famicom, fc, dendy.
+    pub const NES: System = System { slug: "nes", name: "NES", aliases: &["famicom", "fc", "dendy"] };
+    /// New Nintendo 3DS — also seen as new3ds.
+    pub const NEW_3DS: System = System { slug: "new-3ds", name: "New Nintendo 3DS", aliases: &["new3ds"] };
     /// Neo Geo Pocket — also seen as neogeopocket.
     pub const NGP: System = System { slug: "ngp", name: "Neo Geo Pocket", aliases: &["neogeopocket"] };
     /// Neo Geo Pocket Color — also seen as neogeopocketcolor.
     pub const NGPC: System =
         System { slug: "ngpc", name: "Neo Geo Pocket Color", aliases: &["neogeopocketcolor"] };
-    /// Odyssey 2.
-    pub const ODYSSEY2: System = System { slug: "odyssey2", name: "Odyssey 2", aliases: &[] };
-    /// TurboGrafx-16 — also seen as pce.
-    pub const PCENGINE: System = System { slug: "pcengine", name: "TurboGrafx-16", aliases: &["pce"] };
-    /// TurboGrafx-CD — also seen as pcecd.
-    pub const PCENGINECD: System = System { slug: "pcenginecd", name: "TurboGrafx-CD", aliases: &["pcecd"] };
-    /// PC-FX.
-    pub const PCFX: System = System { slug: "pcfx", name: "PC-FX", aliases: &[] };
+    /// Nuon.
+    pub const NUON: System = System { slug: "nuon", name: "Nuon", aliases: &[] };
+    /// Odyssey² — also seen as videopac, odyssey.
+    pub const ODYSSEY2: System =
+        System { slug: "odyssey2", name: "Odyssey²", aliases: &["videopac", "odyssey"] };
+    /// Ondra.
+    pub const ONDRA: System = System { slug: "ondra", name: "Ondra", aliases: &[] };
+    /// OpenBOR.
+    pub const OPENBOR: System = System { slug: "openbor", name: "OpenBOR", aliases: &[] };
+    /// Orao.
+    pub const ORAO: System = System { slug: "orao", name: "Orao", aliases: &[] };
+    /// Oric — also seen as oricatmos.
+    pub const ORIC: System = System { slug: "oric", name: "Oric", aliases: &["oricatmos"] };
+    /// P/ECE — also seen as piece.
+    pub const P_ECE: System = System { slug: "p-ece", name: "P/ECE", aliases: &["piece"] };
+    /// PC-6001 — also seen as pc60, pc6001.
+    pub const PC_6001: System = System { slug: "pc-6001", name: "PC-6001", aliases: &["pc60", "pc6001"] };
+    /// PC-8001 — also seen as pc80, pc8001.
+    pub const PC_8001: System = System { slug: "pc-8001", name: "PC-8001", aliases: &["pc80", "pc8001"] };
+    /// PC-8801 — also seen as pc88, pc_88, pc8801, pceightyeight.
+    pub const PC_88: System =
+        System { slug: "pc-88", name: "PC-8801", aliases: &["pc88", "pc_88", "pc8801", "pceightyeight"] };
+    /// PC-9801 — also seen as pc98, np2pi, pc_98, pcninetyeight.
+    pub const PC_98: System =
+        System { slug: "pc-98", name: "PC-9801", aliases: &["pc98", "np2pi", "pc_98", "pcninetyeight"] };
+    /// LaserActive LD-ROM².
+    pub const PC_ENGINE_LD: System =
+        System { slug: "pc-engine-ld", name: "LaserActive LD-ROM²", aliases: &[] };
+    /// PC Engine / TurboGrafx-16 — also seen as pce, tg16, turbografx16, pc_engine, tgfx16.
+    pub const PCENGINE: System = System {
+        slug: "pcengine",
+        name: "PC Engine / TurboGrafx-16",
+        aliases: &["pce", "tg16", "turbografx16", "pc_engine", "tgfx16"],
+    };
+    /// PC Engine CD / TurboGrafx-CD — also seen as pcecd, tg-cd, tgcd, tgfx16-cd.
+    pub const PCENGINECD: System = System {
+        slug: "pcenginecd",
+        name: "PC Engine CD / TurboGrafx-CD",
+        aliases: &["pcecd", "tg-cd", "tgcd", "tgfx16-cd"],
+    };
+    /// PC-FX — also seen as pc_fx, pc-fx.
+    pub const PCFX: System = System { slug: "pcfx", name: "PC-FX", aliases: &["pc_fx", "pc-fx"] };
+    /// Philips P2000.
+    pub const PHILIPS_P2000: System = System { slug: "philips-p2000", name: "Philips P2000", aliases: &[] };
+    /// PICO-8 — also seen as pico8, p8.
+    pub const PICO_8: System = System { slug: "pico-8", name: "PICO-8", aliases: &["pico8", "p8"] };
+    /// Pippin.
+    pub const PIPPIN: System = System { slug: "pippin", name: "Pippin", aliases: &[] };
+    /// Playdate.
+    pub const PLAYDATE: System = System { slug: "playdate", name: "Playdate", aliases: &[] };
+    /// Playdia — also seen as qis.
+    pub const PLAYDIA: System = System { slug: "playdia", name: "Playdia", aliases: &["qis"] };
+    /// PMD 85.
+    pub const PMD_85: System = System { slug: "pmd-85", name: "PMD 85", aliases: &[] };
+    /// Pocket Challenge V2 — also seen as pocketchallengev2, pc2, pcv2.
+    pub const POCKET_CHALLENGE_V2: System = System {
+        slug: "pocket-challenge-v2",
+        name: "Pocket Challenge V2",
+        aliases: &["pocketchallengev2", "pc2", "pcv2"],
+    };
+    /// PocketStation.
+    pub const POCKETSTATION: System = System { slug: "pocketstation", name: "PocketStation", aliases: &[] };
+    /// Pokémon Mini — also seen as pokemini, pokemon_mini, pokemonmini, poke.
+    pub const POKEMON_MINI: System = System {
+        slug: "pokemon-mini",
+        name: "Pokémon Mini",
+        aliases: &["pokemini", "pokemon_mini", "pokemonmini", "poke"],
+    };
     /// PlayStation 2 — also seen as playstation2.
     pub const PS2: System = System { slug: "ps2", name: "PlayStation 2", aliases: &["playstation2"] };
     /// PlayStation 3 — also seen as playstation3.
     pub const PS3: System = System { slug: "ps3", name: "PlayStation 3", aliases: &["playstation3"] };
-    /// PlayStation Portable.
-    pub const PSP: System = System { slug: "psp", name: "PlayStation Portable", aliases: &[] };
-    /// PlayStation Vita — also seen as vita, psv.
-    pub const PSVITA: System = System { slug: "psvita", name: "PlayStation Vita", aliases: &["vita", "psv"] };
+    /// PlayStation 4 — also seen as playstation4.
+    pub const PS4: System = System { slug: "ps4", name: "PlayStation 4", aliases: &["playstation4"] };
+    /// PlayStation 5 — also seen as playstation5.
+    pub const PS5: System = System { slug: "ps5", name: "PlayStation 5", aliases: &["playstation5"] };
+    /// PlayStation Portable — also seen as playstation_portable.
+    pub const PSP: System =
+        System { slug: "psp", name: "PlayStation Portable", aliases: &["playstation_portable"] };
+    /// PlayStation Vita — also seen as vita, psv, playstation_vita.
+    pub const PSVITA: System =
+        System { slug: "psvita", name: "PlayStation Vita", aliases: &["vita", "psv", "playstation_vita"] };
     /// PlayStation — also seen as playstation, ps1.
     pub const PSX: System = System { slug: "psx", name: "PlayStation", aliases: &["playstation", "ps1"] };
-    /// Sega Saturn.
-    pub const SATURN: System = System { slug: "saturn", name: "Sega Saturn", aliases: &[] };
-    /// Sega 32X — also seen as 32x.
-    pub const SEGA_32X: System = System { slug: "sega-32x", name: "Sega 32X", aliases: &["32x"] };
-    /// Sega CD — also seen as segacd, scd.
-    pub const SEGA_CD: System = System { slug: "sega-cd", name: "Sega CD", aliases: &["segacd", "scd"] };
+    /// PuzzleScript.
+    pub const PUZZLESCRIPT: System = System { slug: "puzzlescript", name: "PuzzleScript", aliases: &[] };
+    /// Pyxel.
+    pub const PYXEL: System = System { slug: "pyxel", name: "Pyxel", aliases: &[] };
+    /// RCA Studio II — also seen as studio-ii.
+    pub const RCA_STUDIO_II: System =
+        System { slug: "rca-studio-ii", name: "RCA Studio II", aliases: &["studio-ii"] };
+    /// Gundam RX-78 — also seen as rx78.
+    pub const RX_78: System = System { slug: "rx-78", name: "Gundam RX-78", aliases: &["rx78"] };
+    /// SAM Coupé — also seen as samcoupe, sam_coupe.
+    pub const SAM_COUPE: System =
+        System { slug: "sam-coupe", name: "SAM Coupé", aliases: &["samcoupe", "sam_coupe"] };
+    /// Satellaview — also seen as bs-memory, bsx, bs-x.
+    pub const SATELLAVIEW: System =
+        System { slug: "satellaview", name: "Satellaview", aliases: &["bs-memory", "bsx", "bs-x"] };
+    /// Sega Saturn — also seen as sega_saturn, ss, saturnjp.
+    pub const SATURN: System =
+        System { slug: "saturn", name: "Sega Saturn", aliases: &["sega_saturn", "ss", "saturnjp"] };
+    /// Sega SC-3000 — also seen as sc3000.
+    pub const SC_3000: System = System { slug: "sc-3000", name: "Sega SC-3000", aliases: &["sc3000"] };
+    /// ScummVM.
+    pub const SCUMMVM: System = System { slug: "scummvm", name: "ScummVM", aliases: &[] };
+    /// Sega 32X — also seen as 32x, sega32x, s32x, thirtytwox, sega32xjp, sega32xna.
+    pub const SEGA_32X: System = System {
+        slug: "sega-32x",
+        name: "Sega 32X",
+        aliases: &["32x", "sega32x", "s32x", "thirtytwox", "sega32xjp", "sega32xna"],
+    };
+    /// Sega AI Computer.
+    pub const SEGA_AI: System = System { slug: "sega-ai", name: "Sega AI Computer", aliases: &[] };
+    /// Advanced Pico Beena — also seen as beena.
+    pub const SEGA_BEENA: System =
+        System { slug: "sega-beena", name: "Advanced Pico Beena", aliases: &["beena"] };
+    /// Sega CD — also seen as segacd, scd, megacd, mcd, megacdjp.
+    pub const SEGA_CD: System =
+        System { slug: "sega-cd", name: "Sega CD", aliases: &["segacd", "scd", "megacd", "mcd", "megacdjp"] };
     /// Game Gear — also seen as gamegear, gg.
     pub const SEGA_GG: System = System { slug: "sega-gg", name: "Game Gear", aliases: &["gamegear", "gg"] };
-    /// SG-1000 — also seen as sg.
-    pub const SG_1000: System = System { slug: "sg-1000", name: "SG-1000", aliases: &["sg"] };
-    /// Super Nintendo.
-    pub const SNES: System = System { slug: "snes", name: "Super Nintendo", aliases: &[] };
-    /// SuperGrafx — also seen as sgx.
-    pub const SUPERGRAFX: System = System { slug: "supergrafx", name: "SuperGrafx", aliases: &["sgx"] };
+    /// Sega Pico — also seen as pico.
+    pub const SEGA_PICO: System = System { slug: "sega-pico", name: "Sega Pico", aliases: &["pico"] };
+    /// SG-1000 — also seen as sg1000, segasgone.
+    pub const SG_1000: System =
+        System { slug: "sg-1000", name: "SG-1000", aliases: &["sg1000", "segasgone"] };
+    /// MZ-2000 — also seen as mz2000.
+    pub const SHARP_MZ_2000: System = System { slug: "sharp-mz-2000", name: "MZ-2000", aliases: &["mz2000"] };
+    /// MZ-2500 — also seen as mz2500, sharpmz2500.
+    pub const SHARP_MZ_2500: System =
+        System { slug: "sharp-mz-2500", name: "MZ-2500", aliases: &["mz2500", "sharpmz2500"] };
+    /// MZ-700 — also seen as mz700.
+    pub const SHARP_MZ_700: System = System { slug: "sharp-mz-700", name: "MZ-700", aliases: &["mz700"] };
+    /// MZ-800 — also seen as mz800.
+    pub const SHARP_MZ_800: System = System { slug: "sharp-mz-800", name: "MZ-800", aliases: &["mz800"] };
+    /// MZ-80K — also seen as mz80k.
+    pub const SHARP_MZ_80K: System = System { slug: "sharp-mz-80k", name: "MZ-80K", aliases: &["mz80k"] };
+    /// Sharp X1 — also seen as x1, sharp_x1, sharpx1, xone.
+    pub const SHARP_X1: System =
+        System { slug: "sharp-x1", name: "Sharp X1", aliases: &["x1", "sharp_x1", "sharpx1", "xone"] };
+    /// Sinclair QL.
+    pub const SINCLAIR_QL: System = System { slug: "sinclair-ql", name: "Sinclair QL", aliases: &[] };
+    /// Super Nintendo — also seen as sfc, super_nes, snesna.
+    pub const SNES: System =
+        System { slug: "snes", name: "Super Nintendo", aliases: &["sfc", "super_nes", "snesna"] };
+    /// VTech Socrates.
+    pub const SOCRATES: System = System { slug: "socrates", name: "VTech Socrates", aliases: &[] };
+    /// Solarus.
+    pub const SOLARUS: System = System { slug: "solarus", name: "Solarus", aliases: &[] };
+    /// Sony SMC-777.
+    pub const SONY_SMC_777: System = System { slug: "sony-smc-777", name: "Sony SMC-777", aliases: &[] };
+    /// Sord M5.
+    pub const SORD_M5: System = System { slug: "sord-m5", name: "Sord M5", aliases: &[] };
+    /// Specialist.
+    pub const SPECIALIST: System = System { slug: "specialist", name: "Specialist", aliases: &[] };
+    /// Spectravideo SV-318 — also seen as svi328.
+    pub const SPECTRAVIDEO: System =
+        System { slug: "spectravideo", name: "Spectravideo SV-318", aliases: &["svi328"] };
+    /// SuFami Turbo — also seen as sufami.
+    pub const SUFAMI_TURBO: System =
+        System { slug: "sufami-turbo", name: "SuFami Turbo", aliases: &["sufami"] };
+    /// Super A'Can — also seen as supracan, superacan.
+    pub const SUPER_ACAN: System =
+        System { slug: "super-acan", name: "Super A'Can", aliases: &["supracan", "superacan"] };
+    /// Super Cassette Vision — also seen as scv, super_cassette_vision.
+    pub const SUPER_CASSETTE_VISION: System = System {
+        slug: "super-cassette-vision",
+        name: "Super Cassette Vision",
+        aliases: &["scv", "super_cassette_vision"],
+    };
+    /// SuperGrafx — also seen as sgx, sgfx.
+    pub const SUPERGRAFX: System =
+        System { slug: "supergrafx", name: "SuperGrafx", aliases: &["sgx", "sgfx"] };
+    /// Nintendo Switch — also seen as nsw, ns.
+    pub const SWITCH: System = System { slug: "switch", name: "Nintendo Switch", aliases: &["nsw", "ns"] };
+    /// Nintendo Switch 2 — also seen as switch2.
+    pub const SWITCH_2: System =
+        System { slug: "switch-2", name: "Nintendo Switch 2", aliases: &["switch2"] };
+    /// Tandy VIS — also seen as vis.
+    pub const TANDY_VIS: System = System { slug: "tandy-vis", name: "Tandy VIS", aliases: &["vis"] };
+    /// Tatung Einstein.
+    pub const TATUNG_EINSTEIN: System =
+        System { slug: "tatung-einstein", name: "Tatung Einstein", aliases: &[] };
+    /// Thomson MO.
+    pub const THOMSON_MO: System = System { slug: "thomson-mo", name: "Thomson MO", aliases: &[] };
+    /// Thomson TO — also seen as to8.
+    pub const THOMSON_TO: System = System { slug: "thomson-to", name: "Thomson TO", aliases: &["to8"] };
+    /// TI-99/4A — also seen as ti99, ti994a, ti-99_4a.
+    pub const TI_99_4A: System =
+        System { slug: "ti-99-4a", name: "TI-99/4A", aliases: &["ti99", "ti994a", "ti-99_4a"] };
+    /// TIC-80 — also seen as tic80, tic.
+    pub const TIC_80: System = System { slug: "tic-80", name: "TIC-80", aliases: &["tic80", "tic"] };
+    /// Tomy Tutor — also seen as tutor, tomytutor.
+    pub const TOMY_TUTOR: System =
+        System { slug: "tomy-tutor", name: "Tomy Tutor", aliases: &["tutor", "tomytutor"] };
+    /// TRS-80 — also seen as trs80.
+    pub const TRS_80: System = System { slug: "trs-80", name: "TRS-80", aliases: &["trs80"] };
+    /// TS-Conf.
+    pub const TSCONF: System = System { slug: "tsconf", name: "TS-Conf", aliases: &[] };
+    /// TV Boy — also seen as ctvboy.
+    pub const TV_BOY: System = System { slug: "tv-boy", name: "TV Boy", aliases: &["ctvboy"] };
+    /// UKNC.
+    pub const UKNC: System = System { slug: "uknc", name: "UKNC", aliases: &[] };
+    /// Uxn — also seen as varvara.
+    pub const UXN: System = System { slug: "uxn", name: "Uxn", aliases: &["varvara"] };
+    /// Uzebox.
+    pub const UZEBOX: System = System { slug: "uzebox", name: "Uzebox", aliases: &[] };
+    /// V.Flash — also seen as vflash.
+    pub const V_FLASH: System = System { slug: "v-flash", name: "V.Flash", aliases: &["vflash"] };
+    /// V.Smile — also seen as vsmile.
+    pub const V_SMILE: System = System { slug: "v-smile", name: "V.Smile", aliases: &["vsmile"] };
+    /// Vector-06C.
+    pub const VECTOR_06C: System = System { slug: "vector-06c", name: "Vector-06C", aliases: &[] };
     /// Vectrex.
     pub const VECTREX: System = System { slug: "vectrex", name: "Vectrex", aliases: &[] };
-    /// Virtual Boy — also seen as vb.
-    pub const VIRTUALBOY: System = System { slug: "virtualboy", name: "Virtual Boy", aliases: &["vb"] };
+    /// VIC-20 — also seen as vic20, c20, commodore_vic20, xvic.
+    pub const VIC_20: System =
+        System { slug: "vic-20", name: "VIC-20", aliases: &["vic20", "c20", "commodore_vic20", "xvic"] };
+    /// VideoBrain.
+    pub const VIDEOBRAIN: System = System { slug: "videobrain", name: "VideoBrain", aliases: &[] };
+    /// Videopac+ — also seen as videopacplus.
+    pub const VIDEOPAC_PLUS: System =
+        System { slug: "videopac-plus", name: "Videopac+", aliases: &["videopacplus"] };
+    /// Videoton TVC — also seen as tvc.
+    pub const VIDEOTON_TVC: System = System { slug: "videoton-tvc", name: "Videoton TVC", aliases: &["tvc"] };
+    /// Vircon32.
+    pub const VIRCON32: System = System { slug: "vircon32", name: "Vircon32", aliases: &[] };
+    /// Virtual Boy — also seen as vb, virtual_boy.
+    pub const VIRTUALBOY: System =
+        System { slug: "virtualboy", name: "Virtual Boy", aliases: &["vb", "virtual_boy"] };
+    /// Visual Memory Unit — also seen as vmu, vemulator, vms.
+    pub const VISUAL_MEMORY: System =
+        System { slug: "visual-memory", name: "Visual Memory Unit", aliases: &["vmu", "vemulator", "vms"] };
+    /// WASM-4 — also seen as wasm4.
+    pub const WASM_4: System = System { slug: "wasm-4", name: "WASM-4", aliases: &["wasm4"] };
+    /// Supervision — also seen as supervision, sv.
+    pub const WATARA_SUPERVISION: System =
+        System { slug: "watara-supervision", name: "Supervision", aliases: &["supervision", "sv"] };
     /// Wii.
     pub const WII: System = System { slug: "wii", name: "Wii", aliases: &[] };
-    /// WonderSwan — also seen as ws.
-    pub const WONDERSWAN: System = System { slug: "wonderswan", name: "WonderSwan", aliases: &["ws"] };
-    /// WonderSwan Color — also seen as wsc.
-    pub const WONDERSWAN_COLOR: System =
-        System { slug: "wonderswan-color", name: "WonderSwan Color", aliases: &["wsc"] };
+    /// Wii U — also seen as wiiu.
+    pub const WII_U: System = System { slug: "wii-u", name: "Wii U", aliases: &["wiiu"] };
+    /// WonderSwan — also seen as ws, wswan.
+    pub const WONDERSWAN: System =
+        System { slug: "wonderswan", name: "WonderSwan", aliases: &["ws", "wswan"] };
+    /// WonderSwan Color — also seen as wsc, wonderswancolor, wswanc.
+    pub const WONDERSWAN_COLOR: System = System {
+        slug: "wonderswan-color",
+        name: "WonderSwan Color",
+        aliases: &["wsc", "wonderswancolor", "wswanc"],
+    };
+    /// X68000 — also seen as sharp_x68000, x68k.
+    pub const X68000: System = System { slug: "x68000", name: "X68000", aliases: &["sharp_x68000", "x68k"] };
+    /// Xbox.
+    pub const XBOX: System = System { slug: "xbox", name: "Xbox", aliases: &[] };
+    /// Xbox 360 — also seen as xbox360, xbox_360.
+    pub const XBOX_360: System =
+        System { slug: "xbox-360", name: "Xbox 360", aliases: &["xbox360", "xbox_360"] };
+    /// Xbox One — also seen as xboxone.
+    pub const XBOX_ONE: System = System { slug: "xbox-one", name: "Xbox One", aliases: &["xboxone"] };
+    /// Xbox Series X and S — also seen as xboxseries.
+    pub const XBOX_SERIES: System =
+        System { slug: "xbox-series", name: "Xbox Series X and S", aliases: &["xboxseries"] };
+    /// Z-machine — also seen as zmachine.
+    pub const Z_MACHINE: System = System { slug: "z-machine", name: "Z-machine", aliases: &["zmachine"] };
+    /// Zeebo.
+    pub const ZEEBO: System = System { slug: "zeebo", name: "Zeebo", aliases: &[] };
+    /// ZX Spectrum — also seen as zxspectrum, zx_spectrum, spectrum, zxs, zx-spectrum-128, spec.
+    pub const ZX_SPECTRUM: System = System {
+        slug: "zx-spectrum",
+        name: "ZX Spectrum",
+        aliases: &["zxspectrum", "zx_spectrum", "spectrum", "zxs", "zx-spectrum-128", "spec"],
+    };
+    /// ZX Spectrum Next — also seen as zxnext.
+    pub const ZX_SPECTRUM_NEXT: System =
+        System { slug: "zx-spectrum-next", name: "ZX Spectrum Next", aliases: &["zxnext"] };
+    /// ZX81 — also seen as zxeightyone.
+    pub const ZX81: System = System { slug: "zx81", name: "ZX81", aliases: &["zxeightyone"] };
 }
 
 /// Every system slug, sorted by slug so lookups can binary-search.
@@ -125,57 +665,233 @@ pub mod systems {
     clippy::used_underscore_items,
     reason = "a slug that starts with a digit takes a const that starts with an underscore"
 )]
-pub(crate) static SYSTEMS: [System; 50] = [
+pub(crate) static SYSTEMS: [System; 226] = [
     systems::_3DO,
     systems::_3DS,
+    systems::ACORN_ARCHIMEDES,
+    systems::ACORN_ATOM,
+    systems::ACORN_ELECTRON,
+    systems::ADVENTURE_VISION,
+    systems::AGS,
+    systems::AMIGA,
+    systems::AMIGA_AGA,
+    systems::AMIGA_CD32,
+    systems::AMSTRAD_CPC,
+    systems::AMSTRAD_GX4000,
+    systems::APF_M1000,
+    systems::APOGEE_BK_01,
+    systems::APPLE_II,
+    systems::APPLE_IIGS,
+    systems::ARCADIA_2001,
+    systems::ARDUBOY,
+    systems::ASTROCADE,
     systems::ATARI_2600,
     systems::ATARI_5200,
     systems::ATARI_7800,
+    systems::ATARI_800,
+    systems::ATARI_FALCON,
     systems::ATARI_JAGUAR,
     systems::ATARI_JAGUAR_CD,
     systems::ATARI_LYNX,
+    systems::ATARI_ST,
+    systems::BANDAI_SUPER_VISION_8000,
+    systems::BBC_BRIDGE_COMPANION,
+    systems::BBC_MICRO,
+    systems::C128,
     systems::C64,
+    systems::C64_DTV,
+    systems::CAMPUTERS_LYNX,
+    systems::CASIO_LOOPY,
+    systems::CASIO_PV_1000,
+    systems::CASIO_PV_2000,
+    systems::CASSETTE_VISION,
+    systems::CD_I,
+    systems::CDTV,
+    systems::CHANNEL_F,
+    systems::CHIP_8,
+    systems::COCO,
+    systems::COCO_3,
+    systems::COLECO_ADAM,
     systems::COLECOVISION,
+    systems::COLOUR_GENIE,
+    systems::COMMANDER_X16,
+    systems::COMMODORE_PET,
+    systems::COMMODORE_PLUS_4,
+    systems::CREATIVISION,
+    systems::DOS,
+    systems::DRAGON_32,
     systems::DREAMCAST,
+    systems::DSI,
+    systems::EASYRPG,
+    systems::ELEKTRONIKA_BK,
+    systems::ENTERPRISE_128,
     systems::FDS,
+    systems::FLASH,
+    systems::FM_7,
+    systems::FM_TOWNS,
+    systems::GALAKSIJA,
+    systems::GAMATE,
+    systems::GAME_AND_WATCH,
+    systems::GAME_COM,
+    systems::GAME_KING,
+    systems::GAME_POCKET_COMPUTER,
+    systems::GAME_WAVE,
+    systems::GAMETANK,
     systems::GB,
     systems::GBA,
     systems::GBC,
     systems::GC,
     systems::GENESIS,
+    systems::GIZMONDO,
+    systems::GP2X,
+    systems::GP32,
+    systems::HARTUNG_GAME_MASTER,
+    systems::HITACHI_BASIC_MASTER,
+    systems::HOMELAB,
+    systems::HYPERSCAN,
     systems::INTELLIVISION,
+    systems::INTERACT,
+    systems::INTERTON_VC_4000,
+    systems::IQ151,
+    systems::IQUE_PLAYER,
+    systems::J2ME,
+    systems::JUPITER_ACE,
+    systems::LASER_310,
+    systems::LEAPSTER,
+    systems::LOWRES_NX,
+    systems::LUTRO,
     systems::MAME,
     systems::MASTERSYSTEM,
+    systems::MATTEL_AQUARIUS,
+    systems::MC_10,
+    systems::MEGA_DUCK,
+    systems::MEGA_LD,
+    systems::MEMOTECH_MTX,
+    systems::MICROW8,
     systems::MSX,
+    systems::MSX_TURBO_R,
     systems::MSX2,
+    systems::MSX2_PLUS,
+    systems::MUGEN,
+    systems::MY_VISION,
+    systems::N_GAGE,
     systems::N64,
+    systems::N64DD,
+    systems::NATIONAL_JR_100,
     systems::NDS,
     systems::NEOGEO,
     systems::NEOGEO_CD,
     systems::NES,
+    systems::NEW_3DS,
     systems::NGP,
     systems::NGPC,
+    systems::NUON,
     systems::ODYSSEY2,
+    systems::ONDRA,
+    systems::OPENBOR,
+    systems::ORAO,
+    systems::ORIC,
+    systems::P_ECE,
+    systems::PC_6001,
+    systems::PC_8001,
+    systems::PC_88,
+    systems::PC_98,
+    systems::PC_ENGINE_LD,
     systems::PCENGINE,
     systems::PCENGINECD,
     systems::PCFX,
+    systems::PHILIPS_P2000,
+    systems::PICO_8,
+    systems::PIPPIN,
+    systems::PLAYDATE,
+    systems::PLAYDIA,
+    systems::PMD_85,
+    systems::POCKET_CHALLENGE_V2,
+    systems::POCKETSTATION,
+    systems::POKEMON_MINI,
     systems::PS2,
     systems::PS3,
+    systems::PS4,
+    systems::PS5,
     systems::PSP,
     systems::PSVITA,
     systems::PSX,
+    systems::PUZZLESCRIPT,
+    systems::PYXEL,
+    systems::RCA_STUDIO_II,
+    systems::RX_78,
+    systems::SAM_COUPE,
+    systems::SATELLAVIEW,
     systems::SATURN,
+    systems::SC_3000,
+    systems::SCUMMVM,
     systems::SEGA_32X,
+    systems::SEGA_AI,
+    systems::SEGA_BEENA,
     systems::SEGA_CD,
     systems::SEGA_GG,
+    systems::SEGA_PICO,
     systems::SG_1000,
+    systems::SHARP_MZ_2000,
+    systems::SHARP_MZ_2500,
+    systems::SHARP_MZ_700,
+    systems::SHARP_MZ_800,
+    systems::SHARP_MZ_80K,
+    systems::SHARP_X1,
+    systems::SINCLAIR_QL,
     systems::SNES,
+    systems::SOCRATES,
+    systems::SOLARUS,
+    systems::SONY_SMC_777,
+    systems::SORD_M5,
+    systems::SPECIALIST,
+    systems::SPECTRAVIDEO,
+    systems::SUFAMI_TURBO,
+    systems::SUPER_ACAN,
+    systems::SUPER_CASSETTE_VISION,
     systems::SUPERGRAFX,
+    systems::SWITCH,
+    systems::SWITCH_2,
+    systems::TANDY_VIS,
+    systems::TATUNG_EINSTEIN,
+    systems::THOMSON_MO,
+    systems::THOMSON_TO,
+    systems::TI_99_4A,
+    systems::TIC_80,
+    systems::TOMY_TUTOR,
+    systems::TRS_80,
+    systems::TSCONF,
+    systems::TV_BOY,
+    systems::UKNC,
+    systems::UXN,
+    systems::UZEBOX,
+    systems::V_FLASH,
+    systems::V_SMILE,
+    systems::VECTOR_06C,
     systems::VECTREX,
+    systems::VIC_20,
+    systems::VIDEOBRAIN,
+    systems::VIDEOPAC_PLUS,
+    systems::VIDEOTON_TVC,
+    systems::VIRCON32,
     systems::VIRTUALBOY,
+    systems::VISUAL_MEMORY,
+    systems::WASM_4,
+    systems::WATARA_SUPERVISION,
     systems::WII,
+    systems::WII_U,
     systems::WONDERSWAN,
     systems::WONDERSWAN_COLOR,
+    systems::X68000,
+    systems::XBOX,
+    systems::XBOX_360,
+    systems::XBOX_ONE,
+    systems::XBOX_SERIES,
+    systems::Z_MACHINE,
+    systems::ZEEBO,
+    systems::ZX_SPECTRUM,
+    systems::ZX_SPECTRUM_NEXT,
+    systems::ZX81,
 ];
 
 /// A named const per listed core, so a producer that knows which core it is can say so
@@ -260,6 +976,56 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
+    /// ares — atari-2600, atari-5200, colecovision, fds, gb, gba, gbc, genesis, mame, mastersystem, mega-ld, msx, msx2, my-vision, n64, n64dd, neogeo, nes, ngp, ngpc, pc-engine-ld, pcengine, pcenginecd, pocket-challenge-v2, psx, satellaview, saturn, sc-3000, sega-32x, sega-cd, sega-gg, sg-1000, snes, sufami-turbo, supergrafx, wonderswan, wonderswan-color, zx-spectrum.
+    pub const ARES: Core = Core {
+        slug: "ares",
+        name: "ares",
+        kind: CoreKind::Standalone,
+        systems: &[
+            "atari-2600",
+            "atari-5200",
+            "colecovision",
+            "fds",
+            "gb",
+            "gba",
+            "gbc",
+            "genesis",
+            "mame",
+            "mastersystem",
+            "mega-ld",
+            "msx",
+            "msx2",
+            "my-vision",
+            "n64",
+            "n64dd",
+            "neogeo",
+            "nes",
+            "ngp",
+            "ngpc",
+            "pc-engine-ld",
+            "pcengine",
+            "pcenginecd",
+            "pocket-challenge-v2",
+            "psx",
+            "satellaview",
+            "saturn",
+            "sc-3000",
+            "sega-32x",
+            "sega-cd",
+            "sega-gg",
+            "sg-1000",
+            "snes",
+            "sufami-turbo",
+            "supergrafx",
+            "wonderswan",
+            "wonderswan-color",
+            "zx-spectrum",
+        ],
+        aliases: &[],
+        clock: None,
+        huc3: None,
+        layouts: &[],
+    };
     /// ARMSX2 — ps2.
     pub const ARMSX2: Core = Core {
         slug: "armsx2",
@@ -282,23 +1048,23 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// Atari800 — atari-5200.
+    /// Atari800 — atari-5200, atari-800.
     pub const ATARI800: Core = Core {
         slug: "atari800",
         name: "Atari800",
         kind: CoreKind::Libretro,
-        systems: &["atari-5200"],
+        systems: &["atari-5200", "atari-800"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Atari800_MiSTer — atari-5200.
+    /// Atari800_MiSTer — atari-5200, atari-800.
     pub const ATARI800_MISTER: Core = Core {
         slug: "atari800-mister",
         name: "Atari800_MiSTer",
         kind: CoreKind::MiSTer,
-        systems: &["atari-5200"],
+        systems: &["atari-5200", "atari-800"],
         aliases: &["ATARI5200"],
         clock: None,
         huc3: None,
@@ -332,7 +1098,7 @@ pub mod cores {
         name: "Beetle GBA",
         kind: CoreKind::Libretro,
         systems: &["gba"],
-        aliases: &[],
+        aliases: &["Mednafen VBA-M"],
         clock: None,
         huc3: None,
         layouts: &[],
@@ -365,17 +1131,17 @@ pub mod cores {
         name: "Beetle PC-FX",
         kind: CoreKind::Libretro,
         systems: &["pcfx"],
-        aliases: &[],
+        aliases: &["Mednafen PC-FX"],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Beetle PCE — pcengine, pcenginecd.
+    /// Beetle PCE — pcengine, pcenginecd, supergrafx.
     pub const BEETLE_PCE: Core = Core {
         slug: "beetle-pce",
         name: "Beetle PCE",
         kind: CoreKind::Libretro,
-        systems: &["pcengine", "pcenginecd"],
+        systems: &["pcengine", "pcenginecd", "supergrafx"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -398,7 +1164,7 @@ pub mod cores {
         name: "Beetle PSX",
         kind: CoreKind::Libretro,
         systems: &["psx"],
-        aliases: &[],
+        aliases: &["Mednafen PSX"],
         clock: None,
         huc3: None,
         layouts: &[],
@@ -409,7 +1175,7 @@ pub mod cores {
         name: "Beetle PSX HW",
         kind: CoreKind::Libretro,
         systems: &["psx"],
-        aliases: &[],
+        aliases: &["Mednafen PSX HW"],
         clock: None,
         huc3: None,
         layouts: &[],
@@ -436,12 +1202,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// Beetle SuperGrafx — supergrafx, pcengine.
+    /// Beetle SuperGrafx — supergrafx, pcengine, pcenginecd.
     pub const BEETLE_SUPERGRAFX: Core = Core {
         slug: "beetle-supergrafx",
         name: "Beetle SuperGrafx",
         kind: CoreKind::Libretro,
-        systems: &["supergrafx", "pcengine"],
+        systems: &["supergrafx", "pcengine", "pcenginecd"],
         aliases: &["Mednafen SuperGrafx"],
         clock: None,
         huc3: None,
@@ -458,12 +1224,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// Beetle WonderSwan — wonderswan, wonderswan-color.
+    /// Beetle WonderSwan — wonderswan, wonderswan-color, pocket-challenge-v2.
     pub const BEETLE_WONDERSWAN: Core = Core {
         slug: "beetle-wonderswan",
         name: "Beetle WonderSwan",
         kind: CoreKind::Libretro,
-        systems: &["wonderswan", "wonderswan-color"],
+        systems: &["wonderswan", "wonderswan-color", "pocket-challenge-v2"],
         aliases: &["Mednafen WonderSwan"],
         clock: None,
         huc3: None,
@@ -480,12 +1246,22 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// BlastEm — genesis.
+    /// BlastEm — genesis, sega-cd, sega-32x, mastersystem, sega-gg, sg-1000, colecovision, sega-pico, sc-3000.
     pub const BLASTEM: Core = Core {
         slug: "blastem",
         name: "BlastEm",
         kind: CoreKind::Libretro,
-        systems: &["genesis"],
+        systems: &[
+            "genesis",
+            "sega-cd",
+            "sega-32x",
+            "mastersystem",
+            "sega-gg",
+            "sg-1000",
+            "colecovision",
+            "sega-pico",
+            "sc-3000",
+        ],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -502,12 +1278,21 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// blueMSX — msx, msx2, colecovision, sg-1000.
+    /// blueMSX — msx, msx2, colecovision, sg-1000, msx2-plus, msx-turbo-r, spectravideo, sc-3000.
     pub const BLUEMSX: Core = Core {
         slug: "bluemsx",
         name: "blueMSX",
         kind: CoreKind::Libretro,
-        systems: &["msx", "msx2", "colecovision", "sg-1000"],
+        systems: &[
+            "msx",
+            "msx2",
+            "colecovision",
+            "sg-1000",
+            "msx2-plus",
+            "msx-turbo-r",
+            "spectravideo",
+            "sc-3000",
+        ],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -546,56 +1331,56 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// bsnes — snes.
+    /// bsnes — snes, satellaview, sufami-turbo.
     pub const BSNES: Core = Core {
         slug: "bsnes",
         name: "bsnes",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// bsnes-hd beta — snes.
+    /// bsnes-hd beta — snes, satellaview, sufami-turbo.
     pub const BSNES_HD_BETA: Core = Core {
         slug: "bsnes-hd-beta",
         name: "bsnes-hd beta",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// bsnes-jg — snes.
+    /// bsnes-jg — snes, satellaview, sufami-turbo.
     pub const BSNES_JG: Core = Core {
         slug: "bsnes-jg",
         name: "bsnes-jg",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// bsnes-mercury — snes.
+    /// bsnes-mercury — snes, satellaview, sufami-turbo.
     pub const BSNES_MERCURY: Core = Core {
         slug: "bsnes-mercury",
         name: "bsnes-mercury",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// bsnes2014 — snes.
+    /// bsnes2014 — snes, satellaview, sufami-turbo.
     pub const BSNES2014: Core = Core {
         slug: "bsnes2014",
         name: "bsnes2014",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -645,12 +1430,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// ChimeraSNES — snes.
+    /// ChimeraSNES — snes, satellaview, sufami-turbo.
     pub const CHIMERASNES: Core = Core {
         slug: "chimerasnes",
         name: "ChimeraSNES",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -718,12 +1503,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// CrabEmu — mastersystem, sg-1000, colecovision.
+    /// CrabEmu — mastersystem, sega-gg, sg-1000, colecovision.
     pub const CRABEMU: Core = Core {
         slug: "crabemu",
         name: "CrabEmu",
         kind: CoreKind::Standalone,
-        systems: &["mastersystem", "sg-1000", "colecovision"],
+        systems: &["mastersystem", "sega-gg", "sg-1000", "colecovision"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -892,6 +1677,17 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
+    /// fake-08 — pico-8.
+    pub const FAKE_08: Core = Core {
+        slug: "fake-08",
+        name: "fake-08",
+        kind: CoreKind::Libretro,
+        systems: &["pico-8"],
+        aliases: &[],
+        clock: None,
+        huc3: None,
+        layouts: &[],
+    };
     /// FB Alpha — neogeo, mame.
     pub const FB_ALPHA: Core = Core {
         slug: "fb-alpha",
@@ -903,12 +1699,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// FCEUmm — nes.
+    /// FCEUmm — nes, fds.
     pub const FCEUMM: Core = Core {
         slug: "fceumm",
         name: "FCEUmm",
         kind: CoreKind::Libretro,
-        systems: &["nes"],
+        systems: &["nes", "fds"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -925,12 +1721,29 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// FinalBurn Neo — neogeo, mame.
+    /// FinalBurn Neo — neogeo, mame, colecovision, sega-gg, mastersystem, genesis, pcengine, supergrafx, sg-1000, msx, nes, fds, ngp, ngpc, channel-f, zx-spectrum.
     pub const FINALBURN_NEO: Core = Core {
         slug: "finalburn-neo",
         name: "FinalBurn Neo",
         kind: CoreKind::Libretro,
-        systems: &["neogeo", "mame"],
+        systems: &[
+            "neogeo",
+            "mame",
+            "colecovision",
+            "sega-gg",
+            "mastersystem",
+            "genesis",
+            "pcengine",
+            "supergrafx",
+            "sg-1000",
+            "msx",
+            "nes",
+            "fds",
+            "ngp",
+            "ngpc",
+            "channel-f",
+            "zx-spectrum",
+        ],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -991,12 +1804,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// fMSX — msx, msx2.
+    /// fMSX — msx, msx2, msx2-plus.
     pub const FMSX: Core = Core {
         slug: "fmsx",
         name: "fMSX",
         kind: CoreKind::Libretro,
-        systems: &["msx", "msx2"],
+        systems: &["msx", "msx2", "msx2-plus"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1038,12 +1851,12 @@ pub mod cores {
         huc3: Some(crate::Huc3Layout::Origin { timestamp_width: 8, big_endian: false }),
         layouts: &[],
     };
-    /// Gameboy_MiSTer — gb, gbc.
+    /// Gameboy_MiSTer — gb, gbc, mega-duck.
     pub const GAMEBOY_MISTER: Core = Core {
         slug: "gameboy-mister",
         name: "Gameboy_MiSTer",
         kind: CoreKind::MiSTer,
-        systems: &["gb", "gbc"],
+        systems: &["gb", "gbc", "mega-duck"],
         aliases: &["GAMEBOY", "GAMEBOY2P", "GBC"],
         clock: Some(crate::ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
         huc3: Some(crate::Huc3Layout::Packed { reserved: 512 }),
@@ -1074,23 +1887,23 @@ pub mod cores {
             SystemLayout { system: "gbc", layout: SaveLayout::Mbc7 { swapped: true, padding: None } },
         ],
     };
-    /// Gearcoleco — colecovision.
+    /// Gearcoleco — colecovision, coleco-adam.
     pub const GEARCOLECO: Core = Core {
         slug: "gearcoleco",
         name: "Gearcoleco",
         kind: CoreKind::Libretro,
-        systems: &["colecovision"],
+        systems: &["colecovision", "coleco-adam"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Geargrafx — pcengine, pcenginecd, supergrafx.
+    /// Geargrafx — pcengine, pcenginecd, supergrafx, pc-engine-ld.
     pub const GEARGRAFX: Core = Core {
         slug: "geargrafx",
         name: "Geargrafx",
         kind: CoreKind::Libretro,
-        systems: &["pcengine", "pcenginecd", "supergrafx"],
+        systems: &["pcengine", "pcenginecd", "supergrafx", "pc-engine-ld"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1118,12 +1931,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// Genesis Plus GX — genesis, mastersystem, sega-gg, sg-1000, sega-cd.
+    /// Genesis Plus GX — genesis, mastersystem, sega-gg, sg-1000, sega-cd, sega-pico.
     pub const GENESIS_PLUS_GX: Core = Core {
         slug: "genesis-plus-gx",
         name: "Genesis Plus GX",
         kind: CoreKind::Libretro,
-        systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd"],
+        systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd", "sega-pico"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1132,12 +1945,12 @@ pub mod cores {
             layout: SaveLayout::Expanded { fill: 0xFF, length: ExpandedLength::Trimmed, eeprom_length: None },
         }],
     };
-    /// Genesis Plus GX Wide — genesis, mastersystem, sega-gg, sg-1000, sega-cd.
+    /// Genesis Plus GX Wide — genesis, mastersystem, sega-gg, sg-1000, sega-cd, sega-pico.
     pub const GENESIS_PLUS_GX_WIDE: Core = Core {
         slug: "genesis-plus-gx-wide",
         name: "Genesis Plus GX Wide",
         kind: CoreKind::Libretro,
-        systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd"],
+        systems: &["genesis", "mastersystem", "sega-gg", "sg-1000", "sega-cd", "sega-pico"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1248,12 +2061,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// JollyCV — colecovision.
+    /// JollyCV — colecovision, creativision, my-vision.
     pub const JOLLYCV: Core = Core {
         slug: "jollycv",
         name: "JollyCV",
         kind: CoreKind::Libretro,
-        systems: &["colecovision"],
+        systems: &["colecovision", "creativision", "my-vision"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1435,7 +2248,7 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// Mednafen — atari-lynx, fds, gb, gba, gbc, genesis, mastersystem, nes, ngp, ngpc, pcengine, pcenginecd, pcfx, psx, saturn, sega-gg, snes, supergrafx, virtualboy, wonderswan, wonderswan-color.
+    /// Mednafen — atari-lynx, fds, gb, gba, gbc, genesis, mastersystem, nes, ngp, ngpc, pcengine, pcenginecd, pcfx, psx, saturn, sega-gg, snes, supergrafx, virtualboy, wonderswan, wonderswan-color, apple-ii.
     pub const MEDNAFEN: Core = Core {
         slug: "mednafen",
         name: "Mednafen",
@@ -1462,18 +2275,19 @@ pub mod cores {
             "virtualboy",
             "wonderswan",
             "wonderswan-color",
+            "apple-ii",
         ],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Mednafen bSNES — snes.
+    /// Mednafen bSNES — snes, sufami-turbo.
     pub const MEDNAFEN_BSNES: Core = Core {
         slug: "mednafen-bsnes",
         name: "Mednafen bSNES",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1501,45 +2315,45 @@ pub mod cores {
         huc3: None,
         layouts: &[SystemLayout { system: "genesis", layout: SaveLayout::Packed { length: Some(65_536) } }],
     };
-    /// melonDS — nds.
+    /// melonDS — nds, dsi.
     pub const MELONDS: Core = Core {
         slug: "melonds",
         name: "melonDS",
         kind: CoreKind::Libretro,
-        systems: &["nds"],
+        systems: &["nds", "dsi"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// melonDS DS — nds.
+    /// melonDS DS — nds, dsi.
     pub const MELONDS_DS: Core = Core {
         slug: "melonds-ds",
         name: "melonDS DS",
         kind: CoreKind::Libretro,
-        systems: &["nds"],
+        systems: &["nds", "dsi"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Mesen — nes.
+    /// Mesen — nes, fds.
     pub const MESEN: Core = Core {
         slug: "mesen",
         name: "Mesen",
         kind: CoreKind::Libretro,
-        systems: &["nes"],
+        systems: &["nes", "fds"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Mesen-S — snes.
+    /// Mesen-S — snes, satellaview.
     pub const MESEN_S: Core = Core {
         slug: "mesen-s",
         name: "Mesen-S",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1567,12 +2381,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// MSX_MiSTer — msx, msx2.
+    /// MSX_MiSTer — msx, msx2, msx2-plus.
     pub const MSX_MISTER: Core = Core {
         slug: "msx-mister",
         name: "MSX_MiSTer",
         kind: CoreKind::MiSTer,
-        systems: &["msx", "msx2"],
+        systems: &["msx", "msx2", "msx2-plus"],
         aliases: &["MSX"],
         clock: None,
         huc3: None,
@@ -1589,34 +2403,34 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// Mupen64Plus — n64.
+    /// Mupen64Plus — n64, n64dd.
     pub const MUPEN64PLUS: Core = Core {
         slug: "mupen64plus",
         name: "Mupen64Plus",
         kind: CoreKind::Standalone,
-        systems: &["n64"],
+        systems: &["n64", "n64dd"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Mupen64Plus-Next — n64.
+    /// Mupen64Plus-Next — n64, n64dd.
     pub const MUPEN64PLUS_NEXT: Core = Core {
         slug: "mupen64plus-next",
         name: "Mupen64Plus-Next",
         kind: CoreKind::Libretro,
-        systems: &["n64"],
+        systems: &["n64", "n64dd"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// N64_MiSTer — n64.
+    /// N64_MiSTer — n64, n64dd.
     pub const N64_MISTER: Core = Core {
         slug: "n64-mister",
         name: "N64_MiSTer",
         kind: CoreKind::MiSTer,
-        systems: &["n64"],
+        systems: &["n64", "n64dd"],
         aliases: &["N64"],
         clock: None,
         huc3: None,
@@ -1655,34 +2469,34 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// Nestopia — nes.
+    /// Nestopia — nes, fds.
     pub const NESTOPIA: Core = Core {
         slug: "nestopia",
         name: "Nestopia",
         kind: CoreKind::Libretro,
-        systems: &["nes"],
+        systems: &["nes", "fds"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// NooDS — nds.
+    /// NooDS — nds, gba.
     pub const NOODS: Core = Core {
         slug: "noods",
         name: "NooDS",
         kind: CoreKind::Libretro,
-        systems: &["nds"],
+        systems: &["nds", "gba"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// O2EM — odyssey2.
+    /// O2EM — odyssey2, videopac-plus.
     pub const O2EM: Core = Core {
         slug: "o2em",
         name: "O2EM",
         kind: CoreKind::Libretro,
-        systems: &["odyssey2"],
+        systems: &["odyssey2", "videopac-plus"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1732,12 +2546,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// ParaLLEl N64 — n64.
+    /// ParaLLEl N64 — n64, n64dd.
     pub const PARALLEL_N64: Core = Core {
         slug: "parallel-n64",
         name: "ParaLLEl N64",
         kind: CoreKind::Libretro,
-        systems: &["n64"],
+        systems: &["n64", "n64dd"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1787,12 +2601,21 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// PicoDrive — genesis, sega-32x, sega-cd, mastersystem.
+    /// PicoDrive — genesis, sega-32x, sega-cd, mastersystem, sega-gg, sg-1000, sega-pico, sc-3000.
     pub const PICODRIVE: Core = Core {
         slug: "picodrive",
         name: "PicoDrive",
         kind: CoreKind::Libretro,
-        systems: &["genesis", "sega-32x", "sega-cd", "mastersystem"],
+        systems: &[
+            "genesis",
+            "sega-32x",
+            "sega-cd",
+            "mastersystem",
+            "sega-gg",
+            "sg-1000",
+            "sega-pico",
+            "sc-3000",
+        ],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1822,6 +2645,17 @@ pub mod cores {
         name: "PPSSPP",
         kind: CoreKind::Libretro,
         systems: &["psp"],
+        aliases: &[],
+        clock: None,
+        huc3: None,
+        layouts: &[],
+    };
+    /// Project64 — n64, n64dd.
+    pub const PROJECT64: Core = Core {
+        slug: "project64",
+        name: "Project64",
+        kind: CoreKind::Standalone,
+        systems: &["n64", "n64dd"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1866,6 +2700,17 @@ pub mod cores {
         name: "RACE",
         kind: CoreKind::Libretro,
         systems: &["ngp", "ngpc"],
+        aliases: &[],
+        clock: None,
+        huc3: None,
+        layouts: &[],
+    };
+    /// retro-8 (alpha) — pico-8.
+    pub const RETRO_8_ALPHA: Core = Core {
+        slug: "retro-8-alpha",
+        name: "retro-8 (alpha)",
+        kind: CoreKind::Libretro,
+        systems: &["pico-8"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -1940,6 +2785,17 @@ pub mod cores {
         huc3: Some(crate::Huc3Layout::Packed { reserved: 512 }),
         layouts: &[],
     };
+    /// simple64 — n64.
+    pub const SIMPLE64: Core = Core {
+        slug: "simple64",
+        name: "simple64",
+        kind: CoreKind::Standalone,
+        systems: &["n64"],
+        aliases: &[],
+        clock: None,
+        huc3: None,
+        layouts: &[],
+    };
     /// SkyEmu — gb, gba, nds.
     pub const SKYEMU: Core = Core {
         slug: "skyemu",
@@ -1976,67 +2832,67 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// SNES_MiSTer — snes.
+    /// SNES_MiSTer — snes, satellaview, sufami-turbo.
     pub const SNES_MISTER: Core = Core {
         slug: "snes-mister",
         name: "SNES_MiSTer",
         kind: CoreKind::MiSTer,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &["SNES"],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Snes9x — snes.
+    /// Snes9x — snes, satellaview, sufami-turbo.
     pub const SNES9X: Core = Core {
         slug: "snes9x",
         name: "Snes9x",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Snes9x 2002 — snes.
+    /// Snes9x 2002 — snes, satellaview, sufami-turbo.
     pub const SNES9X_2002: Core = Core {
         slug: "snes9x-2002",
         name: "Snes9x 2002",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Snes9x 2005 — snes.
+    /// Snes9x 2005 — snes, satellaview, sufami-turbo.
     pub const SNES9X_2005: Core = Core {
         slug: "snes9x-2005",
         name: "Snes9x 2005",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Snes9x 2005 Plus — snes.
+    /// Snes9x 2005 Plus — snes, satellaview, sufami-turbo.
     pub const SNES9X_2005_PLUS: Core = Core {
         slug: "snes9x-2005-plus",
         name: "Snes9x 2005 Plus",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
         layouts: &[],
     };
-    /// Snes9x 2010 — snes.
+    /// Snes9x 2010 — snes, satellaview, sufami-turbo.
     pub const SNES9X_2010: Core = Core {
         slug: "snes9x-2010",
         name: "Snes9x 2010",
         kind: CoreKind::Libretro,
-        systems: &["snes"],
+        systems: &["snes", "satellaview", "sufami-turbo"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -2359,12 +3215,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// VICE x128 — c64.
+    /// VICE x128 — c64, c128.
     pub const VICE_X128: Core = Core {
         slug: "vice-x128",
         name: "VICE x128",
         kind: CoreKind::Libretro,
-        systems: &["c64"],
+        systems: &["c64", "c128"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -2381,12 +3237,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// VICE x64dtv — c64.
+    /// VICE x64dtv — c64, c64-dtv.
     pub const VICE_X64DTV: Core = Core {
         slug: "vice-x64dtv",
         name: "VICE x64dtv",
         kind: CoreKind::Libretro,
-        systems: &["c64"],
+        systems: &["c64", "c64-dtv"],
         aliases: &[],
         clock: None,
         huc3: None,
@@ -2436,12 +3292,12 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
-    /// WonderSwan_MiSTer — wonderswan, wonderswan-color.
+    /// WonderSwan_MiSTer — wonderswan, wonderswan-color, pocket-challenge-v2.
     pub const WONDERSWAN_MISTER: Core = Core {
         slug: "wonderswan-mister",
         name: "WonderSwan_MiSTer",
         kind: CoreKind::MiSTer,
-        systems: &["wonderswan", "wonderswan-color"],
+        systems: &["wonderswan", "wonderswan-color", "pocket-challenge-v2"],
         aliases: &["WonderSwan"],
         clock: Some(crate::ClockLayout::Packed { reserved: 512, timestamp_width: 4 }),
         huc3: None,
@@ -2487,7 +3343,7 @@ pub mod cores {
     clippy::used_underscore_items,
     reason = "a slug that starts with a digit takes a const that starts with an underscore"
 )]
-pub(crate) static CORES: [Core; 202] = [
+pub(crate) static CORES: [Core; 207] = [
     cores::_3DO_MISTER,
     cores::_4DO,
     cores::A5200,
@@ -2495,6 +3351,7 @@ pub(crate) static CORES: [Core; 202] = [
     cores::AGG23_PC_ENGINE,
     cores::AGG23_SNES,
     cores::AGG23_WONDERSWAN,
+    cores::ARES,
     cores::ARMSX2,
     cores::ATARI7800_MISTER,
     cores::ATARI800,
@@ -2551,6 +3408,7 @@ pub(crate) static CORES: [Core; 202] = [
     cores::EMUX_NES,
     cores::EMUX_SMS,
     cores::ERICLEWIS_GENESIS,
+    cores::FAKE_08,
     cores::FB_ALPHA,
     cores::FCEUMM,
     cores::FCEUX,
@@ -2632,16 +3490,19 @@ pub(crate) static CORES: [Core; 202] = [
     cores::PICODRIVE,
     cores::PLAY,
     cores::PPSSPP,
+    cores::PROJECT64,
     cores::PROSYSTEM,
     cores::PSX_MISTER,
     cores::QUICKNES,
     cores::RACE,
+    cores::RETRO_8_ALPHA,
     cores::RUSTATION,
     cores::RUSTYNES,
     cores::S32X_MISTER,
     cores::SAMEBOY,
     cores::SATURN_MISTER,
     cores::SGB_MISTER,
+    cores::SIMPLE64,
     cores::SKYEMU,
     cores::SMS_MISTER,
     cores::SMS_PLUS_GX,
@@ -2702,6 +3563,9 @@ pub mod apps {
         name: "Analogue Pocket",
         cores: AppCores { kind: Some(CoreKind::OpenFpga), builds: &[] },
     };
+    /// ares.
+    pub const ARES: App =
+        App { slug: "ares", name: "ares", cores: AppCores { kind: None, builds: &["ares"] } };
     /// Azahar.
     pub const AZAHAR: App =
         App { slug: "azahar", name: "Azahar", cores: AppCores { kind: None, builds: &["azahar"] } };
@@ -2755,6 +3619,9 @@ pub mod apps {
     /// mGBA.
     pub const MGBA: App =
         App { slug: "mgba", name: "mGBA", cores: AppCores { kind: None, builds: &["mgba"] } };
+    /// MinUI.
+    pub const MINUI: App =
+        App { slug: "minui", name: "MinUI", cores: AppCores { kind: Some(CoreKind::Libretro), builds: &[] } };
     /// MiSTer.
     pub const MISTER: App =
         App { slug: "mister", name: "MiSTer", cores: AppCores { kind: Some(CoreKind::MiSTer), builds: &[] } };
@@ -2771,8 +3638,10 @@ pub mod apps {
         cores: AppCores {
             kind: None,
             builds: &[
+                "4do",
                 "atari800",
                 "bliss",
+                "bluemsx",
                 "bsnes",
                 "crabemu",
                 "desmume",
@@ -2780,6 +3649,7 @@ pub mod apps {
                 "fceux",
                 "gambatte",
                 "genesis-plus-gx",
+                "jollycv",
                 "mednafen",
                 "mgba",
                 "mupen64plus",
@@ -2791,6 +3661,7 @@ pub mod apps {
                 "snes9x",
                 "stella",
                 "vecx",
+                "virtual-jaguar",
             ],
         },
     };
@@ -2800,6 +3671,9 @@ pub mod apps {
     /// PPSSPP.
     pub const PPSSPP: App =
         App { slug: "ppsspp", name: "PPSSPP", cores: AppCores { kind: None, builds: &["ppsspp"] } };
+    /// Project64.
+    pub const PROJECT64: App =
+        App { slug: "project64", name: "Project64", cores: AppCores { kind: None, builds: &["project64"] } };
     /// Provenance.
     pub const PROVENANCE: App = App {
         slug: "provenance",
@@ -2809,16 +3683,18 @@ pub mod apps {
             builds: &[
                 "4do",
                 "atari800",
+                "azahar",
                 "bliss",
                 "crabemu",
                 "dolphin-emu",
                 "emuthreeds",
                 "fceux",
+                "fmsx",
                 "gambatte",
                 "genesis-plus-gx",
                 "mednafen",
+                "mgba",
                 "mupen64plus",
-                "o2em",
                 "picodrive",
                 "ppsspp",
                 "prosystem",
@@ -2826,7 +3702,6 @@ pub mod apps {
                 "stella",
                 "tgb-dual",
                 "vba-m",
-                "virtual-jaguar",
             ],
         },
     };
@@ -2836,9 +3711,18 @@ pub mod apps {
         name: "RetroArch",
         cores: AppCores { kind: Some(CoreKind::Libretro), builds: &[] },
     };
+    /// Rosalie's Mupen GUI.
+    pub const RMG: App = App {
+        slug: "rmg",
+        name: "Rosalie's Mupen GUI",
+        cores: AppCores { kind: None, builds: &["mupen64plus"] },
+    };
     /// SameBoy.
     pub const SAMEBOY: App =
         App { slug: "sameboy", name: "SameBoy", cores: AppCores { kind: None, builds: &["sameboy"] } };
+    /// simple64.
+    pub const SIMPLE64: App =
+        App { slug: "simple64", name: "simple64", cores: AppCores { kind: None, builds: &["simple64"] } };
     /// Snes9x.
     pub const SNES9X: App =
         App { slug: "snes9x", name: "Snes9x", cores: AppCores { kind: None, builds: &["snes9x"] } };
@@ -2854,8 +3738,9 @@ pub mod apps {
 }
 
 /// Every known app, sorted by slug.
-pub(crate) static APPS: [App; 24] = [
+pub(crate) static APPS: [App; 29] = [
     apps::ANALOGUE_POCKET,
+    apps::ARES,
     apps::AZAHAR,
     apps::BGB,
     apps::CRABEMU,
@@ -2868,14 +3753,18 @@ pub(crate) static APPS: [App; 24] = [
     apps::MEDNAFEN,
     apps::MELONDS,
     apps::MGBA,
+    apps::MINUI,
     apps::MISTER,
     apps::MUPEN64PLUS,
     apps::OPENEMU,
     apps::PCSX2,
     apps::PPSSPP,
+    apps::PROJECT64,
     apps::PROVENANCE,
     apps::RETROARCH,
+    apps::RMG,
     apps::SAMEBOY,
+    apps::SIMPLE64,
     apps::SNES9X,
     apps::VISUALBOYADVANCE_M,
     apps::VITA3K,
@@ -2932,8 +3821,6 @@ pub mod platforms {
     pub const LINUX: Platform = Platform { slug: "linux", name: "Linux" };
     /// macOS.
     pub const MACOS: Platform = Platform { slug: "macos", name: "macOS" };
-    /// MinUI.
-    pub const MINUI: Platform = Platform { slug: "minui", name: "MinUI" };
     /// muOS.
     pub const MUOS: Platform = Platform { slug: "muos", name: "muOS" };
     /// Onion.
@@ -2945,7 +3832,7 @@ pub mod platforms {
 }
 
 /// Every known platform, sorted by slug.
-pub(crate) static PLATFORMS: [Platform; 13] = [
+pub(crate) static PLATFORMS: [Platform; 12] = [
     platforms::ANDROID,
     platforms::ARKOS,
     platforms::BATOCERA,
@@ -2954,7 +3841,6 @@ pub(crate) static PLATFORMS: [Platform; 13] = [
     platforms::LAKKA,
     platforms::LINUX,
     platforms::MACOS,
-    platforms::MINUI,
     platforms::MUOS,
     platforms::ONION,
     platforms::ROCKNIX,
@@ -2962,34 +3848,24 @@ pub(crate) static PLATFORMS: [Platform; 13] = [
 ];
 
 /// Registered save roles that are compared whole, sorted by name.
-pub(crate) static ROLES: [Role; 8] = [
+pub(crate) static ROLES: [Role; 7] = [
+    Role {
+        name: "64dd",
+        description: "The disk in a 64DD drive. Its save is an n64dd one.",
+        common: false,
+        systems: &["n64"],
+    },
     Role {
         name: "cartridge",
         description: "The game cartridge's own save memory, whether battery-backed SRAM, EEPROM or flash.",
         common: true,
-        systems: &["fds"],
-    },
-    Role {
-        name: "extdata",
-        description: "Extra data a title stores outside its own save, as a directory.",
-        common: false,
-        systems: &["3ds"],
+        systems: &[],
     },
     Role {
         name: "internal",
-        description: "Save storage built into the console itself, as distinct from anything removable.",
+        description: "Save storage built into the console itself, as distinct from anything removable: a Wii's NAND included.",
         common: true,
-        systems: &[
-            "sega-cd",
-            "saturn",
-            "pcengine",
-            "pcenginecd",
-            "neogeo",
-            "neogeo-cd",
-            "psp",
-            "ps3",
-            "psvita",
-        ],
+        systems: &["sega-cd", "saturn", "pcenginecd", "neogeo", "neogeo-cd", "ps3", "psp", "psvita"],
     },
     Role {
         name: "neogeo-card",
@@ -3005,21 +3881,15 @@ pub(crate) static ROLES: [Role; 8] = [
     },
     Role {
         name: "ram-cart",
-        description: "The Backup RAM Cart, which extends internal storage rather than replacing it. A console can carry saves in both at once.",
-        common: false,
+        description: "An add-on that extends the console's own save storage rather than replacing it. Saves can be in both.",
+        common: true,
         systems: &["sega-cd", "saturn", "pcengine", "pcenginecd"],
     },
     Role { name: "sd", description: "A removable SD card.", common: true, systems: &["wii", "3ds"] },
-    Role {
-        name: "sysnand",
-        description: "Internal flash holding system-managed save data (Wii, 3DS), as distinct from an SD card.",
-        common: true,
-        systems: &["wii", "3ds"],
-    },
 ];
 
 /// Numbered-socket prefixes, sorted by prefix.
-pub(crate) static ROLE_PREFIXES: [RolePrefix; 3] = [
+pub(crate) static ROLE_PREFIXES: [RolePrefix; 4] = [
     RolePrefix {
         prefix: "controller-pak-",
         description: "N64 Controller Pak slots, one per controller port.",
@@ -3034,6 +3904,11 @@ pub(crate) static ROLE_PREFIXES: [RolePrefix; 3] = [
         prefix: "memcard-",
         description: "Memory card slots, in the console's own order.",
         systems: &["gc", "dreamcast", "psx", "ps2"],
+    },
+    RolePrefix {
+        prefix: "transfer-pak-",
+        description: "N64 Transfer Pak slots, one per controller port.",
+        systems: &["n64"],
     },
 ];
 
@@ -3055,7 +3930,7 @@ pub(crate) static CARD_FORMATS: [CardFormat; 7] = [
         name: "n64-cpak",
         dirent_len: 32,
         block_size: 256,
-        notes: "The pak's own word for a block is a page.",
+        notes: "The pak's own word for a block is a page. A pak of several banks is one filesystem whose notes can span banks, so its capacity is 32768 times its bank count. Its ID block records that count, and a writer sets it from capacity.",
     },
     CardFormat { name: "gc-mc", dirent_len: 64, block_size: 8192, notes: "" },
     CardFormat { name: "vmu", dirent_len: 32, block_size: 512, notes: "" },
@@ -3069,7 +3944,7 @@ pub(crate) static CARD_FORMATS: [CardFormat; 7] = [
         name: "saturn-bup",
         dirent_len: 30,
         block_size: 64,
-        notes: "The entry sits at the head of the save's own first block rather than in a directory region, and the block list that follows it is the writer's. The 64 is the console's internal memory; a backup cartridge is a separate device carrying its own.",
+        notes: "The entry sits at the head of the save's own first block rather than in a directory region, and the block list that follows it is the writer's. The 64 is the console's internal memory. A backup cartridge's block is larger, and this table does not give it yet.",
     },
 ];
 
@@ -3093,15 +3968,21 @@ pub(crate) static DEVICE_KINDS: [DeviceKind; 5] = [
 
 /// The spec-owned `binding` vocabulary.
 pub(crate) static BINDINGS: [Binding; 4] = [
-    Binding { name: "device", bound_to: "The console that wrote it, identified by source.fingerprint." },
-    Binding { name: "account", bound_to: "The user account that wrote it, whatever console it runs on." },
+    Binding { name: "device", bound_to: "The console that wrote it.", keys: &[0] },
+    Binding {
+        name: "account",
+        bound_to: "The user account that wrote it, whatever console it runs on.",
+        keys: &[1],
+    },
     Binding {
         name: "device-account",
         bound_to: "Both, which is the strictest and the most common on modern consoles.",
+        keys: &[0, 1],
     },
     Binding {
         name: "medium",
         bound_to: "The physical thing carrying the bytes, whatever console or account wrote them.",
+        keys: &[2],
     },
 ];
 

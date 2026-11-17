@@ -23,10 +23,18 @@ fn corpus_dir() -> PathBuf {
 
 struct Case {
     name: String,
+    expect: Expect,
     expect_valid: bool,
     file: PathBuf,
     sha256: String,
     note: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    Valid,
+    RoundTrip,
+    Invalid,
 }
 
 fn cases() -> Vec<Case> {
@@ -46,6 +54,12 @@ fn cases() -> Vec<Case> {
         .iter()
         .map(|case| Case {
             name: case["name"].as_str().expect("name").to_owned(),
+            expect: match case["expect"].as_str() {
+                Some("valid") => Expect::Valid,
+                Some("round-trip") => Expect::RoundTrip,
+                Some("invalid") => Expect::Invalid,
+                other => panic!("a case expecting {other:?}, which this harness does not know"),
+            },
             expect_valid: case["expect"].as_str() == Some("valid"),
             file: corpus_dir().join(case["file"].as_str().expect("file")),
             sha256: case["sha256"].as_str().expect("sha256").to_owned(),
@@ -54,21 +68,23 @@ fn cases() -> Vec<Case> {
         .collect()
 }
 
-/// The corpus is run at [`Strictness::Schema`].
+/// The corpus, each case read as its category says.
 ///
-/// Two invalid cases — `header-unknown-integer-key` and `part-unknown-integer-key` — are invalid
-/// against the version 0.8 schema and *accepted* by a shipped decoder, which ignores and
-/// round-trips an integer key it does not know. Running the corpus in decoder mode would fail
-/// those two for being right. A shape a later version assigned is the same asymmetry; see
-/// `a_decoder_round_trips_a_shape_a_later_version_defined` for why the corpus cannot show it.
+/// A `valid` case is accepted at [`Strictness::Schema`] and an `invalid` one refused there. A
+/// `round-trip` case is what a later version wrote: the schema refuses it, and a shipped decoder
+/// accepts it and gives back the bytes it came from.
 #[test]
 fn corpus() {
     let mut failures = Vec::new();
     let cases = cases();
 
     // A manifest this harness failed to read would otherwise pass by testing nothing.
-    let (valid, invalid): (Vec<_>, Vec<_>) = cases.iter().partition(|c| c.expect_valid);
-    assert_eq!((valid.len(), invalid.len()), (40, 104), "the corpus is not the size it should be");
+    let count = |expect| cases.iter().filter(|c| c.expect == expect).count();
+    assert_eq!(
+        [Expect::Valid, Expect::RoundTrip, Expect::Invalid].map(count),
+        [54, 8, 155],
+        "the corpus is not the size it should be"
+    );
 
     for case in cases {
         let bytes = fs::read(&case.file).unwrap_or_else(|e| panic!("read {}: {e}", case.name));
@@ -80,14 +96,34 @@ fn corpus() {
         assert_eq!(digest, case.sha256, "{} is corrupt in the vendored copy", case.name);
 
         let result = Bundle::from_slice_with(&bytes, Strictness::Schema);
-        match (case.expect_valid, &result) {
-            (true, Err(e)) => {
+        match (case.expect, &result) {
+            (Expect::Valid, Err(e)) => {
                 failures.push(format!("{} should be valid, rejected: {e}\n    {}", case.name, case.note));
             }
-            (false, Ok(_)) => {
+            (Expect::Invalid, Ok(_)) => {
                 failures.push(format!("{} should be invalid, accepted\n    {}", case.name, case.note));
             }
+            (Expect::RoundTrip, Ok(_)) => {
+                failures.push(format!("{} should fail the schema, accepted\n    {}", case.name, case.note));
+            }
             _ => {}
+        }
+        if case.expect == Expect::RoundTrip {
+            match Bundle::from_slice(&bytes).map(|bundle| bundle.to_vec()) {
+                Ok(Ok(again)) if again == bytes => {}
+                Ok(Ok(_)) => {
+                    failures.push(format!("{} changed on re-encoding\n    {}", case.name, case.note));
+                }
+                Ok(Err(e)) => {
+                    failures.push(format!("{} did not re-encode: {e}\n    {}", case.name, case.note));
+                }
+                Err(e) => {
+                    failures.push(format!(
+                        "{} should be kept by a decoder, rejected: {e}\n    {}",
+                        case.name, case.note
+                    ));
+                }
+            }
         }
     }
 
@@ -192,15 +228,18 @@ fn a_decoder_round_trips_a_shape_a_later_version_defined() {
     assert_eq!(read.to_vec().expect("re-encode"), bytes, "an unknown shape must round-trip");
 }
 
-/// A shipped decoder is looser than the schema over exactly one thing.
+/// A shipped decoder keeps an integer key a later version wrote, where the schema refuses it.
+///
+/// The corpus's `round-trip` cases say so of the bundle; these say which key it kept, and that it
+/// was kept as a key nobody here knows rather than read as one of this version's.
 #[test]
-fn a_decoder_keeps_integer_keys_a_later_minor_version_wrote() {
+fn a_decoder_keeps_integer_keys_a_later_version_wrote() {
     for name in ["header-unknown-integer-key", "part-unknown-integer-key"] {
-        let bytes = fs::read(corpus_dir().join(format!("invalid/{name}.cbor"))).expect("read case");
+        let bytes = fs::read(corpus_dir().join(format!("round-trip/{name}.cbor"))).expect("read case");
 
         assert!(
             Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
-            "{name} must fail against the version 0.7 schema"
+            "{name} must fail against the version 0.10 schema"
         );
 
         let bundle = Bundle::from_slice(&bytes)
@@ -463,10 +502,10 @@ fn state_with(header: impl FnOnce(one_saves::Header) -> one_saves::Header) -> Bu
     )
 }
 
-/// An origin a later minor version assigned is kept and written back as it came.
+/// An origin a later version assigned is kept and written back as it came.
 ///
-/// The schema leaves `origin` a slug, so unlike a later shape this is valid 0.7 and the corpus
-/// could hold it; it holds only the two 0.7 defines, so the case is built here.
+/// Since 0.10 the schema pins `origin` to the two this version defines, so it refuses a third, and
+/// a shipped decoder keeps it, as the corpus's `origin-unknown` says of the bundle.
 #[test]
 fn an_origin_a_later_version_assigned_round_trips() {
     use one_saves::{Origin, Slug};
@@ -474,8 +513,11 @@ fn an_origin_a_later_version_assigned_round_trips() {
     let rewind = Slug::parse("rewind").unwrap();
     let bytes =
         state_with(|header| header.origin(Origin::from_slug(rewind.clone()))).to_vec().expect("encodes");
-    let read =
-        Bundle::from_slice_with(&bytes, Strictness::Schema).expect("an origin is any slug to the schema");
+    assert!(
+        Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
+        "the schema lists `auto` and `undo` and nothing else"
+    );
+    let read = Bundle::from_slice(&bytes).expect("a decoder keeps a later version's origin");
     assert_eq!(
         read.header.origin,
         Some(Origin::Unknown(rewind)),

@@ -77,7 +77,7 @@ fn n64_save(save: rom_id::Save) -> Option<one_saves::extension::N64Save> {
     N64Save::ALL.into_iter().find(|chip| {
         let kind = match chip {
             N64Save::Eeprom4k | N64Save::Eeprom16k => rom_id::SaveKind::Eeprom,
-            N64Save::Sram256k | N64Save::Sram768k => rom_id::SaveKind::Sram,
+            N64Save::Sram256k | N64Save::Sram768k | N64Save::Sram1m => rom_id::SaveKind::Sram,
             N64Save::Flash1m => rom_id::SaveKind::Flash,
         };
         save.kind == kind && save.size.and_then(|size| usize::try_from(size).ok()) == Some(chip.size())

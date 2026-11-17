@@ -18,7 +18,7 @@ identified as "Pokemon - Red Version (USA, Europe)"
 
 $ 1saves inspect card.1saves     # everything it says, down to each save on a card
 $ 1saves verify card.1saves      # structure, every digest, and the encoding
-$ 1saves hash card.1saves        # content hash and file hash
+$ 1saves hash card.1saves        # content hash, which is the hash of the file
 $ 1saves extract card.1saves     # write it back out as the card it came from
 $ 1saves extract card.1saves --part 1   # pull one save out as its own bundle
 $ 1saves profiles                # what --from accepts
@@ -29,7 +29,7 @@ every digest, down to each save on a card, and nothing at all is written from a 
 match itself — `verify` says which part. An output is never written over an existing file without
 `--force`, and never through a link: with `--force` a link at the output is replaced, not followed.
 A clock or a thumbnail picked up from beside the input is read only when it is a plain file, since
-the user named the input and not it. What any one command inflates is capped, at 192 MiB.
+the user named the input and not it.
 
 `new` makes an empty, formatted card, written as the file an emulator or a flash cart loads:
 
@@ -76,11 +76,10 @@ binary.
 | `dat` | `--dat FILE` | `datary` and the XML reader, derive macro and proc-macro chain under it |
 | `dat-cmpro` | the ClrMamePro syntax for `--dat` | `winnow` |
 | `rom` | `--rom FILE` | `crc32fast`, `md-5`, `sha1` |
-| `zstd` | — | `zstd` and the C library it compiles |
+| `zstd` | reading an emulator state zstd compresses | `zstd` and the C library it compiles |
 
 `dat` implies `rom`: a catalog is looked up by the ROM's digest, so `--dat` has nothing to resolve
-without `--rom`. With `zstd` off, `hash` and `verify` report a content hash as unavailable on a
-bundle whose payload is compressed rather than computing one.
+without `--rom`. A bundle compresses nothing, so `zstd` is about emulator states alone.
 
 A card format that is off is still **named**. `inspect`, `verify` and `hash` read a bundle of it
 unchanged, and `convert` and `extract` refuse in these words rather than guessing:

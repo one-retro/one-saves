@@ -34,8 +34,9 @@
 //! That is a console's storage rather than one game's save, because the paks hold notes for games
 //! the cartridge knows nothing about, so [`read_srm`] makes a [`device`](one_saves::Shape::Device)
 //! of it: the cartridge as a nested save, and each pak that holds a note as a nested card.
-//! [`game_save`] cuts one game out of such a device as a plain save, its cartridge beside only its
-//! own notes, and [`write_srm`] takes either shape back.
+//! [`game_save`] cuts one game out of such a device: its cartridge's save, and each pak's card
+//! holding only that game's notes. [`write_srm`] takes either back, putting a card's notes onto
+//! the pak in place of that game's and leaving every other game's.
 
 use one_saves::extension::{N64, N64Save};
 use one_saves::{Bundle, Game, Header, Part, PartKind, Shape, Slug, Source};
@@ -192,7 +193,7 @@ fn cartridge_of(bundle: &Bundle) -> Result<Option<(N64Save, Vec<u8>)>> {
             return Ok(None);
         };
         if part.kind == PartKind::Bundle {
-            nested = Some(Bundle::from_slice(&part.bytes()?)?);
+            nested = Some(Bundle::from_slice(&part.payload)?);
             continue;
         }
         // A part with no key is a cartridge save whose chip nobody recorded, and the length of its
@@ -200,7 +201,7 @@ fn cartridge_of(bundle: &Bundle) -> Result<Option<(N64Save, Vec<u8>)>> {
         let save = part.extensions.get::<N64>().map(|n64| n64.save).ok_or_else(|| {
             Error::NotConvertible("this cartridge save does not say which chip it is for".into())
         })?;
-        return Ok(Some((save, part.bytes()?.into_owned())));
+        return Ok(Some((save, part.payload.clone())));
     }
     Err(Error::NotConvertible(format!(
         "this bundle nests its cartridge more than {MAX_DEPTH} bundles deep, deeper than any shape does"
@@ -230,14 +231,12 @@ pub use srm::{
 
 #[cfg(feature = "n64")]
 mod srm {
-    use n64_cpak::{ControllerPak, Note, PakBuilder};
-    use one_saves::extension::{Label, N64Save};
-    use one_saves::{Bundle, Game, Header, Part, PartKind, Shape, Slug};
+    use n64_cpak::{ControllerPak, PakBuilder};
+    use one_saves::extension::N64Save;
+    use one_saves::{Bundle, Header, Part, PartKind, Shape, Slug};
 
-    use super::{
-        CARTRIDGE, ERASED, N64Options, SYSTEM, WordOrder, cartridge_of, cartridge_part, serial_of, slug,
-    };
-    use crate::card::{CardOptions, nested_saves};
+    use super::{CARTRIDGE, ERASED, N64Options, SYSTEM, WordOrder, cartridge_of, cartridge_part, slug};
+    use crate::card::CardOptions;
     use crate::error::{Error, Result};
 
     /// How long a libretro N64 save is, whatever the game keeps in it.
@@ -261,12 +260,13 @@ mod srm {
 
     /// Where a chip's memory sits in the file, and how much room it has there.
     ///
-    /// SRAM has 32 KiB, so Dezaemon 3D's three banks do not fit, and no libretro core saves it.
+    /// SRAM has 32 KiB, so neither Dezaemon 3D's three banks nor a homebrew ROM's megabit fits,
+    /// and no libretro core saves them.
     fn region(save: N64Save) -> Option<(usize, usize)> {
         match save {
             N64Save::Eeprom4k | N64Save::Eeprom16k => Some((0, EEPROM_LEN)),
             N64Save::Sram256k => Some((SRAM_AT, SRAM_LEN)),
-            N64Save::Sram768k => None,
+            N64Save::Sram768k | N64Save::Sram1m => None,
             N64Save::Flash1m => Some((FLASH_AT, FLASH_LEN)),
         }
     }
@@ -309,7 +309,8 @@ mod srm {
         if let Some((save, normal)) = cartridge_in(bytes, save)? {
             let mut header = Header::new(Shape::Save).system(slug(SYSTEM)).game(options.game.clone());
             header.description.clone_from(&options.description);
-            let inner = Bundle::new(header, vec![cartridge_part(0, normal, save).role(None)]);
+            // The chip's part keeps its role inside, so the save means the same lifted out.
+            let inner = Bundle::new(header, vec![cartridge_part(0, normal, save)]);
             parts.push(
                 Part::new(0, inner.to_vec()?)
                     .kind(PartKind::Bundle)
@@ -505,52 +506,75 @@ mod srm {
         pak_for(bundle, port, &base).map(Some)
     }
 
-    /// The ports, numbered from 1, a bundle holds a pak or a note for.
+    /// The ports, numbered from 1, a bundle holds a pak for.
     ///
-    /// A device names each pak as a component; a save names each note's. A role this format has no
-    /// place for is refused rather than dropped, since dropping it would lose a component.
+    /// A device names each pak as a component, a lone pak's card names its port on its parts, and
+    /// a collection holds one card per pak. A role this format has no place for is refused rather
+    /// than dropped, since dropping it would lose a component.
     pub fn pak_ports(bundle: &Bundle) -> Result<Vec<usize>> {
-        if !matches!(bundle.header.shape, Shape::Device | Shape::Save) {
-            return Err(Error::NotConvertible(format!(
-                "a {} bundle is not an N64 save or a device",
-                bundle.header.shape
-            )));
-        }
-        let mut ports = Vec::new();
-        for part in &bundle.parts {
-            let role = part.role.as_ref().map(Slug::as_str).unwrap_or_default();
-            if role == CARTRIDGE || part.extensions.get::<one_saves::extension::N64>().is_some() {
-                continue;
-            }
-            let port = port_of(role)
-                .ok_or_else(|| Error::NotConvertible(format!("an N64 save has no place for {role:?}")))?;
-            if !ports.contains(&(port + 1)) {
-                ports.push(port + 1);
-            }
-        }
+        let mut ports: Vec<usize> = paks_of(bundle)?.into_iter().map(|(port, _)| port).collect();
         ports.sort_unstable();
+        ports.dedup();
         Ok(ports)
     }
 
-    /// The pak a bundle puts in a port: a device's component whole, or a save's notes merged onto
-    /// the pak that is there.
-    fn pak_for(bundle: &Bundle, port: usize, there: &[u8]) -> Result<Vec<u8>> {
-        let role = pak_role(port - 1);
-        let parts: Vec<&Part> = bundle
-            .parts
-            .iter()
-            .filter(|part| part.role.as_ref().is_some_and(|r| r.as_str() == role))
-            .collect();
-        if bundle.header.shape == Shape::Device {
-            let [component] = parts.as_slice() else {
-                return Err(Error::NotConvertible(format!(
-                    "this device holds {} paks in {role}",
-                    parts.len()
-                )));
-            };
-            return crate::card::n64::write_onto(&Bundle::from_slice(&component.bytes()?)?, there);
+    /// Each pak a bundle holds, as its port, numbered from 1, and its card.
+    fn paks_of(bundle: &Bundle) -> Result<Vec<(usize, Bundle)>> {
+        let port = |role: Option<&Slug>| {
+            let name = role.map(Slug::as_str).unwrap_or_default();
+            port_of(name)
+                .map(|port| port + 1)
+                .ok_or_else(|| Error::NotConvertible(format!("an N64 save has no place for {name:?}")))
+        };
+        match &bundle.header.shape {
+            Shape::Save => Ok(Vec::new()),
+            Shape::Card if is_pak(bundle) => Ok(vec![(port(card_role(bundle))?, bundle.clone())]),
+            Shape::Device | Shape::Collection => {
+                let mut paks = Vec::new();
+                for part in &bundle.parts {
+                    if part.role.as_ref().is_some_and(|role| role.as_str() == CARTRIDGE) {
+                        continue;
+                    }
+                    let inner = Bundle::from_slice(&part.payload)?;
+                    // A collection's entry names its port inside, on the card's own parts.
+                    if inner.header.shape == Shape::Save && bundle.header.shape == Shape::Collection {
+                        continue;
+                    }
+                    if !is_pak(&inner) {
+                        return Err(Error::NotConvertible(format!(
+                            "an N64 save has no place for a {} in {:?}",
+                            inner.header.shape,
+                            part.role.as_ref().map(Slug::as_str).unwrap_or_default()
+                        )));
+                    }
+                    let role = part.role.as_ref().or_else(|| card_role(&inner));
+                    paks.push((port(role)?, inner));
+                }
+                Ok(paks)
+            }
+            shape => Err(Error::NotConvertible(format!("a {shape} bundle is not an N64 save or a device"))),
         }
-        merge_notes(there, &parts)
+    }
+
+    /// The socket a card's parts name, which is the one it was read from.
+    fn card_role(card: &Bundle) -> Option<&Slug> {
+        card.parts.iter().find_map(|part| part.role.as_ref())
+    }
+
+    /// The pak a bundle puts in a port: its card's notes, merged onto the pak that is there.
+    ///
+    /// A card need not hold every note on its pak, so only the games it holds notes for are
+    /// replaced, and every other game's notes stay where they were.
+    fn pak_for(bundle: &Bundle, port: usize, there: &[u8]) -> Result<Vec<u8>> {
+        let paks = paks_of(bundle)?;
+        let cards: Vec<&Bundle> = paks.iter().filter(|(at, _)| *at == port).map(|(_, card)| card).collect();
+        let [card] = cards.as_slice() else {
+            return Err(Error::NotConvertible(format!(
+                "this bundle holds {} paks in port {port}",
+                cards.len()
+            )));
+        };
+        merge_card(card, there)
     }
 
     /// A save no game has written to: erased chips, and four freshly formatted paks.
@@ -565,15 +589,16 @@ mod srm {
         PakBuilder::new().build().map_err(|e| Error::NotConvertible(e.to_string()))
     }
 
-    /// One game's notes written onto a pak, in place of the ones it already holds for that game.
+    /// A card's notes written onto a pak, in place of the ones it already holds for those games.
     ///
     /// A note's game is its game code, which the entry carries. Every note the pak holds under one
-    /// of the incoming codes goes, so a save the game deleted since does not linger beside the
-    /// ones it kept. The pak keeps its own page 0, so it is the same pak afterwards.
-    fn merge_notes(pak: &[u8], incoming: &[&Part]) -> Result<Vec<u8>> {
-        let notes: Vec<Note> = incoming.iter().map(|part| note_of(part)).collect::<Result<_>>()?;
+    /// of the card's codes goes, so a save the game deleted since does not linger beside the ones
+    /// it kept. The pak keeps its own page 0, so it is the same pak afterwards, and takes the
+    /// card's label where the card carries one.
+    fn merge_card(card: &Bundle, there: &[u8]) -> Result<Vec<u8>> {
+        let notes = crate::card::n64::notes_of(card)?;
         let mut builder = PakBuilder::new();
-        let existing = match ControllerPak::parse(pak) {
+        let existing = match ControllerPak::parse(there) {
             Ok(existing) => {
                 builder.id_area(existing.id_area().to_vec());
                 existing.into_notes()
@@ -581,6 +606,9 @@ mod srm {
             // What is there is not a pak, so there is nothing on it to keep.
             Err(_) => Vec::new(),
         };
+        if let Some(label) = card.header.card.as_ref().and_then(|card| card.system_area.as_ref()) {
+            builder.label(label.clone());
+        }
         for note in existing {
             if !notes.iter().any(|incoming| incoming.game_code == note.game_code) {
                 builder.add(note);
@@ -592,71 +620,45 @@ mod srm {
         builder.build().map_err(|e| Error::NotConvertible(format!("could not write the pak: {e}")))
     }
 
-    /// A save's note part as the note a pak holds.
-    fn note_of(part: &Part) -> Result<Note> {
-        let dirent = part.dirent.clone().ok_or_else(|| {
-            Error::NotConvertible("a note off a Controller Pak carries the pak's entry for it".into())
-        })?;
-        if dirent.len() != n64_cpak::NOTE_ENTRY {
-            return Err(Error::NotConvertible(format!(
-                "a Controller Pak entry is {} bytes, and this one is {}",
-                n64_cpak::NOTE_ENTRY,
-                dirent.len()
-            )));
-        }
-        let path = part.path.clone().unwrap_or_default();
-        let (name, extension) = crate::card::n64::name_and_extension(&path);
-        Ok(Note {
-            slot: 0,
-            game_code: String::from_utf8_lossy(&dirent[..4]).into_owned(),
-            name: name.to_owned(),
-            extension: extension.to_owned(),
-            dirent,
-            data: part.bytes()?.into_owned(),
-        })
-    }
-
-    /// One game's save out of a device or a lone pak: its cartridge, and only its own notes beside
-    /// it.
+    /// One game's save out of a device or a lone pak: its cartridge, and only its own notes.
     ///
     /// `game_code` is the four characters a ROM's header and a note's entry both carry, such as
-    /// `NKTE`, or the serial a note's save names, `NUS-NKTE`. The result is a plain save with
-    /// ordinary parts: the cartridge, and each note on the pak's role with the pak's entry for it,
-    /// which is everything [`write_srm`] needs to put the note back on a pak that also holds other
-    /// games'. A lone pak has no cartridge, and its notes keep the role it was read with, which is
-    /// the port they go back to.
+    /// `NKTE`, or the serial a note's save names, `NUS-NKTE`. A note is always a save on a card, so
+    /// a game's notes stay on a pak's card, which holds those notes and no other game's, and keeps
+    /// the role naming the port it goes back to. What comes out is what that is:
     ///
-    /// The save is that game's, so its header names it: as the cartridge or the pak was named
-    /// when it was read, and by the serial every note carries where that names none. Its label is
-    /// the one its notes are listed under, where they agree on one.
+    /// - the cartridge and its notes, a [device](one_saves::Shape::Device) of the cartridge's save
+    ///   and a card for each pak holding a note;
+    /// - the cartridge alone, its [save](one_saves::Shape::Save);
+    /// - notes on one pak alone, that pak's [card](one_saves::Shape::Card), and on several, a
+    ///   [collection](one_saves::Shape::Collection) of their cards.
+    ///
+    /// [`write_srm`] takes each back, writing the game's notes onto each pak in place of the ones
+    /// there for that game and leaving every other game's where they were.
     pub fn game_save(bundle: &Bundle, game_code: &str) -> Result<Bundle> {
         let game_code = super::game_code_of(game_code);
 
-        let mut parts = Vec::new();
-        let mut labels = Vec::new();
-        let mut game: Option<Game> = None;
-        let mut description = None;
+        let mut cartridge: Option<(Bundle, Vec<u8>)> = None;
+        let mut paks: Vec<(Slug, Bundle)> = Vec::new();
         let what = match &bundle.header.shape {
             Shape::Device => {
                 for component in &bundle.parts {
-                    let role = component.role.as_ref().map(Slug::as_str).unwrap_or_default();
-                    let inner = Bundle::from_slice(&component.bytes()?)?;
-                    if role == CARTRIDGE {
-                        if let Some((save, normal)) = cartridge_of(&inner)? {
-                            game.clone_from(&inner.header.game);
-                            description.clone_from(&inner.header.description);
-                            parts.push(cartridge_part(0, normal, save));
+                    let role = component.role.as_ref();
+                    let inner = Bundle::from_slice(&component.payload)?;
+                    if role.is_some_and(|role| role.as_str() == CARTRIDGE) {
+                        if cartridge_of(&inner)?.is_some() {
+                            cartridge = Some((inner, component.payload.clone()));
                         }
                         continue;
                     }
-                    notes_into(&mut parts, &mut labels, &inner, component.role.as_ref(), game_code)?;
+                    if let Some(card) = game_notes(&inner, role, game_code)? {
+                        paks.push(card);
+                    }
                 }
                 "device"
             }
             Shape::Card if is_pak(bundle) => {
-                game.clone_from(&bundle.header.game);
-                description.clone_from(&bundle.header.description);
-                notes_into(&mut parts, &mut labels, bundle, None, game_code)?;
+                paks.extend(game_notes(bundle, None, game_code)?);
                 "pak"
             }
             shape => {
@@ -665,72 +667,77 @@ mod srm {
                 )));
             }
         };
-        if parts.is_empty() {
-            return Err(Error::NotConvertible(format!("this {what} holds nothing of {game_code}'s")));
-        }
-        for (id, part) in parts.iter_mut().enumerate() {
-            part.id = u64::try_from(id).expect("part count fits");
-        }
 
-        let mut game = game.unwrap_or_default();
-        if game.serial.is_none() {
-            game = game.serial(serial_of(game_code));
+        let header = |shape: Shape| {
+            Header::new(shape).bundled_at(bundle.header.bundled_at).source(bundle.header.source.clone())
+        };
+        let entry = |id: usize, bytes: Vec<u8>| -> Part {
+            Part::new(u64::try_from(id).expect("part count fits"), bytes)
+                .kind(PartKind::Bundle)
+                .system(slug(SYSTEM))
+        };
+        match (cartridge, paks.as_slice()) {
+            (None, []) => Err(Error::NotConvertible(format!("this {what} holds nothing of {game_code}'s"))),
+            (Some((save, _)), []) => Ok(save),
+            (None, [(_, card)]) => Ok(card.clone()),
+            (None, _) => {
+                let parts = paks
+                    .iter()
+                    .enumerate()
+                    .map(|(id, (role, card))| Ok(entry(id, card.to_vec()?).role(role.clone())))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Bundle::new(header(Shape::Collection), parts))
+            }
+            (Some((save, bytes)), _) => {
+                let mut parts = vec![entry(0, bytes).role(slug(CARTRIDGE)).game(save.header.game.clone())];
+                for (role, card) in &paks {
+                    parts.push(entry(parts.len(), card.to_vec()?).role(role.clone()));
+                }
+                Ok(Bundle::new(header(Shape::Device).system(slug(SYSTEM)), parts))
+            }
         }
-        let mut header = Header::new(Shape::Save)
-            .bundled_at(bundle.header.bundled_at)
-            .system(slug(SYSTEM))
-            .game(game)
-            .source(bundle.header.source.clone());
-        header.description = description;
-        if let [label] = labels.as_slice() {
-            header = header.extension(label.clone());
-        }
-        Ok(Bundle::new(header, parts))
     }
 
     /// Whether a card is a Controller Pak, the one card whose notes [`game_save`] cuts.
     fn is_pak(bundle: &Bundle) -> bool {
-        bundle.header.card.as_ref().is_some_and(|card| card.format.as_str() == crate::card::n64::CARD_FORMAT)
+        bundle.header.shape == Shape::Card
+            && bundle
+                .header
+                .card
+                .as_ref()
+                .is_some_and(|card| card.format.as_str() == crate::card::n64::CARD_FORMAT)
     }
 
-    /// Adds a pak's notes for one game, each on the role it goes back to: `role` where the pak is
-    /// a device's component, and otherwise the one its own part was read with. `labels` gathers
-    /// the names they are listed under, each once.
-    fn notes_into(
-        parts: &mut Vec<Part>,
-        labels: &mut Vec<Label>,
-        pak: &Bundle,
-        role: Option<&Slug>,
-        game_code: &str,
-    ) -> Result<()> {
-        // `nested_saves` takes a card's `bundle` parts in order, so these line up with its saves.
-        let roles =
-            pak.parts.iter().filter(|part| part.kind == PartKind::Bundle).map(|part| part.role.as_ref());
-        for (note, own) in nested_saves(pak)?.into_iter().zip(roles) {
-            let code = note.dirent.as_deref().and_then(|entry| entry.get(..4));
-            if code != Some(game_code.as_bytes()) {
-                continue;
-            }
-            // A role naming no port would be a save nothing can write back, so it is refused here
-            // rather than at the restore.
-            let role = role.or(own).cloned();
-            let name = role.as_ref().map(Slug::as_str).unwrap_or_default();
-            if port_of(name).is_none() {
-                return Err(Error::NotConvertible(format!(
-                    "a note on {name:?} has no controller port to go back to"
-                )));
-            }
-            if let Some(label) = note.inner.header.extensions.get::<Label>()
-                && !labels.contains(label)
-            {
-                labels.push(label.clone());
-            }
-            let mut part = Part::new(0, note.bytes).role(role).slot(note.slot);
-            part.path = note.path;
-            part.dirent = note.dirent;
-            parts.push(part);
+    /// A pak's card holding only one game's notes, and the role naming the port it goes back to:
+    /// `role` where the pak is a device's component, and otherwise the one its own parts were read
+    /// with. `None` where the pak holds none of that game's notes.
+    fn game_notes(pak: &Bundle, role: Option<&Slug>, game_code: &str) -> Result<Option<(Slug, Bundle)>> {
+        let parts: Vec<Part> = pak
+            .parts
+            .iter()
+            .filter(|part| part.kind == PartKind::Bundle)
+            .filter(|part| {
+                part.dirent.as_deref().and_then(|entry| entry.get(..4)) == Some(game_code.as_bytes())
+            })
+            .cloned()
+            .collect();
+        if parts.is_empty() {
+            return Ok(None);
         }
-        Ok(())
+        // A role naming no port would be a save nothing can write back, so it is refused here
+        // rather than at the restore.
+        let role = role.or_else(|| card_role(pak)).cloned();
+        let name = role.as_ref().map(Slug::as_str).unwrap_or_default().to_owned();
+        let Some(role) = role.filter(|_| port_of(&name).is_some()) else {
+            return Err(Error::NotConvertible(format!(
+                "a note on {name:?} has no controller port to go back to"
+            )));
+        };
+        let mut parts = parts;
+        for (id, part) in parts.iter_mut().enumerate() {
+            part.id = u64::try_from(id).expect("part count fits");
+        }
+        Ok(Some((role, Bundle::new(pak.header.clone(), parts))))
     }
 }
 
@@ -788,7 +795,7 @@ mod tests {
         let part = &bundle.parts[0];
         assert_eq!(part.role.as_ref().unwrap().as_str(), "cartridge");
         assert_eq!(part.extensions.get::<N64>(), Some(&N64::new(N64Save::Sram256k)));
-        assert_eq!(&part.bytes().unwrap()[..4], &[3, 2, 1, 0], "normal form inside");
+        assert_eq!(&part.payload[..4], &[3, 2, 1, 0], "normal form inside");
 
         assert_eq!(unwrap(&bundle, WordOrder::Swapped).unwrap(), (N64Save::Sram256k, file.clone()));
         let (_, console) = unwrap(&bundle, WordOrder::Console).unwrap();
@@ -939,10 +946,16 @@ mod tests {
             let device = read_srm(&file, Some(N64Save::Eeprom4k), &N64Options::default()).unwrap();
             let save = game_save(&device, "NKTE").unwrap();
             save.validate().unwrap();
-            assert_eq!(save.header.shape, Shape::Save);
-            assert_eq!(save.parts.len(), 2, "the cartridge and Mario Kart's one note");
-            assert_eq!(save.parts[1].role.as_ref().unwrap().as_str(), "controller-pak-1");
-            assert_eq!(save.parts[1].path.as_deref(), Some("MARIOKART64"));
+            // A note is a save on a card, so the game's is a device: its cartridge, and its pak
+            // holding only Mario Kart's note.
+            assert_eq!(save.header.shape, Shape::Device);
+            let roles: Vec<&str> =
+                save.parts.iter().filter_map(|part| part.role.as_ref()).map(Slug::as_str).collect();
+            assert_eq!(roles, ["cartridge", "controller-pak-1"]);
+            let card = Bundle::from_slice(&save.parts[1].payload).unwrap();
+            assert_eq!(card.header.shape, Shape::Card);
+            assert_eq!(card.parts.len(), 1, "Mario Kart's one note");
+            assert_eq!(card.parts[0].path.as_deref(), Some("MARIOKART64"));
 
             // Onto a device whose pak has moved on: Mario Kart's note replaced, Mario 64's kept.
             let mut elsewhere = blank_srm();

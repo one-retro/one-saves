@@ -338,8 +338,8 @@ mod tests {
         // A save is opened by game code plus maker code, so the serial is the pair.
         assert_eq!(bundle.parts[0].game.as_ref().unwrap().serial.as_deref(), Some("GAFE01"));
 
-        let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap();
-        assert_eq!(inner.parts[0].payload.len(), 2 * gc_memcard::BLOCK as u64);
+        let inner = Bundle::from_slice(&bundle.parts[0].payload).unwrap();
+        assert_eq!(inner.parts[0].payload.len(), 2 * gc_memcard::BLOCK);
         bundle.validate().expect("valid bundle");
     }
 

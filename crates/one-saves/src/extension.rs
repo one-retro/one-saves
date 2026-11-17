@@ -9,10 +9,16 @@
 //! What a caller works with is a typed value. A type that implements [`Extension`] names its key
 //! and how it converts to and from CBOR, and [`Extensions::get`] hands back that type for a key
 //! that holds it. The keys these specifications define under `x.1sav` have their types here —
-//! [`Label`], [`Icon`], [`Dirent`], [`DirentGcMc`], [`Rtc`] and one for each cartridge clock under
-//! it, [`RtcHuc3`], [`RtcJoybus`], [`RtcMbc3`], [`RtcRtc4513`], [`RtcS3511a`], [`RtcSrtc`],
-//! [`RtcTc8521`] and [`RtcTpp1`], [`N64`] for an N64 cartridge's save memory, and [`CheatsMgba`]
-//! for the cheats mGBA keeps in a state — and so does 1retro's [`Forge`]. Any other producer's key is a type of its own implementing the same trait.
+//! [`Label`], [`Icon`], [`Dirent`], [`DirentGcMc`], [`DirentN64Cpak`], [`Rtc`] and one for each
+//! clock under it — the cartridges' [`RtcHuc3`], [`RtcJoybus`], [`RtcMbc3`], [`RtcRtc4513`],
+//! [`RtcS3511a`], [`RtcSrtc`], [`RtcTc8521`] and [`RtcTpp1`], and the consoles' and the 64DD
+//! drive's [`RtcSmpc`], [`RtcUpd4990a`] and [`RtcN64dd`] — [`N64`] for an N64 cartridge's save
+//! chip, and [`CheatsMgba`] for the cheats mGBA keeps in a state; and so does 1retro's [`Forge`].
+//! Any other producer's key is a type of its own implementing the same trait.
+//!
+//! The rules an extension's page states bind producers alone. A decoder keeps every value it
+//! reads, whatever it holds and wherever it sits, with one exception: [`N64`] says how long an N64
+//! cartridge's payload is, so a bundle that gets it wrong is malformed.
 //!
 //! ```
 //! use one_saves::{Extensions, extension::Label};
@@ -37,6 +43,7 @@ use crate::name::ReverseDnsName;
 
 mod cheats_mgba;
 mod dirent;
+mod dirent_n64_cpak;
 mod forge;
 mod gc_mc;
 mod icon;
@@ -47,13 +54,15 @@ mod time;
 
 pub use cheats_mgba::{CheatSet, CheatsMgba};
 pub use dirent::{Dirent, EntryTime};
+pub use dirent_n64_cpak::DirentN64Cpak;
 pub use forge::Forge;
 pub use gc_mc::DirentGcMc;
 pub use icon::{Icon, IconFrame};
 pub use label::Label;
 pub use n64::{N64, N64Save};
 pub use rtc::{
-    Rtc, RtcHuc3, RtcJoybus, RtcMbc3, RtcRtc4513, RtcS3511a, RtcSrtc, RtcTc8521, RtcTpp1, S3511aAlarm,
+    Rtc, RtcHuc3, RtcJoybus, RtcMbc3, RtcN64dd, RtcRtc4513, RtcS3511a, RtcSmpc, RtcSrtc, RtcTc8521, RtcTpp1,
+    RtcUpd4990a, S3511aAlarm,
 };
 pub use time::Civil;
 
@@ -130,7 +139,7 @@ type Decoder = fn(&CBOR) -> Option<Box<dyn Erased>>;
 /// The type this crate has for a key, so a value read off the wire can be shown without a caller
 /// naming its type.
 fn known(key: &ReverseDnsName) -> Option<Decoder> {
-    let known: [(ReverseDnsName, Decoder); 16] = [
+    let known: [(ReverseDnsName, Decoder); 20] = [
         (Rtc::KEY, decode::<Rtc>),
         (RtcHuc3::KEY, decode::<RtcHuc3>),
         (RtcJoybus::KEY, decode::<RtcJoybus>),
@@ -140,6 +149,10 @@ fn known(key: &ReverseDnsName) -> Option<Decoder> {
         (RtcSrtc::KEY, decode::<RtcSrtc>),
         (RtcTc8521::KEY, decode::<RtcTc8521>),
         (RtcTpp1::KEY, decode::<RtcTpp1>),
+        (RtcN64dd::KEY, decode::<RtcN64dd>),
+        (RtcSmpc::KEY, decode::<RtcSmpc>),
+        (RtcUpd4990a::KEY, decode::<RtcUpd4990a>),
+        (DirentN64Cpak::KEY, decode::<DirentN64Cpak>),
         (Label::KEY, decode::<Label>),
         (Icon::KEY, decode::<Icon>),
         (Dirent::KEY, decode::<Dirent>),

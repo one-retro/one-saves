@@ -425,7 +425,7 @@ fn a_real_gba_mister_save_reads_its_seiko_clock_and_round_trips() {
     // and two seconds of play later it read this, the weekday rolled from Saturday to Sunday.
     let chip = bundle.header.extensions.get::<RtcS3511a>().expect("the chip");
     assert_eq!(chip.components, [0x10, 0x01, 0x01, 0x00, 0x00, 0x08, 0x47]);
-    assert_eq!(chip.control, 0x40, "the core never stores the register and comes up in 24-hour mode");
+    assert_eq!(chip.control, None, "the core never stores the register, and comes up in 24-hour mode");
     // The anchor is MiSTer's local standard time counted as though it were UTC: 10:00:38 on that
     // scale is 18:00:38 UTC, two seconds before the copy, eight hours rather than PDT's seven.
     assert_eq!(chip.taken_at, Some(1_792_576_838));
@@ -470,7 +470,7 @@ fn a_real_mincer_save_reads_its_clock_from_the_sidecar_and_round_trips() {
     // own, kept in save memory.
     let chip = bundle.header.extensions.get::<RtcS3511a>().expect("the chip");
     assert_eq!(chip.components, [0x26, 0x10, 0x21, 0x03, 0x13, 0x40, 0x16]);
-    assert_eq!(chip.control, 0x40, "the core never stores the register and comes up in 24-hour mode");
+    assert_eq!(chip.control, None, "the core never stores the register, and comes up in 24-hour mode");
     // The Pocket keeps no zone, so its epoch is that same wall time counted as though it were UTC:
     // seven hours behind the instant in PDT, where MiSTer's local standard time is eight.
     assert_eq!(chip.taken_at, Some(1_792_590_016));
@@ -630,7 +630,7 @@ fn a_real_mgba_app_save_keeps_its_seiko_clock_on_the_end() {
     let bundle = wrap_from(Some("mgba"));
     let chip = bundle.header.extensions.get::<RtcS3511a>().expect("the chip");
     assert_eq!(chip.components, [0x26, 0x11, 0x04, 0x03, 0x00, 0x08, 0x26]);
-    assert_eq!(chip.control, 0x40);
+    assert_eq!(chip.control, Some(0x40));
     assert_eq!(rtc::form_of(&bundle), rtc::ClockForm::S3511a);
     assert_eq!(raw::unwrap(&bundle).expect("unwraps"), bytes, "the app's file, byte for byte");
 
@@ -845,7 +845,7 @@ fn every_backup_ram_names_its_own_system_and_is_wrapped_whole() {
         // and a volume is not a cartridge, so nothing is split off the end of it either.
         assert_eq!(bundle.parts.len(), 1, "{}", fixture.path);
         let len = u64::try_from(fixture.len).expect("a volume fits");
-        assert_eq!(bundle.parts[0].payload.len(), len, "{}", fixture.path);
+        assert_eq!(bundle.parts[0].payload.len() as u64, len, "{}", fixture.path);
         assert!(bundle.header.extensions.is_empty(), "{}: a volume carries no clock", fixture.path);
 
         // What the volume holds, so a fixture that is quietly replaced by an emptier one is
@@ -988,7 +988,7 @@ fn a_ps2_save_is_labelled_by_what_its_icon_sys_says() {
         .parts
         .iter()
         .map(|part| {
-            let save = one_saves::Bundle::from_slice(&part.bytes().expect("nested")).expect("a save");
+            let save = one_saves::Bundle::from_slice(&part.payload).expect("a save");
             save.header.extensions.get::<one_saves::extension::Label>().expect("a label").title.clone()
         })
         .collect();

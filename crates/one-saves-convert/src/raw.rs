@@ -308,7 +308,7 @@ fn save_part(bundle: &Bundle) -> Result<Vec<u8>> {
 
     let bytes = match saves.as_slice() {
         [] => return Err(Error::NotConvertible("this bundle holds no save parts".into())),
-        [only] => only.bytes()?.into_owned(),
+        [only] => only.payload.clone(),
         many => {
             return Err(Error::NotConvertible(format!(
                 "this bundle holds {} save parts; name one with --part",
@@ -461,7 +461,7 @@ pub fn unwrap_part(bundle: &Bundle, id: u64) -> Result<Vec<u8>> {
         .iter()
         .find(|part| part.id == id)
         .ok_or_else(|| Error::NotConvertible(format!("this bundle has no part with id {id}")))?;
-    Ok(part.bytes()?.into_owned())
+    Ok(part.payload.clone())
 }
 
 #[cfg(test)]
@@ -608,7 +608,7 @@ mod tests {
         let save = vec![7u8; 32_768];
         let bundle = wrap(&save, &options).expect("wraps");
         let chip = bundle.header.extensions.get::<one_saves::extension::RtcMbc3>().expect("the chip");
-        assert_eq!((chip.live, chip.taken_at), ([1, 0, 0, 0, 0], 1_793_777_489));
+        assert_eq!((chip.live, chip.taken_at), ([1, 0, 0, 0, 0], Some(1_793_777_489)));
         assert_eq!(chip.timestamp_width, None, "no footer, so no width");
 
         assert_eq!(unwrap(&bundle).expect("unwraps"), save, "nothing appended");

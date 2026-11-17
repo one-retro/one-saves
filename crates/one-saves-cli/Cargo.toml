@@ -54,10 +54,9 @@ archive = ["one-saves-convert/archive"]
 # Reading and writing RetroArch's, mGBA's and DuckStation's save states. Off, a state is still
 # recognised, and refused as one rather than wrapped as a save it is not.
 states = ["one-saves-convert/states"]
-# Inflating parts whose payload carries `encoding: "zstd"`, which compiles a C library. Off,
-# `verify` and `hash` report a content hash as unavailable on such a bundle rather than computing
-# one, and everything else still works.
-zstd = ["one-saves/zstd", "one-saves-convert/zstd"]
+# Reading emulator states that zstd compresses, which compiles a C library: see
+# one-saves-convert's feature of the same name. A bundle compresses nothing.
+zstd = ["one-saves-convert/zstd"]
 
 [lints]
 workspace = true

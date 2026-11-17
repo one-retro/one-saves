@@ -208,7 +208,7 @@ impl Card {
             .parts
             .iter()
             .filter(|part| part.kind == PartKind::System)
-            .map(|part| part.payload.len().div_ceil(block))
+            .map(|part| (part.payload.len() as u64).div_ceil(block))
             .sum();
         self.entries().iter().map(|entry| entry.blocks).sum::<u64>() + system
     }
@@ -229,7 +229,7 @@ impl Card {
             .enumerate()
             .filter(|(_, part)| part.kind == PartKind::Bundle)
             .map(|(index, part)| {
-                let inner = part.bytes().ok().and_then(|b| Bundle::from_slice(&b).ok());
+                let inner = Bundle::from_slice(&part.payload).ok();
                 let label = inner.as_ref().and_then(read_label);
                 Entry {
                     index,
@@ -299,7 +299,7 @@ impl Card {
                 self.format.label()
             )));
         }
-        let blocks = part.payload.len().div_ceil(self.block_size().max(1));
+        let blocks = (part.payload.len() as u64).div_ceil(self.block_size().max(1));
         if blocks > self.free_blocks() {
             return Err(Error::Refused(format!("needs {blocks} blocks and {} are free", self.free_blocks())));
         }
@@ -407,7 +407,7 @@ fn create(path: &Path, bytes: &[u8]) -> Result<()> {
 /// card's overhead rather than the save's, and a consumer comparing a save against the space it
 /// would need somewhere else wants what the save is, not what a particular card spends on it.
 fn blocks_of(save: &Bundle, block: u64) -> u64 {
-    save.parts.iter().map(|part| part.payload.len().div_ceil(block)).sum()
+    save.parts.iter().map(|part| (part.payload.len() as u64).div_ceil(block)).sum()
 }
 
 /// The title and detail a save calls itself, from `x.1sav.label`.

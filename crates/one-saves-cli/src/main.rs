@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use one_saves::extension::{Civil, SHOWN_BYTES, SHOWN_CHARS};
-use one_saves::{Bundle, Game, Name, Origin, Part, PartKind, Payload, Recorded, Source, TakenWith};
+use one_saves::{Bundle, Game, Name, Origin, Part, PartKind, Recorded, Source, TakenWith};
 use one_saves_convert::{Format, Profile, card, detect, raw};
 
 mod n64;
@@ -40,7 +40,7 @@ enum Command {
     Inspect(FileArg),
     /// Check a bundle's structure and every part's digest.
     Verify(FileArg),
-    /// Print a bundle's content hash and file hash.
+    /// Print a bundle's content hash, which is the hash of its file.
     Hash(FileArg),
     /// List the emulator profiles `--from` accepts.
     Profiles,
@@ -899,14 +899,8 @@ fn identify(args: &Convert) -> Result<Identified, Box<dyn std::error::Error>> {
 
 fn extract(args: Extract) -> Fallible {
     let bytes = std::fs::read(&args.input)?;
+    // Decoding checks every part's digest, so nothing goes out that is not the save it says it is.
     let bundle = Bundle::from_slice(&bytes)?;
-
-    // Nothing goes out that was not checked: decoding leaves most digests alone, and a part whose
-    // bytes are not the ones it names is not the save it says it is. This also holds what the
-    // writers below inflate to the budget, since a part claiming more than it has fails here.
-    if let Some(problem) = digest_problems(&bundle, &mut MAX_INFLATED.clone()).first() {
-        return Err(format!("{problem}; `1saves verify` lists every problem").into());
-    }
 
     // A part named by id is a straight payload dump, whatever the bundle is.
     if let Some(id) = args.part {
@@ -1367,8 +1361,7 @@ fn inspect(path: &Path) -> Fallible {
 
     println!("{}", path.display());
     println!("  {} bytes, spec version {}", bytes.len(), one_saves::SPEC_VERSION);
-    let mut inflatable = MAX_INFLATED;
-    describe(&bundle, 2, 0, &mut inflatable);
+    describe(&bundle, 2, 0);
     Ok(())
 }
 
@@ -1379,20 +1372,9 @@ const LABEL_WIDTH: usize = 13;
 ///
 /// The shapes this version defines nest three deep at most — a collection holding a device holding
 /// a card holding a save — and validation holds a bundle to that. It does not look inside a shape
-/// it does not know or a compressed part, though, so a file built to nest without end is cut off
-/// here rather than taking the stack with it. One level past the defined shapes leaves room for a
-/// later version's.
+/// it does not know, though, so a file built to nest without end is cut off here rather than
+/// taking the stack with it. One level past the defined shapes leaves room for a later version's.
 const MAX_DEPTH: usize = 4;
-
-/// The most one command inflates, across every compressed part it opens: a listing, a check of the
-/// digests, a content hash.
-///
-/// Inflating a part stops at what it claims, and the claim is the file's to make, so the claims
-/// need a bound of their own. One for the whole command rather than one a part, because a file can
-/// hold any number of parts each claiming just under a per-part cap, and an inflated bundle can
-/// hold thousands more. This is a dozen of the largest cards there are, 16 MiB GameCube ones: it
-/// declines a bomb and no real collection.
-const MAX_INFLATED: u64 = 192 << 20;
 
 /// One line of a listing: a label, and a value lined up after it.
 ///
@@ -1407,9 +1389,8 @@ fn field(indent: usize, label: &str, value: &str) {
 ///
 /// A part that is itself a bundle is described the same way under its own line, so a card lists
 /// what each save's own header says — its label and icon among it — and not only the card's
-/// record of it. `depth` counts the bundles above this one, up to [`MAX_DEPTH`], and `inflatable`
-/// is what is left of [`MAX_INFLATED`].
-fn describe(bundle: &Bundle, indent: usize, depth: usize, inflatable: &mut u64) {
+/// record of it. `depth` counts the bundles above this one, up to [`MAX_DEPTH`].
+fn describe(bundle: &Bundle, indent: usize, depth: usize) {
     let header = &bundle.header;
 
     // What the bundle *is*, which decides how the parts below it should be read. It comes from
@@ -1476,13 +1457,13 @@ fn describe(bundle: &Bundle, indent: usize, depth: usize, inflatable: &mut u64) 
 
     field(indent, "parts", &bundle.parts.len().to_string());
     for part in &bundle.parts {
-        describe_part(part, indent + 2, depth, inflatable);
+        describe_part(part, indent + 2, depth);
     }
 }
 
 /// A part's line, and beneath it everything else the part says, down to the bundle it holds if it
 /// holds one. `depth` is the depth of the bundle the part is in.
-fn describe_part(part: &Part, indent: usize, depth: usize, inflatable: &mut u64) {
+fn describe_part(part: &Part, indent: usize, depth: usize) {
     let kind = part.kind.as_str().unwrap_or("save");
     // A state's data and its picture take no role, so they come out of no socket to name.
     let role = match (&part.role, &part.kind) {
@@ -1520,26 +1501,18 @@ fn describe_part(part: &Part, indent: usize, depth: usize, inflatable: &mut u64)
 
     // What the part says about itself beyond its columns, one field a line, under the id.
     let indent = indent + 6;
-    // Validation reads an embedded nested bundle but leaves a compressed one alone, so opening one
-    // can still fail: on a build without `zstd`, or on a payload that does not inflate to a bundle.
-    // The error is escaped like any other text out of the file, since it can quote some.
-    let open = || {
-        part.bytes()
-            .and_then(|bytes| Bundle::from_slice(&bytes))
-            .map_err(|e| format!("cannot be opened: {}", printable(&e.to_string())))
-    };
-    let inner = match &part.payload {
-        _ if !matches!(part.kind, PartKind::Bundle) => None,
-        _ if depth >= MAX_DEPTH => Some(Err(format!("not listed, being more than {MAX_DEPTH} deep"))),
-        Payload::Compressed { size, .. } if *size > *inflatable => Some(Err(format!(
-            "not inflated, claiming {size} bytes where this listing has {inflatable} left to inflate"
-        ))),
-        // Charged whether or not it inflates to a bundle: the work is done either way.
-        Payload::Compressed { size, .. } => {
-            *inflatable -= size;
-            Some(open())
-        }
-        Payload::Embedded(_) => Some(open()),
+    // Validation reads a nested bundle of a shape it knows, so opening one fails only where the
+    // shape around it is a later version's and its payload is not a bundle this one reads. The
+    // error is escaped like any other text out of the file, since it can quote some.
+    let inner = if part.kind != PartKind::Bundle {
+        None
+    } else if depth >= MAX_DEPTH {
+        Some(Err(format!("not listed, being more than {MAX_DEPTH} deep")))
+    } else {
+        Some(
+            Bundle::from_slice(&part.payload)
+                .map_err(|e| format!("cannot be opened: {}", printable(&e.to_string()))),
+        )
     };
     let held = inner.as_ref().and_then(|inner| inner.as_ref().ok()).map(|inner| &inner.header);
 
@@ -1562,11 +1535,20 @@ fn describe_part(part: &Part, indent: usize, depth: usize, inflatable: &mut u64)
         let listed = if one_saves_registry::is_binding(binding.as_str()) { "" } else { " (unlisted)" };
         field(indent, "binding", &format!("{binding}{listed}"));
     }
+    if let Some(bound_to) = &part.bound_to {
+        for (label, id) in
+            [("console", &bound_to.device), ("account", &bound_to.account), ("medium", &bound_to.medium)]
+        {
+            if let Some(id) = id {
+                field(indent, "bound to", &format!("{label} {}", shown_bytes(id)));
+            }
+        }
+        for line in unknown_keys(&bound_to.unknown) {
+            field(indent, "bound to", &line);
+        }
+    }
     if let Some(content_type) = &part.content_type {
         field(indent, "content type", &printable(content_type));
-    }
-    if let Payload::Compressed { bytes, .. } = &part.payload {
-        field(indent, "encoding", &format!("zstd, {} bytes stored", bytes.len()));
     }
     if let Some(dirent) = &part.dirent {
         field(indent, "dirent", &shown_bytes(dirent));
@@ -1578,7 +1560,7 @@ fn describe_part(part: &Part, indent: usize, depth: usize, inflatable: &mut u64)
         field(indent, "unknown", &line);
     }
     match inner {
-        Some(Ok(inner)) => describe(&inner, indent + 2, depth + 1, inflatable),
+        Some(Ok(inner)) => describe(&inner, indent + 2, depth + 1),
         Some(Err(why)) => field(indent, "bundle", &why),
         None => {}
     }
@@ -1791,99 +1773,16 @@ fn is_bidi_control(character: char) -> bool {
     matches!(character, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
-/// Every part's digest, checked against its bytes, in this bundle and in every bundle it holds.
-///
-/// Decoding checks a nested bundle's own digest, since that is its identity, but not those of the
-/// parts inside it, and nothing inside a compressed one, which it leaves shut. A byte flipped in
-/// one save on a card, with the card's digest of that save rewritten to match, is a file that
-/// decodes cleanly; this is what catches it. What it inflates comes out of `inflatable`, and it
-/// opens bundles [`MAX_DEPTH`] deep, the same bounds a listing keeps to. Anything it cannot check
-/// is a problem too, since a check that passes over a part has not passed it.
-///
-/// Each problem is a line naming the part by where it sits: `part 1 > part 0`.
-fn digest_problems(bundle: &Bundle, inflatable: &mut u64) -> Vec<String> {
-    let mut problems = Vec::new();
-    check_digests(bundle, "", 0, inflatable, &mut problems);
-    problems
-}
-
-fn check_digests(
-    bundle: &Bundle,
-    within: &str,
-    depth: usize,
-    inflatable: &mut u64,
-    problems: &mut Vec<String>,
-) {
-    for part in &bundle.parts {
-        let at = format!("{within}part {}", part.id);
-        if let Payload::Compressed { size, .. } = &part.payload {
-            if *size > *inflatable {
-                problems.push(format!(
-                    "{at}: not inflated, claiming {size} bytes where {inflatable} are left to inflate"
-                ));
-                continue;
-            }
-            *inflatable -= size;
-        }
-        let bytes = match part.bytes() {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                problems.push(format!("{at}: {}", printable(&e.to_string())));
-                continue;
-            }
-        };
-        if one_saves::HashValue::sha256_of(&bytes) != part.sha256 {
-            problems.push(format!("{at}: sha256 does not match its payload"));
-            continue;
-        }
-
-        if part.kind != PartKind::Bundle {
-            continue;
-        }
-        if depth >= MAX_DEPTH {
-            problems.push(format!("{at}: not checked, being more than {MAX_DEPTH} bundles deep"));
-            continue;
-        }
-        match Bundle::from_slice(&bytes) {
-            Ok(inner) => check_digests(&inner, &format!("{at} > "), depth + 1, inflatable, problems),
-            Err(e) => problems.push(format!("{at}: is not a bundle: {}", printable(&e.to_string()))),
-        }
-    }
-}
-
-/// What every compressed part at the top of `bundle` claims it inflates to, together.
-///
-/// The parts of a bundle nested in another are uncompressed, so these are all the claims a
-/// command that opens no nested bundle acts on.
-fn claimed_inflation(bundle: &Bundle) -> u64 {
-    bundle
-        .parts
-        .iter()
-        .filter(|part| matches!(part.payload, Payload::Compressed { .. }))
-        .fold(0u64, |total, part| total.saturating_add(part.payload.len()))
-}
-
 fn verify(path: &Path) -> Fallible {
     let bytes = std::fs::read(path)?;
+    // Decoding runs every rule, every part's digest among them, all the way down.
     let bundle = Bundle::from_slice(&bytes)?;
-
-    // Decoding already ran every structural rule; what is left is the digests, which are checked
-    // against the bytes rather than trusted, all the way down.
-    let problems = digest_problems(&bundle, &mut MAX_INFLATED.clone());
-    for problem in &problems {
-        eprintln!("  {problem}");
-    }
-    let mut bad = problems.len();
 
     // Re-encoding must reproduce the file byte for byte. That is the property the content hash
     // rests on, and the one most likely to be quietly wrong.
     if bundle.to_vec()? != bytes {
-        bad += 1;
         eprintln!("  this file is not the deterministic encoding of what it says");
-    }
-
-    if bad > 0 {
-        return Err(format!("{bad} problem(s) in {}", path.display()).into());
+        return Err(format!("1 problem in {}", path.display()).into());
     }
     println!("{}: ok ({} part(s))", path.display(), bundle.parts.len());
     Ok(())
@@ -1891,20 +1790,10 @@ fn verify(path: &Path) -> Fallible {
 
 fn hash(path: &Path) -> Fallible {
     let bytes = std::fs::read(path)?;
-    let bundle = Bundle::from_slice(&bytes)?;
-    println!("file    {}", one_saves::HashValue::sha256_of(&bytes));
-    // The content hash is over every part inflated, all at once, so the claims are weighed first.
-    let claimed = claimed_inflation(&bundle);
-    if claimed > MAX_INFLATED {
-        println!(
-            "content unavailable: its parts claim {claimed} bytes inflated, past the {MAX_INFLATED} this inflates"
-        );
-        return Ok(());
-    }
-    match bundle.content_hash() {
-        Ok(content) => println!("content {content}"),
-        Err(e) => println!("content unavailable: {}", printable(&e.to_string())),
-    }
+    // A bundle compresses nothing, so the hash of the file is its content hash, once the file is
+    // known to be one.
+    Bundle::from_slice(&bytes)?;
+    println!("content {}", one_saves::HashValue::sha256_of(&bytes));
     Ok(())
 }
 
@@ -2084,41 +1973,14 @@ mod tests {
 
     /// A collection holding one save, with the save's own part's digest wrong and everything
     /// around it consistent: the file a byte flipped and resealed at the outer level makes.
-    fn resealed_collection() -> Bundle {
+    #[test]
+    fn a_digest_inside_a_nested_bundle_is_checked_on_the_way_in() {
         let mut save = Bundle::new(one_saves::Header::default(), vec![Part::new(0, *b"SAVE")]);
         save.parts[0].sha256 = one_saves::HashValue::sha256_of(b"EVAS");
-        let nested = Part::new(0, save.to_vec().unwrap()).kind(PartKind::Bundle);
+        let nested = Part::new(0, save.to_cbor().to_cbor_data()).kind(PartKind::Bundle);
         let bundle = Bundle::new(one_saves::Header::new(one_saves::Shape::Collection), vec![nested]);
-        Bundle::from_slice(&bundle.to_vec().unwrap()).expect("decodes, which is the point")
-    }
-
-    #[test]
-    fn digests_are_checked_inside_nested_bundles() {
-        let problems = digest_problems(&resealed_collection(), &mut MAX_INFLATED.clone());
-        assert_eq!(problems, ["part 0 > part 0: sha256 does not match its payload"]);
-    }
-
-    #[test]
-    fn a_top_level_digest_that_does_not_match_is_a_problem() {
-        let mut bundle = Bundle::new(one_saves::Header::default(), vec![Part::new(0, *b"SAVE")]);
-        bundle.parts[0].sha256 = one_saves::HashValue::sha256_of(b"EVAS");
-        let problems = digest_problems(&bundle, &mut MAX_INFLATED.clone());
-        assert_eq!(problems, ["part 0: sha256 does not match its payload"]);
-    }
-
-    #[test]
-    fn a_claim_past_the_budget_is_not_inflated() {
-        // Not a zstd frame at all: were it inflated, it would fail differently.
-        let mut part = Part::new(0, *b"SAVE");
-        part.payload = Payload::Compressed { bytes: b"not zstd".to_vec(), size: 1 << 40 };
-        let bundle = Bundle::new(one_saves::Header::default(), vec![part]);
-        assert_eq!(claimed_inflation(&bundle), 1 << 40);
-
-        let mut inflatable = MAX_INFLATED;
-        let problems = digest_problems(&bundle, &mut inflatable);
-        assert_eq!(problems.len(), 1);
-        assert!(problems[0].contains("not inflated, claiming 1099511627776 bytes"), "{}", problems[0]);
-        assert_eq!(inflatable, MAX_INFLATED, "nothing was charged for what was not inflated");
+        let error = Bundle::from_slice(&bundle.to_cbor().to_cbor_data()).unwrap_err();
+        assert_eq!(error.kind(), &one_saves::ErrorKind::PayloadHashMismatch, "{error}");
     }
 
     fn convert_args(line: &[&str]) -> Convert {

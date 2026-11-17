@@ -17,20 +17,26 @@ use crate::name::ReverseDnsName;
 mod huc3;
 mod joybus;
 mod mbc3;
+mod n64dd;
 mod rtc4513;
 mod s3511a;
+mod smpc;
 mod srtc;
 mod tc8521;
 mod tpp1;
+mod upd4990a;
 
 pub use huc3::RtcHuc3;
 pub use joybus::RtcJoybus;
 pub use mbc3::RtcMbc3;
+pub use n64dd::RtcN64dd;
 pub use rtc4513::RtcRtc4513;
 pub use s3511a::{RtcS3511a, S3511aAlarm};
+pub use smpc::RtcSmpc;
 pub use srtc::RtcSrtc;
 pub use tc8521::RtcTc8521;
 pub use tpp1::RtcTpp1;
+pub use upd4990a::RtcUpd4990a;
 
 /// A game's clock reading, on the Unix scale.
 ///

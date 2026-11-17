@@ -15,14 +15,9 @@ readme = "README.md"
 [dependencies]
 dcbor.workspace = true
 sha2.workspace = true
-zstd = { workspace = true, optional = true }
 
 [features]
-default = ["zstd"]
-# Reading and writing parts whose payload carries `encoding: "zstd"`. Without it, such a part
-# decodes and round-trips fine but its payload cannot be inflated, so a content hash cannot be
-# computed for a bundle that has one.
-zstd = ["dep:zstd"]
+default = []
 # `Arc` instead of `Rc` for `dcbor`'s reference counting, which is what makes every type here
 # `Send` and `Sync` — a `Bundle` held across an `.await` in a future that has to be `Send` needs
 # it. Off, the whole crate is single-threaded and the refcounts are non-atomic. It is a feature

@@ -11,9 +11,14 @@ use crate::name::ReverseDnsName;
 ///
 /// At the size and in the order the console stored it: nothing here scales, recolours or
 /// reorders the picture. The native bytes stay in the payload.
+///
+/// A still icon is one frame, which carries no hold. An animated icon is two frames or more, and
+/// every one carries how long it shows, even where a format runs them all at one rate.
+/// [`still`](Self::still) and [`animated`](Self::animated) build each, and reading a value that
+/// is neither refuses it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Icon {
-    /// The frames in display order. A still icon is one frame, and there is always at least one.
+    /// The frames in display order: one with no hold, or two or more each with one.
     pub frames: Vec<IconFrame>,
     /// The wider still image, where a format keeps one.
     pub banner: Option<Vec<u8>>,
@@ -21,9 +26,31 @@ pub struct Icon {
 
 impl Icon {
     /// An icon of these frames, with no banner.
+    ///
+    /// The frames are taken as they are; [`still`](Self::still) and [`animated`](Self::animated)
+    /// are what keep to the schema.
     #[must_use]
     pub fn new(frames: Vec<IconFrame>) -> Self {
         Icon { frames, banner: None }
+    }
+
+    /// A still icon: one frame, with no hold.
+    #[must_use]
+    pub fn still(png: Vec<u8>) -> Self {
+        Icon::new(vec![IconFrame::new(png)])
+    }
+
+    /// An animated icon: each frame and how long it shows, in milliseconds.
+    ///
+    /// One frame is a still icon, whose hold says nothing, so it is dropped.
+    #[must_use]
+    pub fn animated(frames: impl IntoIterator<Item = (Vec<u8>, u64)>) -> Self {
+        let mut frames: Vec<IconFrame> =
+            frames.into_iter().map(|(png, hold)| IconFrame::new(png).hold_ms(hold)).collect();
+        if let [frame] = frames.as_mut_slice() {
+            frame.hold_ms = None;
+        }
+        Icon::new(frames)
     }
 
     /// Adds the banner.
@@ -39,7 +66,8 @@ impl Icon {
 pub struct IconFrame {
     /// The frame as a PNG, 1 to 65536 bytes.
     pub png: Vec<u8>,
-    /// How long it shows, where the format says. A still icon says nothing.
+    /// How long it shows before the next. Every frame of an animated icon has one, and the one
+    /// frame of a still icon has none.
     pub hold_ms: Option<u64>,
 }
 
@@ -97,13 +125,15 @@ impl TryFrom<CBOR> for Icon {
         if frames.is_empty() {
             return Err(dcbor::Error::OutOfRange);
         }
+        // A still icon's one frame has no hold, and every frame of an animated one has one.
+        let animated = frames.len() > 1;
         let frames = frames
             .iter()
             .map(|frame| {
                 let frame = frame.as_array().ok_or(dcbor::Error::WrongType)?;
                 match frame {
-                    [png] => Ok(IconFrame::new(want_png(png)?)),
-                    [png, hold] => Ok(IconFrame::new(want_png(png)?).hold_ms(want_uint(hold)?)),
+                    [png] if !animated => Ok(IconFrame::new(want_png(png)?)),
+                    [png, hold] if animated => Ok(IconFrame::new(want_png(png)?).hold_ms(want_uint(hold)?)),
                     _ => Err(dcbor::Error::OutOfRange),
                 }
             })
@@ -177,8 +207,7 @@ mod tests {
 
     #[test]
     fn round_trips_and_shows_its_size() {
-        let icon = Icon::new(vec![IconFrame::new(png(16, 16)).hold_ms(166), IconFrame::new(png(16, 16))])
-            .banner(png(96, 32));
+        let icon = Icon::animated([(png(16, 16), 166), (png(16, 16), 83)]).banner(png(96, 32));
         assert_eq!(Icon::try_from(CBOR::from(icon.clone())).unwrap(), icon);
         assert_eq!(icon.to_string(), "2 frames, 16x16, banner 96x32");
         // A picture's bytes are its length in a `Debug` line, not thousands of numbers.
@@ -191,5 +220,17 @@ mod tests {
     #[test]
     fn refuses_an_icon_with_no_frame() {
         assert!(Icon::try_from(CBOR::from(Icon::new(Vec::new()))).is_err());
+    }
+
+    #[test]
+    fn a_still_has_no_hold_and_every_animated_frame_has_one() {
+        let still = Icon::still(png(16, 16));
+        assert_eq!(Icon::try_from(CBOR::from(still.clone())).unwrap(), still);
+        assert_eq!(Icon::animated([(png(16, 16), 250)]), still, "one frame is a still");
+
+        let held_still = Icon::new(vec![IconFrame::new(png(16, 16)).hold_ms(250)]);
+        assert!(Icon::try_from(CBOR::from(held_still)).is_err(), "a still with a hold");
+        let unheld = Icon::new(vec![IconFrame::new(png(16, 16)).hold_ms(250), IconFrame::new(png(16, 16))]);
+        assert!(Icon::try_from(CBOR::from(unheld)).is_err(), "an animated frame without one");
     }
 }

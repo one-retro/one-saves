@@ -4,24 +4,30 @@ use std::fmt;
 
 use dcbor::{CBOR, Map};
 
-use super::{Extension, only_keys, want_map};
+use super::{Extension, want_map};
 use crate::name::ReverseDnsName;
 
-/// The save memory an N64 cartridge carries, on the part that holds it.
+/// The save chip an N64 cartridge has, on the part that holds its memory.
 ///
-/// Its presence also says the payload is in **normal form**: the chip's bytes in the order the
-/// console reads them, big-endian, at the chip's real size. That is what a flash cartridge and a
+/// That part is a save part with the role `cartridge`, in a bundle naming `n64`, and it has to
+/// carry this key: it is the one extension value a decoder checks, since the chip fixes how long
+/// the payload beside it is. The payload is the chip in **normal form**: every byte of it, in the
+/// order the console reads them, at the chip's real size. That is what a flash cartridge and a
 /// cartridge reader produce. Emulators do not all agree: mupen64plus and Project64 keep SRAM and
 /// FlashRAM as host-order 32-bit words, every word's bytes reversed, and a libretro core pads
 /// every chip into one file. A producer converts to normal form before it writes this key, and a
 /// consumer converts back.
 ///
-/// The type cannot be read off the payload. A 4 Kbit game's EEPROM and the first 512 bytes of a
+/// The chip cannot be read off the payload. A 4 Kbit game's EEPROM and the first 512 bytes of a
 /// 16 Kbit one look alike, and SRAM and FlashRAM share an address range, so an emulator decides
-/// from a database and the decision is lost once the bytes are a file. This key keeps it.
+/// from a database and the decision is lost once the bytes are a file. This key keeps it. A
+/// producer that cannot tell the chip carries the file as an `aux` part instead.
+///
+/// Key 0 is the spec's `chip`. An integer key a later version assigns beside it is ignored here
+/// and round-tripped with the rest of the value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct N64 {
-    /// Which chip the cartridge has.
+    /// Which chip the cartridge has: the spec's `chip`.
     pub save: N64Save,
 }
 
@@ -46,12 +52,21 @@ pub enum N64Save {
     Sram768k,
     /// 1 Mbit FlashRAM, 128 KiB: Majora's Mask, Paper Mario.
     Flash1m,
+    /// 1 Mbit SRAM, 128 KiB: no retail chip, but one a homebrew ROM's header can ask for, which
+    /// flash cartridges and ares provide.
+    Sram1m,
 }
 
 impl N64Save {
-    /// Every type, in the order the homebrew header numbers them.
-    pub const ALL: [N64Save; 5] =
-        [N64Save::Eeprom4k, N64Save::Eeprom16k, N64Save::Sram256k, N64Save::Sram768k, N64Save::Flash1m];
+    /// Every type, in the order the homebrew header numbers them, from 1.
+    pub const ALL: [N64Save; 6] = [
+        N64Save::Eeprom4k,
+        N64Save::Eeprom16k,
+        N64Save::Sram256k,
+        N64Save::Sram768k,
+        N64Save::Flash1m,
+        N64Save::Sram1m,
+    ];
 
     /// How the key writes the type.
     #[must_use]
@@ -62,6 +77,7 @@ impl N64Save {
             N64Save::Sram256k => "sram-256k",
             N64Save::Sram768k => "sram-768k",
             N64Save::Flash1m => "flash-1m",
+            N64Save::Sram1m => "sram-1m",
         }
     }
 
@@ -79,7 +95,7 @@ impl N64Save {
             N64Save::Eeprom16k => 2 * 1024,
             N64Save::Sram256k => 32 * 1024,
             N64Save::Sram768k => 96 * 1024,
-            N64Save::Flash1m => 128 * 1024,
+            N64Save::Flash1m | N64Save::Sram1m => 128 * 1024,
         }
     }
 
@@ -114,7 +130,11 @@ impl TryFrom<CBOR> for N64 {
 
     fn try_from(value: CBOR) -> dcbor::Result<Self> {
         let map = want_map(&value)?;
-        only_keys(map, &[0])?;
+        // The value's integer keys are the spec's, so one this version does not list is a later
+        // version's; anything else is no key the value takes.
+        if map.iter().any(|(key, _)| !matches!(key.as_case(), dcbor::CBORCase::Unsigned(_))) {
+            return Err(dcbor::Error::msg("a key that is not an unsigned integer"));
+        }
         let text = String::try_from(map.get::<u64, CBOR>(0).ok_or(dcbor::Error::MissingMapKey)?)?;
         // A type this build does not know is a value it cannot read, not one to guess at: the
         // size it implies is what a consumer would write the save back out at.
@@ -144,16 +164,32 @@ mod tests {
 
     #[test]
     fn refuses_a_type_it_does_not_know() {
+        // The names count kilobits; this one counts the payload in KiB.
         let mut map = Map::new();
-        map.insert(0u64, "sram-1m");
+        map.insert(0u64, "eeprom-512b");
         assert!(N64::try_from(CBOR::from(map)).is_err());
     }
 
     #[test]
-    fn refuses_keys_the_schema_does_not_define() {
+    fn reads_past_a_key_a_later_version_assigns() {
         let mut map = Map::new();
         map.insert(0u64, "eeprom-4k");
         map.insert(1u64, "big-endian");
+        assert_eq!(N64::try_from(CBOR::from(map)).unwrap(), N64::new(N64Save::Eeprom4k));
+    }
+
+    #[test]
+    fn refuses_a_key_that_is_not_the_specs() {
+        let mut map = Map::new();
+        map.insert(0u64, "eeprom-4k");
+        map.insert("x.example.order", "big-endian");
         assert!(N64::try_from(CBOR::from(map)).is_err());
+    }
+
+    #[test]
+    fn a_homebrew_rom_can_ask_for_a_megabit_of_sram() {
+        assert_eq!(N64Save::from_name("sram-1m"), Some(N64Save::Sram1m));
+        assert_eq!(N64Save::Sram1m.size(), N64Save::Flash1m.size());
+        assert!(!N64Save::Sram1m.is_eeprom());
     }
 }

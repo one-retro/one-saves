@@ -875,7 +875,11 @@ pub struct Part {
     pub dirent: Option<Vec<u8>>,
     /// The media type of the payload.
     pub content_type: Option<String>,
-    /// SHA-256 over the **uncompressed** payload.
+    /// SHA-256 over the payload.
+    ///
+    /// A decoder refuses a part whose payload does not hash to it, and so does
+    /// [`to_vec`](Bundle::to_vec): [`Part::new`] computes it, and a caller that replaces
+    /// [`payload`](Part::payload) by hand recomputes it with [`Part::rehash`].
     pub sha256: HashValue,
     /// Who produced this part's bytes, when that differs from the bundle's source.
     pub source: Option<Source>,
@@ -883,13 +887,17 @@ pub struct Part {
     pub game: Option<Game>,
     /// An index copy of a nested bundle's `system`. Meaningless on a part that is not a bundle.
     pub system: Option<Slug>,
-    /// Present when the console that wrote this payload bound it to itself.
+    /// Present when this payload is bound to the console, account or medium it came from.
     ///
     /// Its presence is what a consumer acts on; the value only names what the payload is bound
     /// to, so a consumer that has never seen the value still knows not to treat it as portable.
     pub binding: Option<Slug>,
-    /// The bytes, or a reference to them.
-    pub payload: Payload,
+    /// What a bound payload is bound to, by the identifiers its system binds the bytes with.
+    ///
+    /// Only beside [`binding`](Part::binding), and only with the identifiers that binding names.
+    pub bound_to: Option<BoundTo>,
+    /// The bytes, inline and uncompressed: the format compresses nothing.
+    pub payload: Vec<u8>,
     /// Extension keys, flat alongside the integer ones.
     pub extensions: Extensions,
     /// Integer keys from a later minor version.
@@ -914,7 +922,8 @@ impl Part {
             game: None,
             system: None,
             binding: None,
-            payload: Payload::Embedded(bytes),
+            bound_to: None,
+            payload: bytes,
             extensions: Extensions::new(),
             unknown: UnknownKeys::new(),
         }
@@ -1000,6 +1009,26 @@ impl Part {
         self
     }
 
+    /// Sets what a bound payload is bound to. It goes beside [`binding`](Part::binding).
+    #[must_use]
+    pub fn bound_to(mut self, bound_to: impl Into<Option<BoundTo>>) -> Self {
+        self.bound_to = bound_to.into();
+        self
+    }
+
+    /// Recomputes [`sha256`](Part::sha256) from the payload, for a caller that replaced it.
+    pub fn rehash(&mut self) {
+        self.sha256 = HashValue::sha256_of(&self.payload);
+    }
+
+    /// Whether [`sha256`](Part::sha256) is the digest of the payload.
+    ///
+    /// Always so for a part a decoder handed back, since it refuses one that is not.
+    #[must_use]
+    pub fn verify(&self) -> bool {
+        HashValue::sha256_of(&self.payload) == self.sha256
+    }
+
     /// Puts an extension value under its key.
     #[must_use]
     pub fn extension<T: Extension>(mut self, value: T) -> Self {
@@ -1015,48 +1044,60 @@ impl Part {
     }
 }
 
-/// A part's bytes, in one of the three shapes the format allows.
+/// What a bound payload is bound to: the console, the account or the medium, each by the
+/// identifier its system binds the bytes with.
 ///
-/// Which form a part is in decides whether `size` appears on the wire, so the two cannot disagree.
-/// Since 0.2 `size` rides on compression and nothing else:
-///
-/// | Form         | `size`  | `encoding` | payload     |
-/// | ------------ | ------- | ---------- | ----------- |
-/// | Uncompressed | absent  | absent     | byte string |
-/// | Compressed   | present | `"zstd"`   | byte string |
-#[derive(Debug, Clone, PartialEq)]
-pub enum Payload {
-    /// The bytes, inline and uncompressed. The payload states its own length, so no `size`.
-    Embedded(Vec<u8>),
-    /// The bytes, inline and compressed with zstd.
-    Compressed {
-        /// The compressed bytes as they sit in the file.
-        bytes: Vec<u8>,
-        /// The uncompressed byte length, which the compressed form does not state.
-        size: u64,
-    },
+/// Each is the bytes the system stores that identifier as, which a consumer compares byte for byte
+/// with its target's and reads nothing else into. Which of them a part may carry follows from its
+/// [`binding`](Part::binding): `device` names the console, `account` the account, `device-account`
+/// either or both, and `medium` the medium.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BoundTo {
+    /// Key 0, the console's identifier, such as a Wii's console ID.
+    pub device: Option<Vec<u8>>,
+    /// Key 1, the account's identifier, such as a PSN account ID.
+    pub account: Option<Vec<u8>>,
+    /// Key 2, the medium's identifier, such as an amiibo tag's NFC UID.
+    pub medium: Option<Vec<u8>>,
+    /// Integer keys from a later version.
+    pub unknown: UnknownKeys,
 }
 
-impl Default for Payload {
-    fn default() -> Self {
-        Payload::Embedded(Vec::new())
-    }
-}
-
-impl Payload {
-    /// The uncompressed byte length, whichever form this is.
+impl BoundTo {
+    /// Names the console.
     #[must_use]
-    pub fn len(&self) -> u64 {
-        match self {
-            Payload::Embedded(bytes) => bytes.len() as u64,
-            Payload::Compressed { size, .. } => *size,
-        }
+    pub fn device(mut self, id: impl Into<Vec<u8>>) -> Self {
+        self.device = Some(id.into());
+        self
     }
 
-    /// Whether the payload is zero bytes long, which the format allows.
+    /// Names the account.
+    #[must_use]
+    pub fn account(mut self, id: impl Into<Vec<u8>>) -> Self {
+        self.account = Some(id.into());
+        self
+    }
+
+    /// Names the medium.
+    #[must_use]
+    pub fn medium(mut self, id: impl Into<Vec<u8>>) -> Self {
+        self.medium = Some(id.into());
+        self
+    }
+
+    /// The keys this names a target under: 0 for the console, 1 for the account, 2 for the medium.
+    pub(crate) fn keys(&self) -> impl Iterator<Item = u64> + '_ {
+        [(0, &self.device), (1, &self.account), (2, &self.medium)]
+            .into_iter()
+            .filter(|(_, id)| id.is_some())
+            .map(|(key, _)| key)
+    }
+
+    /// Whether it names nothing, which the format writes by leaving it out.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.keys().next().is_none() && self.unknown.is_empty()
     }
 }
 
@@ -1099,8 +1140,14 @@ mod tests {
 
     #[test]
     fn a_new_part_hashes_its_own_payload() {
-        let part = Part::new(0, *b"SAVE");
+        let mut part = Part::new(0, *b"SAVE");
         assert_eq!(part.sha256, HashValue::sha256_of(b"SAVE"));
         assert_eq!(part.payload.len(), 4);
+        assert!(part.verify());
+
+        part.payload = b"LOAD".to_vec();
+        assert!(!part.verify(), "a payload replaced by hand no longer matches its digest");
+        part.rehash();
+        assert!(part.verify());
     }
 }

@@ -38,7 +38,7 @@ datary = { workspace = true, optional = true }
 rom-id = { workspace = true, optional = true }
 
 [features]
-default = ["cards", "dat", "dat-cmpro", "rom", "shift-jis", "zstd"]
+default = ["cards", "dat", "dat-cmpro", "rom", "shift-jis"]
 # Every card format. Each is a crate of its own and an adapter here; none of them brings anything
 # from outside the workspace, so what a format costs is its own code and nothing else.
 cards = ["gc", "n64", "neogeo", "ps1", "ps2", "saturn", "vmu"]
@@ -86,10 +86,11 @@ archive = ["dep:zip"]
 # deflate implementation and a PNG encoder. Off, a state is still recognised, and refused in those
 # words rather than misread as a save.
 states = ["dep:flate2", "dep:png"]
-# Forwarded to one-saves, whose `zstd` compiles a C library. Off, a part whose payload carries
-# `encoding: "zstd"` still round-trips; its payload just cannot be inflated. With `states`, it is
-# also what reads a DuckStation state compressed the way DuckStation does by default.
-zstd = ["one-saves/zstd", "dep:zstd"]
+# Reading and writing emulator states that zstd compresses, which compiles a C library: a
+# DuckStation state compressed the way DuckStation does by default, and a RetroArch state
+# RetroArch compressed. A bundle compresses nothing, so this is about those files alone, and it
+# brings `states` with it.
+zstd = ["states", "dep:zstd"]
 # Forwarded to one-saves: `Arc` rather than `Rc` under `dcbor`, which is what makes a `Bundle` and
 # everything this crate hands back `Send` and `Sync`. Needed to hold one across an `.await` in a
 # future that has to be `Send`. Unlike the rest, it is off by default — the atomic refcounts cost

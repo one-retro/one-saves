@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(bundle.parts[0].path.as_deref(), Some("SONIC2___S01"));
         assert_eq!(bundle.parts[0].dirent.as_ref().map(Vec::len), Some(32));
 
-        let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap();
+        let inner = Bundle::from_slice(&bundle.parts[0].payload).unwrap();
         assert_eq!(inner.parts[0].payload.len(), 1024, "two blocks");
         bundle.validate().expect("valid bundle");
     }

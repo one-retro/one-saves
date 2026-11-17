@@ -89,7 +89,7 @@ pub fn write(bundle: &Bundle) -> Result<(Vec<u8>, String)> {
         .find(|part| part.kind == PartKind::Screenshot)
         .ok_or_else(|| Error::NotConvertible("this bundle holds no screenshot".into()))?;
     let content_type = part.content_type.clone().unwrap_or_else(|| "image/png".to_owned());
-    Ok((part.bytes()?.into_owned(), content_type))
+    Ok((part.payload.clone(), content_type))
 }
 
 #[cfg(test)]

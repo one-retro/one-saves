@@ -458,7 +458,8 @@ pub fn write_rust(data: &Registries, clocks: &Clocks, layouts: &Layouts, path: &
     );
 
     table(w, "The spec-owned `binding` vocabulary.", "BINDINGS", "Binding", &data.bindings, |b| {
-        format!("Binding {{ name: {}, bound_to: {} }}", lit(&b.value), lit(&b.bound_to))
+        let keys = b.keys.iter().map(u64::to_string).collect::<Vec<_>>().join(", ");
+        format!("Binding {{ name: {}, bound_to: {}, keys: &[{keys}] }}", lit(&b.value), lit(&b.bound_to))
     });
 
     table(w, "Assigned names in the `x` tree, sorted by name.", "VENDORS", "Vendor", &data.vendors, |v| {

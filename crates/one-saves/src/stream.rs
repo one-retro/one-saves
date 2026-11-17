@@ -17,8 +17,8 @@
 //! A bundle is `tag(1SAV) [header, parts]`, so the header is whole before the first part begins.
 //! Inside a part's map the keys are sorted bytewise on their encodings, which puts every unsigned
 //! integer key ahead of `payload` at `-1`: `id` at 0 through `binding` at 13, and any a later
-//! minor version assigns. So a part's `kind`, `encoding`, `size` and `sha256` are all in hand
-//! before the first byte of its payload. What can follow the payload is a negative key a later
+//! version assigns. So a part's `kind`, `role` and `sha256` are all in hand before the first byte
+//! of its payload, and so is the payload's length, from its head. What can follow the payload is a negative key a later
 //! version assigns and the producer's own text keys. That is why a part's extension keys arrive in
 //! [`PartEnd`](Event::PartEnd) rather than in [`PartStart`](Event::PartStart). The reader relies on
 //! that ordering, which deterministic encoding fixes, and on nothing else about where a key sits:
@@ -68,17 +68,16 @@
 //! 2. For each part, in the order the bundle holds them:
 //!    1. [`PartStart`](Event::PartStart), carrying a [`PartHead`]: every key of the part ahead of its
 //!       payload, which is all of them but the extension keys. Its
-//!       [`size`](PartHead::size) is the payload's uncompressed length and its
-//!       [`sha256`](PartHead::sha256) the digest that length has to hash to.
-//!    2. [`Data`](Event::Data), as many times as it takes: the payload, uncompressed, in order. The
-//!       slices add up to exactly [`size`](PartHead::size), and an empty payload has none. Where
-//!       the part is stored uncompressed each slice borrows the input it came in, so nothing is
-//!       copied; where it is `zstd`, each is inflated into a buffer the reader owns.
+//!       [`size`](PartHead::size) is the payload's length and its
+//!       [`sha256`](PartHead::sha256) the digest it has to hash to.
+//!    2. [`Data`](Event::Data), as many times as it takes: the payload, in order. The slices add up
+//!       to exactly [`size`](PartHead::size), and an empty payload has none. Each borrows the input
+//!       it came in, so nothing is copied.
 //!    3. [`PartEnd`](Event::PartEnd), carrying a [`PartTail`]: the extension keys and any later
 //!       version's negative keys, which follow the payload. By then the payload has been hashed and
 //!       matched its `sha256`.
-//! 3. Then no further event, and [`finish`](Reader::finish) returns [`Done`], with the bundle's file
-//!    hash and content hash.
+//! 3. Then no further event, and [`finish`](Reader::finish) returns [`Done`], with the bundle's
+//!    content hash.
 //!
 //! An error ends it at any point: the reader returns it from every call after, and takes nothing
 //! more.
@@ -99,12 +98,12 @@
 //! | When | What |
 //! | --- | --- |
 //! | each byte | Deterministic encoding, as `dcbor` holds [`from_slice`](crate::Bundle::from_slice) to it: shortest heads, definite lengths, the simple values and floats it admits, sorted keys and no duplicates. The bundle tag, a two-element envelope. Nesting no deeper than [`from_slice`](crate::Bundle::from_slice) reads ([`TooDeep`](ErrorKind::TooDeep)), counted on an explicit stack, never by recursion. |
-//! | the header's last byte | The header decoded, and everything [`validate`](crate::Bundle::validate) says about a header on its own: what its shape admits, `game`, `taken_with`, where its extension keys sit, a card's `system_area`. The header is not handed over until the parts array's head follows it, a byte or so later. |
+//! | the header's last byte | The header decoded, and everything [`validate`](crate::Bundle::validate) says about a header on its own: what its shape admits, `game`, `source`, `taken_with`, that no `x.1sav.n64` sits in it, a card's `system_area`. The header is not handed over until the parts array's head follows it, a byte or so later. |
 //! | the parts array's head | It holds at least one part, no more than [`Limits::parts`], and no more than one in a screenshot. |
-//! | a payload's head | The part's keys decoded, and every rule about one part that does not need its bytes: ascending `id`s, what the shape admits, no two parts at one address, a `system` file after its directory, a card's `dirent` lengths and save names, which keys a `state`, a `screenshot` or a `system` part carries, `game`. Its `size`, and its length on the wire, against [`Limits::part_size`]. A part these refuse is refused here where nothing follows the payload in its map, and at the map's end where something does (see below). |
-//! | each payload byte | A `zstd` payload abandoned the moment it inflates past its `size`. A nested bundle read as it arrives, by a reader of its own (see below). |
-//! | the payload's last byte | Its SHA-256 against `sha256`. A `zstd` payload that stopped short of `size`, or did not end its frame. A nested bundle complete, and its hash. |
-//! | the part map's last byte | The extension keys after the payload, and where they sit. |
+//! | a payload's head | The part's keys decoded, and every rule about one part that does not need its bytes: ascending `id`s, what the shape admits, no two parts at one address, a device's roles, a card's one socket, a `system` file after its directory, a card's `dirent` lengths and save names, which keys each kind carries, `game`, `source`, `bound_to`, one N64 cartridge, a 64DD disk's area and its length. Its length against [`Limits::part_size`]. A part these refuse is refused here where nothing follows the payload in its map, and at the map's end where something does (see below). |
+//! | each payload byte | A nested bundle read as it arrives, by a reader of its own (see below). |
+//! | the payload's last byte | Its SHA-256 against `sha256`. A nested bundle complete, and its hash. |
+//! | the part map's last byte | The extension keys after the payload: `x.1sav.n64` on an N64 cartridge's part, naming a chip as long as the payload, and nowhere else. |
 //! | the parts array's last byte | A state holds a `state` part. Every rule has now run. |
 //! | [`finish`](Reader::finish) | Nothing follows the bundle, and nothing of it is missing. |
 //!
@@ -121,22 +120,12 @@
 //!
 //! # The verdict
 //!
-//! The reader accepts a bundle exactly when [`from_slice`](crate::Bundle::from_slice) does and
-//! every part's [`verify`](crate::Part::verify) returns `true`, at the same
-//! [`Strictness`]. It refuses everything else, with the same [`Error`],
-//! [`ErrorKind`] and path. The [`Header`] and the parts' keys it hands over are the ones
+//! The reader accepts a bundle exactly when [`from_slice`](crate::Bundle::from_slice) does, at the
+//! same [`Strictness`]. It refuses everything else, with the same [`Error`], [`ErrorKind`] and
+//! path. The [`Header`] and the parts' keys it hands over are the ones
 //! [`from_slice`](crate::Bundle::from_slice) would have built: they come out of the same code.
-//!
-//! The second half is the one difference, and it is what reading every payload buys. A part's
-//! `sha256` is over its uncompressed payload, and [`from_slice`](crate::Bundle::from_slice) leaves
-//! that to whoever reads the payload, since nothing obliges a consumer to read a part; it checks
-//! the digest only on a nested bundle, whose identity it is. This reader hands every payload over,
-//! so it checks every digest: a mismatch is
-//! [`PayloadHashMismatch`](ErrorKind::PayloadHashMismatch), and a `zstd` payload that does not
-//! inflate to its `size` is [`ZstdInvalid`](ErrorKind::ZstdInvalid), both at `parts[i]`. In a build
-//! without the `zstd` feature a compressed part is
-//! [`ZstdUnavailable`](ErrorKind::ZstdUnavailable) as soon as its head is read, since its bytes
-//! cannot be handed over.
+//! Both check every part's `sha256` against its payload, which is
+//! [`PayloadHashMismatch`](ErrorKind::PayloadHashMismatch) at `parts[i]` where it does not match.
 //!
 //! A [limit](Limits) refuses more again, with [`OverLimit`](ErrorKind::OverLimit). With
 //! [`Limits::NONE`], the reader's verdict is exactly the one above.
@@ -166,11 +155,10 @@
 //!
 //! # Limits
 //!
-//! Four of the [`Limits`] bound what an attacker can make the reader hold, and one bounds what a
-//! `zstd` payload can make it allocate. Each length or count is judged when it is read, before any
-//! of what it announces: a payload whose head declares more than [`part_size`](Limits::part_size)
-//! is refused there, without a byte of it having arrived, and so is a `zstd` part whose `size`
-//! does. A string in the header that would take the header past
+//! The four [`Limits`] bound what an attacker can make the reader hold. Each length or count is
+//! judged when it is read, before any of what it announces: a payload whose head declares more
+//! than [`part_size`](Limits::part_size) is refused there, without a byte of it having arrived. A
+//! string in the header that would take the header past
 //! [`header_bytes`](Limits::header_bytes) is refused at its head, and so is a map or an array that
 //! declares more items than the bytes left could hold.
 //!
@@ -188,13 +176,11 @@
 //! - one entry per part gone by, for the rules that compare parts: an `id`, an address (`role`,
 //!   `path` of at most 512 bytes, `slot`), and a `system` part's path, so a few hundred bytes times
 //!   [`parts`](Limits::parts);
-//! - for a `zstd` part, the decoder's window, which the frame sets and
-//!   [`zstd_window`](Limits::zstd_window) caps, and a 128 KiB buffer for what it inflates;
 //! - for a nested bundle, the same again for the reader that reads it. Nesting is bounded by the
 //!   shapes rather than by a counter: a card holds saves, a device holds cards, a collection holds
 //!   devices, and a save holds no bundle, so there are at most three of them.
 //!
-//! An uncompressed payload is never held at all.
+//! A payload is never held at all.
 //!
 //! # Threads
 //!
@@ -219,11 +205,11 @@ use std::ops::Range;
 use dcbor::prelude::*;
 use sha2::{Digest, Sha256};
 
-use crate::codec::{self, Fields, MAX_NESTING, PartKeys, Strictness};
+use crate::codec::{self, Fields, MAX_NESTING, Strictness};
 use crate::error::{Error, ErrorKind};
 use crate::extension::Extensions;
 use crate::hash::HashValue;
-use crate::model::{Game, Header, Part, PartKind, Payload, Source, UnknownKeys};
+use crate::model::{BoundTo, Game, Header, Part, PartKind, Source, UnknownKeys};
 use crate::name::Slug;
 use crate::shape::Shape;
 use crate::validate::{self, Checker};
@@ -241,8 +227,7 @@ use crate::validate::{self, Checker};
 ///     .header_bytes(64 << 10)
 ///     .parts(64)
 ///     .part_size(64 << 20)
-///     .part_metadata_bytes(64 << 10)
-///     .zstd_window(8 << 20);
+///     .part_metadata_bytes(64 << 10);
 /// ```
 ///
 /// Every limit applies at every depth: a nested bundle is held to the same ones as the bundle
@@ -254,30 +239,16 @@ pub struct Limits {
     pub header_bytes: u64,
     /// The most parts a bundle may hold.
     pub parts: u64,
-    /// The most bytes a part's payload may come to: its uncompressed `size`, and its length on the
-    /// wire as well where it is compressed.
+    /// The most bytes a part's payload may come to.
     pub part_size: u64,
     /// The most bytes a part's map may take besides its payload's bytes: its keys, their values,
     /// and the payload's head.
     pub part_metadata_bytes: u64,
-    /// The largest window a `zstd` frame may make the reader's decoder keep, in bytes.
-    ///
-    /// A frame states its own window, up to 128 MiB by zstd's default and a frame that wants more
-    /// is refused by [`Part::bytes`](crate::Part::bytes) as by this reader, so that is
-    /// the most this can be: a larger value is taken as 128 MiB. Below it, a frame that wants
-    /// more is refused with [`OverLimit`](ErrorKind::OverLimit). Every frame zstd writes at level
-    /// 19 or below, at any size, wants 8 MiB or less, unless it was told to match over long
-    /// distances.
-    pub zstd_window: u64,
 }
 
-/// zstd's own cap on a frame's window, which is what [`Part::bytes`](crate::Part::bytes) holds a
-/// frame to.
-const ZSTD_DEFAULT_WINDOW: u64 = 1 << 27;
-
 impl Limits {
-    /// No limits but zstd's own on a window, so the reader refuses exactly what
-    /// [`from_slice`](crate::Bundle::from_slice) and [`Part::verify`](crate::Part::verify) refuse.
+    /// No limits, so the reader refuses exactly what [`from_slice`](crate::Bundle::from_slice)
+    /// refuses.
     ///
     /// Without limits the reader holds as much as the input makes it, as
     /// [`from_slice`](crate::Bundle::from_slice) does. Set them for input you do not trust.
@@ -286,7 +257,6 @@ impl Limits {
         parts: u64::MAX,
         part_size: u64::MAX,
         part_metadata_bytes: u64::MAX,
-        zstd_window: ZSTD_DEFAULT_WINDOW,
     };
 
     /// Sets the most bytes the header may take.
@@ -316,13 +286,6 @@ impl Limits {
         self.part_metadata_bytes = max;
         self
     }
-
-    /// Sets the largest window a `zstd` frame may make the decoder keep.
-    #[must_use]
-    pub const fn zstd_window(mut self, max: u64) -> Self {
-        self.zstd_window = max;
-        self
-    }
 }
 
 /// Which of the [`Limits`] a bundle went past.
@@ -337,8 +300,6 @@ pub enum Limit {
     PartSize,
     /// [`Limits::part_metadata_bytes`].
     PartMetadataBytes,
-    /// [`Limits::zstd_window`].
-    ZstdWindow,
 }
 
 impl Limit {
@@ -351,7 +312,6 @@ impl Limit {
             Limit::PartMetadataBytes => {
                 format!("runs past the {max} bytes the reader takes for a part's keys")
             }
-            Limit::ZstdWindow => format!("needs a zstd window past the {max} bytes the reader allows"),
         }
     }
 }
@@ -363,7 +323,6 @@ impl std::fmt::Display for Limit {
             Limit::Parts => "parts",
             Limit::PartSize => "part size",
             Limit::PartMetadataBytes => "part metadata bytes",
-            Limit::ZstdWindow => "zstd window",
         })
     }
 }
@@ -387,10 +346,9 @@ pub enum Event<'a> {
     },
     /// A part's keys ahead of its payload, checked against the header and the parts before it.
     PartStart(PartHead),
-    /// The next bytes of the current part's payload, uncompressed.
+    /// The next bytes of the current part's payload.
     ///
-    /// They borrow the input where the part is stored uncompressed, and the reader's own buffer
-    /// where it is `zstd`; either way they are good until the next call.
+    /// They borrow the input they came in, and are good until the next call.
     Data(&'a [u8]),
     /// The keys after the current part's payload, which has been hashed and matched its `sha256`.
     PartEnd(PartTail),
@@ -419,8 +377,8 @@ pub struct PartHead {
     pub dirent: Option<Vec<u8>>,
     /// See [`Part::content_type`].
     pub content_type: Option<String>,
-    /// SHA-256 over the uncompressed payload, which the [`Data`](Event::Data) that follow are
-    /// checked against before [`PartEnd`](Event::PartEnd).
+    /// SHA-256 over the payload, which the [`Data`](Event::Data) that follow are checked against
+    /// before [`PartEnd`](Event::PartEnd).
     pub sha256: HashValue,
     /// See [`Part::source`].
     pub source: Option<Source>,
@@ -430,12 +388,11 @@ pub struct PartHead {
     pub system: Option<Slug>,
     /// See [`Part::binding`].
     pub binding: Option<Slug>,
-    /// How many bytes the payload comes to uncompressed, which is what the
-    /// [`Data`](Event::Data) that follow add up to.
+    /// See [`Part::bound_to`].
+    pub bound_to: Option<BoundTo>,
+    /// How many bytes the payload comes to, which is what the [`Data`](Event::Data) that follow add
+    /// up to.
     pub size: u64,
-    /// How many bytes the payload takes on the wire, where it is compressed with `zstd`; `None`
-    /// where it is stored as it is, and takes [`size`](PartHead::size).
-    pub compressed: Option<u64>,
     /// Integer keys from a later minor version that sort ahead of the payload: the unsigned ones.
     pub unknown: UnknownKeys,
     /// How many keys follow the payload in the part's map, which is how many
@@ -459,6 +416,7 @@ impl PartHead {
             game,
             system,
             binding,
+            bound_to,
             ..
         } = part;
         PartHead {
@@ -475,8 +433,8 @@ impl PartHead {
             game,
             system,
             binding,
+            bound_to,
             size: 0,
-            compressed: None,
             unknown: UnknownKeys::new(),
             keys_after_payload: 0,
         }
@@ -484,7 +442,7 @@ impl PartHead {
 
     /// The whole part, given what followed its payload and the payload itself.
     #[must_use]
-    pub fn into_part(self, tail: PartTail, payload: Payload) -> Part {
+    pub fn into_part(self, tail: PartTail, payload: Vec<u8>) -> Part {
         let mut unknown = self.unknown;
         unknown.extend(tail.unknown);
         Part {
@@ -500,6 +458,7 @@ impl PartHead {
             game: self.game,
             system: self.system,
             binding: self.binding,
+            bound_to: self.bound_to,
             payload,
             extensions: tail.extensions,
             unknown,
@@ -521,11 +480,8 @@ pub struct PartTail {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Done {
-    /// The SHA-256 of the bytes read, which is [`Bundle::file_hash`](crate::Bundle::file_hash).
-    pub file_hash: HashValue,
-    /// [`Bundle::content_hash`](crate::Bundle::content_hash): the SHA-256 of the bundle with every
-    /// part uncompressed, taken as it went by. The same as `file_hash` where no part is
-    /// compressed.
+    /// The SHA-256 of the bytes read, which is [`Bundle::content_hash`](crate::Bundle::content_hash),
+    /// taken as they went by.
     pub content_hash: HashValue,
 }
 
@@ -564,8 +520,8 @@ pub struct Reader {
     /// The part being read.
     index: u64,
     part: Option<Box<PartState>>,
-    /// The file hash and the content hash, at the top only.
-    hashes: Option<Hashes>,
+    /// The content hash, at the top only.
+    hashes: Option<Sha256>,
     /// What refused the bundle.
     failed: Option<Error>,
     /// What [`finish`](Reader::finish) returned.
@@ -618,9 +574,6 @@ enum Stage {
     /// The payload's bytes, passed over: the part's keys were refused, and the rest of its map is
     /// still to be read.
     Skip { left: u64 },
-    /// A `zstd` payload's last output, after its last input.
-    #[cfg(feature = "zstd")]
-    Drain,
     /// The payload's checks, once it has all gone by.
     PayloadEnd,
     /// A part's map, read to its end.
@@ -648,15 +601,9 @@ struct PartState {
     /// The key whose value is being read.
     key: Option<CBOR>,
     budget: Budget,
-    /// The map's bytes ahead of the payload, held back from the hashes until it is known whether the
-    /// content hash takes them as they are. At the top only.
+    /// The map's bytes ahead of the payload, held back from the content hash until the payload's
+    /// head. At the top only.
     pre: Vec<u8>,
-    /// How long the map's head is, at the front of `pre`.
-    map_head: usize,
-    /// Where the current entry starts in `pre`.
-    entry_start: usize,
-    /// The entries in `pre` the content hash leaves out of a compressed part: `encoding` and `size`.
-    skip: Vec<Range<usize>>,
     /// Set from the payload's head on.
     payload: Option<PayloadState>,
     /// What the part's keys were refused for at its payload's head, while the rest of its map is
@@ -667,61 +614,19 @@ struct PartState {
 /// A payload, while it goes by.
 struct PayloadState {
     kind: PartKind,
+    /// The part's role, which with its kind says whether it holds an N64 cartridge's chip.
+    role: Option<Slug>,
+    /// How long the payload is.
+    len: u64,
     sha256: HashValue,
-    /// Bytes still to come on the wire.
+    /// Bytes still to come.
     left: u64,
-    /// The digest being taken of the uncompressed bytes, where one is checked.
+    /// The digest being taken of the bytes, where one is checked.
     hasher: Option<Sha256>,
     /// Whether a mismatch is a nested bundle's, which `validate` names differently.
     nested_bundle: bool,
     /// The reader reading the bundle this payload is.
     child: Option<Box<Reader>>,
-    #[cfg(feature = "zstd")]
-    inflater: Option<inflate::Inflater>,
-}
-
-/// The file hash and the content hash, as they are taken.
-struct Hashes {
-    file: Sha256,
-    /// Split off the file hash at the first compressed part, which the two see differently.
-    content: Option<Sha256>,
-}
-
-impl Hashes {
-    fn update(&mut self, bytes: &[u8]) {
-        self.file.update(bytes);
-        if let Some(content) = &mut self.content {
-            content.update(bytes);
-        }
-    }
-
-    /// Takes in a part's map up to and including its payload's head, which is where it is first
-    /// known whether the content hash sees them as they are. `size` is the uncompressed length of a
-    /// compressed payload.
-    fn part_head(&mut self, part: &mut PartState, raw: &[u8], size: Option<u64>) {
-        if let Some(size) = size {
-            // The content hash is over the bundle with this part uncompressed: its map without
-            // `encoding` and `size`, and its payload at its uncompressed length. It parts from the
-            // file hash at the first such part, and the bytes before it are the two's alike.
-            let content = self.content.get_or_insert_with(|| self.file.clone());
-            let (map_head, len) = encode_head(5, part.entries - 2);
-            content.update(&map_head[..len]);
-            let mut from = part.map_head;
-            for skip in &part.skip {
-                content.update(&part.pre[from..skip.start]);
-                from = skip.end;
-            }
-            content.update(&part.pre[from..]);
-            let (payload_head, len) = encode_head(2, size);
-            content.update(&payload_head[..len]);
-        } else if let Some(content) = &mut self.content {
-            content.update(&part.pre);
-            content.update(raw);
-        }
-        self.file.update(&part.pre);
-        self.file.update(raw);
-        part.pre = Vec::new();
-    }
 }
 
 /// What one step found, held without borrowing the input so a failure can be recorded.
@@ -735,9 +640,6 @@ enum Progress {
     PartEnd(PartTail),
     /// Payload bytes, at this range of the input.
     Data(Range<usize>),
-    /// Inflated payload bytes, at the front of the inflater's buffer.
-    #[cfg(feature = "zstd")]
-    Inflated(usize),
 }
 
 impl Reader {
@@ -762,7 +664,7 @@ impl Reader {
             parts: 0,
             index: 0,
             part: None,
-            hashes: Some(Hashes { file: Sha256::new(), content: None }),
+            hashes: Some(Sha256::new()),
             failed: None,
             done: None,
         }
@@ -801,8 +703,6 @@ impl Reader {
             Progress::PartStart(head) => Some(Event::PartStart(head)),
             Progress::PartEnd(tail) => Some(Event::PartEnd(tail)),
             Progress::Data(range) => Some(Event::Data(&input[range])),
-            #[cfg(feature = "zstd")]
-            Progress::Inflated(len) => Some(Event::Data(self.inflated(len))),
         };
         Ok(Step { consumed, event })
     }
@@ -826,12 +726,8 @@ impl Reader {
             self.failed = Some(error.clone());
             return Err(error);
         }
-        let hashes = self.hashes.take().unwrap_or_else(|| Hashes { file: Sha256::new(), content: None });
-        let content = hashes.content.unwrap_or_else(|| hashes.file.clone());
-        let done = Done {
-            file_hash: HashValue::sha256_from(hashes.file),
-            content_hash: HashValue::sha256_from(content),
-        };
+        let content = self.hashes.take().unwrap_or_default();
+        let done = Done { content_hash: HashValue::sha256_from(content) };
         self.done = Some(done.clone());
         Ok(done)
     }
@@ -875,15 +771,6 @@ impl Reader {
             }
         }
         Ok(self.finish()?)
-    }
-
-    #[cfg(feature = "zstd")]
-    fn inflated(&self, len: usize) -> &[u8] {
-        self.part
-            .as_ref()
-            .and_then(|part| part.payload.as_ref())
-            .and_then(|payload| payload.inflater.as_ref())
-            .map_or(&[][..], |inflater| &inflater.out()[..len])
     }
 
     /// Runs the reader over `input` until it has something to say or wants more.
@@ -1012,9 +899,6 @@ impl Reader {
                     key: None,
                     budget,
                     pre,
-                    map_head: raw.len,
-                    entry_start: 0,
-                    skip: Vec::new(),
                     payload: None,
                     settling: None,
                 }));
@@ -1032,7 +916,6 @@ impl Reader {
                 let payload_key = part.payload.is_none() && matches!(key.as_case(), CBORCase::Negative(0));
                 if part.payload.is_none() {
                     if self.hashes.is_some() {
-                        part.entry_start = part.pre.len();
                         part.pre.extend_from_slice(&item.bytes);
                     }
                 } else if let Some(hashes) = &mut self.hashes {
@@ -1056,9 +939,6 @@ impl Reader {
                 if part.payload.is_none() {
                     if self.hashes.is_some() {
                         part.pre.extend_from_slice(&item.bytes);
-                        if matches!(key.as_case(), CBORCase::Unsigned(7 | 8)) {
-                            part.skip.push(part.entry_start..part.pre.len());
-                        }
                     }
                     part.fields.push(&key, value, &part.path).map_err(Fault::decode)?;
                 } else {
@@ -1111,25 +991,6 @@ impl Reader {
                 Ok((next, None))
             }
 
-            #[cfg(feature = "zstd")]
-            Stage::Drain => {
-                let Some(part) = self.part.as_deref_mut() else { return Err(Fault::lost()) };
-                let Some(payload) = part.payload.as_mut() else { return Err(Fault::lost()) };
-                let Some(inflater) = payload.inflater.as_mut() else { return Err(Fault::lost()) };
-                let made = inflater.drain().map_err(|kind| Fault::validate(Error::at(&part.path, kind)))?;
-                if made > 0 {
-                    let out = &inflater.out()[..made];
-                    if let Some(hasher) = &mut payload.hasher {
-                        hasher.update(out);
-                    }
-                    if let Some(content) = self.hashes.as_mut().and_then(|hashes| hashes.content.as_mut()) {
-                        content.update(out);
-                    }
-                    return Ok((Stage::Drain, Some(Progress::Inflated(made))));
-                }
-                inflater.finish().map_err(|kind| Fault::validate(Error::at(&part.path, kind)))?;
-                Ok((Stage::PayloadEnd, None))
-            }
             Stage::PayloadEnd => {
                 let Some(part) = self.part.as_deref_mut() else { return Err(Fault::lost()) };
                 let Some(payload) = part.payload.as_mut() else { return Err(Fault::lost()) };
@@ -1167,8 +1028,15 @@ impl Reader {
                 };
                 let extensions = trailing.extensions(&path).map_err(Fault::decode)?;
                 let unknown = trailing.unknown(&path, self.strictness).map_err(Fault::decode)?;
-                if self.checker.is_some() {
-                    Checker::part_extensions(self.index, &payload.kind, &extensions)
+                if let Some(checker) = &self.checker {
+                    checker
+                        .part_extensions(
+                            self.index,
+                            &payload.kind,
+                            payload.role.as_ref(),
+                            payload.len,
+                            &extensions,
+                        )
                         .map_err(Fault::validate)?;
                 }
                 self.index += 1;
@@ -1247,59 +1115,37 @@ impl Reader {
                 ErrorKind::Type { expected: "a byte string" },
             )));
         }
-        let wire = head.argument;
-        let PartKeys { part: shell, encoding, size } =
-            codec::decode_part_keys(&mut fields, &path, self.strictness).map_err(Fault::decode)?;
-        let compressed = codec::payload_form(encoding.as_deref(), size, &path).map_err(Fault::decode)?;
+        let size = head.argument;
+        let shell = codec::decode_part_keys(&mut fields, &path, self.strictness).map_err(Fault::decode)?;
         let unknown = fields.unknown(&path, self.strictness).map_err(Fault::decode)?;
 
-        let size = compressed.unwrap_or(wire);
-        if size > self.limits.part_size || wire > self.limits.part_size {
+        if size > self.limits.part_size {
             return Err(Fault::limit(&path, Limit::PartSize, self.limits.part_size));
         }
-        if let Some(nested) = &self.nested {
-            // Every part of a nested bundle is stored as it is, so its file hash and its content
-            // hash are one value.
-            if compressed.is_some() {
-                return Err(Fault::validate(Error::at(&path, ErrorKind::NestedPartNotNormalized)));
-            }
-            if self.checker.is_some()
-                && let Some(format) = &nested.card_format
-            {
-                validate::check_dirent(&shell, format, &path).map_err(Fault::validate)?;
-            }
+        if let Some(nested) = &self.nested
+            && self.checker.is_some()
+            && let Some(format) = &nested.card_format
+        {
+            validate::check_dirent(&shell, format, &path).map_err(Fault::validate)?;
         }
         if let Some(checker) = &mut self.checker {
-            checker.part(self.index, &shell).map_err(Fault::validate)?;
+            checker.part(self.index, &shell, size).map_err(Fault::validate)?;
         }
 
-        let top = self.nested.is_none();
         let mut payload = PayloadState {
             kind: shell.kind.clone(),
+            role: shell.role.clone(),
+            len: size,
             sha256: shell.sha256.clone(),
-            left: wire,
-            // At the top every digest is checked, since every payload is handed over.
-            hasher: top.then(Sha256::new),
+            left: size,
+            // Every digest `validate` checks: each of a bundle's parts, at every depth it holds
+            // to its rules.
+            hasher: self.checker.is_some().then(Sha256::new),
             nested_bundle: false,
             child: None,
-            #[cfg(feature = "zstd")]
-            inflater: None,
         };
-        if compressed.is_some() && top {
-            #[cfg(feature = "zstd")]
-            {
-                payload.inflater = Some(
-                    inflate::Inflater::new(size, self.limits.zstd_window)
-                        .map_err(|kind| Fault::validate(Error::at(&path, kind)))?,
-                );
-            }
-            #[cfg(not(feature = "zstd"))]
-            return Err(Fault::validate(Error::at(&path, ErrorKind::ZstdUnavailable)));
-        }
-        // `validate` reads a stored `bundle` part's payload as a bundle and checks its digest, and
-        // leaves a compressed one to whoever inflates it.
+        // `validate` reads a `bundle` part's payload as a bundle and checks its digest.
         if shell.kind == PartKind::Bundle
-            && compressed.is_none()
             && let Some(checker) = &self.checker
         {
             payload.child = Some(Box::new(Reader::nested(
@@ -1307,64 +1153,28 @@ impl Reader {
                 Nested {
                     outer: checker.shape().clone(),
                     card_format: checker.card_format().map(str::to_owned),
-                    total: wire,
+                    total: size,
                 },
             )));
-            payload.hasher = Some(Sha256::new());
             payload.nested_bundle = true;
         }
 
         if let Some(hashes) = &mut self.hashes {
-            hashes.part_head(part, raw, compressed.is_some().then_some(size));
+            hashes.update(&part.pre);
+            hashes.update(raw);
+            part.pre = Vec::new();
         }
 
         let keys_after_payload = part.entries - part.read - 1;
         part.fields = Fields::default();
         part.payload = Some(payload);
-        Ok(PartHead {
-            size,
-            compressed: compressed.map(|_| wire),
-            unknown,
-            keys_after_payload,
-            ..PartHead::of(self.index, shell)
-        })
+        Ok(PartHead { size, unknown, keys_after_payload, ..PartHead::of(self.index, shell) })
     }
 
     /// Hands on the next payload bytes.
     fn payload(&mut self, input: &[u8], at: &mut usize) -> Result<(Stage, Option<Progress>), Fault> {
         let Some(part) = self.part.as_deref_mut() else { return Err(Fault::lost()) };
         let Some(payload) = part.payload.as_mut() else { return Err(Fault::lost()) };
-
-        #[cfg(feature = "zstd")]
-        if let Some(inflater) = payload.inflater.as_mut() {
-            loop {
-                if payload.left == 0 {
-                    return Ok((Stage::Drain, None));
-                }
-                if *at == input.len() {
-                    return Ok((Stage::Payload, Some(Progress::NeedMore)));
-                }
-                let take = usize::try_from(payload.left).unwrap_or(usize::MAX).min(input.len() - *at);
-                let chunk = &input[*at..*at + take];
-                let (used, made) =
-                    inflater.step(chunk).map_err(|kind| Fault::validate(Error::at(&part.path, kind)))?;
-                if let Some(hashes) = &mut self.hashes {
-                    hashes.file.update(&chunk[..used]);
-                }
-                *at += used;
-                payload.left -= used as u64;
-                if made > 0 {
-                    let out = &inflater.out()[..made];
-                    if let Some(hasher) = &mut payload.hasher {
-                        hasher.update(out);
-                    }
-                    if let Some(content) = self.hashes.as_mut().and_then(|hashes| hashes.content.as_mut()) {
-                        content.update(out);
-                    }
-                    return Ok((Stage::Payload, Some(Progress::Inflated(made))));
-                }
-            }
-        }
 
         if payload.left == 0 {
             return Ok((Stage::PayloadEnd, None));
@@ -1437,22 +1247,6 @@ fn check_key_order(keys: &[Vec<u8>], key: &[u8]) -> Result<(), Fault> {
         return Err(Fault::dcbor(&dcbor::Error::MisorderedMapKey));
     }
     Ok(())
-}
-
-/// The head of a value of `major` type, holding `value`, in its shortest form.
-fn encode_head(major: u8, value: u64) -> ([u8; 9], usize) {
-    let mut head = [0u8; 9];
-    let bytes = value.to_be_bytes();
-    let (additional, len) = match value {
-        0..=23 => (bytes[7], 0),
-        24..=0xff => (24, 1),
-        0x100..=0xffff => (25, 2),
-        0x1_0000..=0xffff_ffff => (26, 4),
-        _ => (27, 8),
-    };
-    head[0] = (major << 5) | additional;
-    head[1..=len].copy_from_slice(&bytes[8 - len..]);
-    (head, len + 1)
 }
 
 // ---- faults ------------------------------------------------------------------------------------
@@ -1738,143 +1532,6 @@ impl Item {
 
 // ---- zstd --------------------------------------------------------------------------------------
 
-/// Inflating a `zstd` payload a piece at a time, exactly as [`Part::bytes`] inflates it whole.
-///
-/// [`Part::bytes`] reads `zstd`'s own streaming decoder through `take(size + 1)`. This drives the
-/// same decoder the same way, pushing input rather than pulling it: the same frame handling (a
-/// frame may follow a frame; a frame left unfinished is refused), the same cap on output one byte
-/// past `size`, and the same errors in the same words.
-#[cfg(feature = "zstd")]
-mod inflate {
-    use zstd::stream::raw::{Decoder, InBuffer, Operation, OutBuffer};
-
-    use super::{Limit, ZSTD_DEFAULT_WINDOW};
-    use crate::error::ErrorKind;
-
-    /// What zstd says of a frame that wants a larger window than the decoder was allowed.
-    const WINDOW_TOO_LARGE: &str = "Frame requires too much memory for decoding";
-
-    pub(super) struct Inflater {
-        decoder: Decoder<'static>,
-        out: Box<[u8]>,
-        /// The stated `size`.
-        size: u64,
-        /// The same, as [`Part::bytes`](crate::Part::bytes) names it in an error.
-        capacity: usize,
-        produced: u64,
-        finished_frame: bool,
-        /// The window the decoder was held to, where it was held below zstd's own cap.
-        window: Option<u64>,
-    }
-
-    impl Inflater {
-        pub(super) fn new(size: u64, window: u64) -> Result<Self, ErrorKind> {
-            let capacity = usize::try_from(size)
-                .map_err(|_| ErrorKind::ZstdInvalid("stated size does not fit".into()))?;
-            let mut decoder = Decoder::new().map_err(|e| ErrorKind::ZstdInvalid(e.to_string()))?;
-            let window = (window < ZSTD_DEFAULT_WINDOW).then_some(window);
-            if let Some(window) = window {
-                // zstd takes the window as a power of two, from 2^10 up.
-                let log = window.max(1 << 10).ilog2();
-                decoder
-                    .set_parameter(zstd::stream::raw::DParameter::WindowLogMax(log))
-                    .map_err(|e| ErrorKind::ZstdInvalid(e.to_string()))?;
-            }
-            Ok(Inflater {
-                decoder,
-                out: vec![0; zstd::zstd_safe::DCtx::out_size()].into_boxed_slice(),
-                size,
-                capacity,
-                produced: 0,
-                finished_frame: false,
-                window,
-            })
-        }
-
-        /// What the last step inflated, at the front.
-        pub(super) fn out(&self) -> &[u8] {
-            &self.out
-        }
-
-        /// Inflates from `input` until there is output or the input is spent: how much input it
-        /// took, and how much output is at the front of [`out`](Inflater::out).
-        pub(super) fn step(&mut self, input: &[u8]) -> Result<(usize, usize), ErrorKind> {
-            let mut used = 0;
-            loop {
-                let rest = &input[used..];
-                // A frame may follow a frame, and the decoder is reset for it only once there is
-                // some of it, as zstd's reader does.
-                if self.finished_frame && !rest.is_empty() {
-                    self.decoder.reinit().map_err(|e| self.invalid(&e))?;
-                    self.finished_frame = false;
-                }
-                let (taken, made) = self.run(rest)?;
-                used += taken;
-                if made > 0 || used == input.len() {
-                    return Ok((used, made));
-                }
-                if taken == 0 {
-                    // zstd always takes input or makes output when it has room for both.
-                    return Err(ErrorKind::ZstdInvalid("the decoder made no progress".into()));
-                }
-            }
-        }
-
-        /// After the last of the input: whatever the decoder still holds.
-        pub(super) fn drain(&mut self) -> Result<usize, ErrorKind> {
-            self.run(&[]).map(|(_, made)| made)
-        }
-
-        /// After the last of the output: a frame has to have ended, at `size`.
-        pub(super) fn finish(&mut self) -> Result<(), ErrorKind> {
-            let mut nowhere = [0u8; 0];
-            self.decoder
-                .finish(&mut OutBuffer::around(&mut nowhere[..]), self.finished_frame)
-                .map_err(|e| ErrorKind::ZstdInvalid(e.to_string()))?;
-            if self.produced < self.size {
-                return Err(ErrorKind::ZstdInvalid(format!(
-                    "inflated to {} of the stated {} bytes",
-                    self.produced, self.capacity
-                )));
-            }
-            Ok(())
-        }
-
-        fn run(&mut self, input: &[u8]) -> Result<(usize, usize), ErrorKind> {
-            // One byte past the claim is all it takes to know the payload outgrew it.
-            let room = self.size.saturating_add(1) - self.produced;
-            let cap = usize::try_from(room).unwrap_or(usize::MAX).min(self.out.len());
-            let mut src = InBuffer::around(input);
-            let mut dst = OutBuffer::around(&mut self.out[..cap]);
-            let result = self.decoder.run(&mut src, &mut dst);
-            let (taken, made) = (src.pos(), dst.pos());
-            let hint = result.map_err(|e| self.invalid(&e))?;
-            if hint == 0 {
-                self.finished_frame = true;
-            }
-            self.produced += made as u64;
-            if self.produced > self.size {
-                return Err(ErrorKind::ZstdInvalid(format!(
-                    "inflated past the stated {} bytes",
-                    self.capacity
-                )));
-            }
-            Ok((taken, made))
-        }
-
-        fn invalid(&self, error: &std::io::Error) -> ErrorKind {
-            let message = error.to_string();
-            match self.window {
-                Some(max) if message == WINDOW_TOO_LARGE => {
-                    ErrorKind::OverLimit { limit: Limit::ZstdWindow, max }
-                }
-                _ => ErrorKind::ZstdInvalid(message),
-            }
-        }
-    }
-}
-
-/// What the `multithread` feature promises of a reader, checked at compile time.
 #[cfg(feature = "multithread")]
 const _: () = {
     const fn assert_send<T: Send>() {}
@@ -1884,19 +1541,6 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn encode_head_writes_the_shortest_form() {
-        for value in
-            [0, 23, 24, 255, 256, 65_535, 65_536, u64::from(u32::MAX), u64::from(u32::MAX) + 1, u64::MAX]
-        {
-            let (head, len) = encode_head(5, value);
-            let expected = CBOR::from(value).to_cbor_data();
-            assert_eq!(head[0] & 0x1f, expected[0] & 0x1f, "{value}");
-            assert_eq!(head[0] >> 5, 5);
-            assert_eq!(&head[1..len], &expected[1..], "{value}");
-        }
-    }
 
     #[test]
     fn every_initial_byte_is_judged_as_dcbor_judges_it() {

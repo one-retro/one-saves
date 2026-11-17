@@ -33,11 +33,21 @@
 //! and nothing a decoder does not recognise is dropped along the way.
 //!
 //! A store may lean on this: a bundle it decoded, inspected and re-encoded is byte-identical to
-//! the one it was handed, so the [file hash](crate::Bundle::file_hash) survives the trip and the
-//! original bytes need not be kept beside it. What the guarantee does *not* cover is a bundle you
-//! have modified, or one you built rather than decoded: neither compression nor an external
-//! reference is pinned by the format, so two producers can write one logical bundle as different
-//! bytes. That is what the [content hash](crate::Bundle::content_hash) is for.
+//! the one it was handed, so its [content hash](crate::Bundle::content_hash) survives the trip and
+//! the original bytes need not be kept beside it. Nothing in a bundle is compressed or held by
+//! reference, so that hash is the hash of the file, and two producers that build the same bundle,
+//! part for part and `id` for `id`, write the same bytes.
+//!
+//! # What a decoder checks
+//!
+//! Everything the specification says makes a bundle malformed: the encoding, each shape's keys
+//! and parts, every part's `sha256` against its payload, and the rules that compare one value with
+//! another. A value a later version could have written — an integer key, or a name it adds to a
+//! list the specification owns, such as a card `format` or a `binding` — is kept and written back
+//! unchanged, and only [`Strictness::Schema`] refuses it. An extension value is kept whatever it
+//! holds and wherever it sits, since the rules on an extension's page bind producers alone, with
+//! one exception: [`x.1sav.n64`](crate::extension::N64) says how long an N64 cartridge's payload
+//! is, so it is checked, and placed.
 //!
 //! # Reading a bundle
 //!
@@ -85,7 +95,7 @@
 //!     if part.kind == PartKind::Bundle {
 //!         // One save, standing on its own: the inner bundle repeats the system and the game,
 //!         // because nothing is inherited across the nesting boundary.
-//!         let save = Bundle::from_slice(&part.bytes()?)?;
+//!         let save = Bundle::from_slice(&part.payload)?;
 //!         std::fs::write(format!("save-{}.1saves", part.id), save.to_vec()?)?;
 //!     }
 //! }
@@ -144,7 +154,7 @@
 //! feature switches on:
 //!
 //! ```toml
-//! one-saves = { version = "0.7", features = ["multithread"] }
+//! one-saves = { version = "0.10", features = ["multithread"] }
 //! ```
 //!
 //! Turn it on to hold a bundle across an `.await` in a future that has to be `Send`, or to move
@@ -177,7 +187,7 @@ pub use error::{Error, ErrorKind};
 pub use extension::{Extension, Extensions};
 pub use hash::{HashAlgorithm, HashError, HashValue};
 pub use model::{
-    Bundle, ByteOrder, Card, Game, GameId, Header, Origin, Part, PartKind, Payload, Recorded, Source,
+    BoundTo, Bundle, ByteOrder, Card, Game, GameId, Header, Origin, Part, PartKind, Recorded, Source,
     TakenWith, UnknownKeys, WordSize,
 };
 pub use name::{Name, NameError, ReverseDnsName, Slug};
@@ -201,7 +211,7 @@ pub const EXTENSION: &str = "1saves";
 pub const MEDIA_TYPE: &str = "application/vnd.1saves+cbor";
 
 /// The version of the specification this crate implements.
-pub const SPEC_VERSION: &str = "0.8";
+pub const SPEC_VERSION: &str = "0.10";
 
 /// How long a part's `path` may run, in bytes.
 ///

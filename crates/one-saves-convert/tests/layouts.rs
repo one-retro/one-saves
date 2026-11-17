@@ -312,7 +312,7 @@ fn a_mister_clock_with_no_offset_goes_elsewhere_as_it_always_has_and_says_so() {
     let anchor = bundle.header.extensions.get::<RtcMbc3>().unwrap().taken_at;
     let mgba = written_for(&bundle, &cores::MGBA, &apps::RETROARCH, None);
     let record = rtc::parse_registers_sidecar(&mgba.sidecar.expect("a .rtc")).unwrap();
-    assert_eq!(record.taken_at, anchor + 8 * 3600);
+    assert_eq!(Some(record.taken_at), anchor.map(|anchor| anchor + 8 * 3600));
 }
 
 #[test]

@@ -1,18 +1,31 @@
 [
   {
     "value": "device",
-    "bound_to": "The console that wrote it, identified by source.fingerprint."
+    "bound_to": "The console that wrote it.",
+    "keys": [
+      0
+    ]
   },
   {
     "value": "account",
-    "bound_to": "The user account that wrote it, whatever console it runs on."
+    "bound_to": "The user account that wrote it, whatever console it runs on.",
+    "keys": [
+      1
+    ]
   },
   {
     "value": "device-account",
-    "bound_to": "Both, which is the strictest and the most common on modern consoles."
+    "bound_to": "Both, which is the strictest and the most common on modern consoles.",
+    "keys": [
+      0,
+      1
+    ]
   },
   {
     "value": "medium",
-    "bound_to": "The physical thing carrying the bytes, whatever console or account wrote them."
+    "bound_to": "The physical thing carrying the bytes, whatever console or account wrote them.",
+    "keys": [
+      2
+    ]
   }
 ]

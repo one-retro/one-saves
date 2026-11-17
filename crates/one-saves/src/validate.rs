@@ -8,11 +8,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::codec::{Strictness, check_path};
+use dcbor::prelude::*;
+
+use crate::codec::{BINDINGS, Strictness, check_path};
 use crate::error::{Error, ErrorKind};
+use crate::extension::{Extension, Extensions, N64, N64Save};
 use crate::hash::HashValue;
-use crate::model::{Bundle, Game, Header, Part, PartKind, Payload, Recorded, TakenWith};
-use crate::name::ReverseDnsName;
+use crate::model::{Bundle, Game, Header, Part, PartKind, Recorded, Source, TakenWith};
+use crate::name::Slug;
 use crate::shape::Shape;
 
 /// The two image types a screenshot takes, which any image library reads.
@@ -33,10 +36,9 @@ impl Bundle {
     /// keeping the result would mean either a second in-memory shape for a bundle or making every
     /// caller pay for an inner decode it may not want. A caller that then walks the nested bundles
     /// decodes each of them a second time, which is the expected pattern rather than a mistake —
-    /// on a 16 MiB card it is the work twice. A compressed `bundle` part is not inflated: that
-    /// would let a small file make every decode allocate whatever it claims, and the bundle it
-    /// carries is validated when it is read. [`from_cbor`](Bundle::from_cbor) is the way out: it
-    /// does not validate, so it does not step into a payload.
+    /// on a 16 MiB card it is the work twice. Every part's payload is hashed as well, since a part
+    /// whose `sha256` names other bytes is malformed. [`from_cbor`](Bundle::from_cbor) is the way
+    /// out: it does not validate, so it neither hashes nor steps into a payload.
     pub fn validate(&self) -> Result<(), Error> {
         self.validate_inner()
     }
@@ -62,15 +64,25 @@ impl Bundle {
         self.check_system_entries()?;
         self.check_card_format()?;
 
+        let mut across = Across::new(&self.header);
         for (index, part) in self.parts.iter().enumerate() {
             let path = format!("parts[{index}]");
             check_part_kind(part, &path)?;
-            if let Some(game) = &part.game {
-                check_game(game, &format!("{path}.game"))?;
-            }
-            check_key_placement(&part.extensions, Place::Part(&part.kind), &path)?;
+            check_part_fields(part, &self.header, &path)?;
+            across.part(part, part.payload.len() as u64, &path)?;
+            check_part_extensions(
+                &self.header,
+                &part.kind,
+                part.role.as_ref(),
+                part.payload.len() as u64,
+                &part.extensions,
+                &path,
+            )?;
             if part.kind == PartKind::Bundle {
                 check_nested(part, &self.header, &path)?;
+            } else if !part.verify() {
+                // A decoder handing this payload out would hand out something corrupt.
+                return Err(Error::at(path, ErrorKind::PayloadHashMismatch));
             }
         }
         Ok(())
@@ -100,6 +112,11 @@ impl Bundle {
     /// A set rather than a comparison of every pair: the number of parts is the file's to choose,
     /// and pairwise, a few megabytes of them kept a decoder busy for minutes.
     fn check_part_addresses(&self) -> Result<(), Error> {
+        // A collection's entries are bundles of their own, each its own content hash, and go back
+        // to no socket: two loose saves in one file need nothing more to tell them apart.
+        if self.header.shape == Shape::Collection {
+            return Ok(());
+        }
         let mut seen = HashMap::with_capacity(self.parts.len());
         for (index, part) in self.parts.iter().enumerate() {
             if let Some(first) = seen.insert((&part.kind, part.address()), part.id) {
@@ -236,6 +253,19 @@ impl Bundle {
                 {
                     return refuse(index, "save", "holds no nested bundle");
                 }
+                // A card's saves are its `bundle` parts, so a bare one is a save flattened out of
+                // the bundle it belongs in.
+                if *shape == Shape::Card
+                    && let Some(&index) = positions(PartKind::Save).first()
+                {
+                    return refuse(index, "card", BARE_SAVE_ON_A_CARD);
+                }
+                // A device's components and a collection's entries are bundles, and nothing else.
+                if matches!(shape, Shape::Device | Shape::Collection)
+                    && let Some(index) = self.parts.iter().position(|part| part.kind != PartKind::Bundle)
+                {
+                    return refuse(index, name, ONLY_BUNDLES);
+                }
                 // An entry belonging to no game is the card's, so only a card has one. A device
                 // holds it inside the card it came off, which is where a writer looks for it.
                 if *shape != Shape::Card
@@ -283,6 +313,332 @@ fn check_system_area(header: &Header) -> Result<(), Error> {
 /// Why a `system` part is refused anywhere but on a card.
 const SYSTEM_ONLY_ON_A_CARD: &str = "holds no `system` part; an entry belonging to no game is a card's";
 
+/// Why a part with no `kind` is refused on a card.
+const BARE_SAVE_ON_A_CARD: &str = "holds each save as a `bundle` part, never as a bare save part";
+
+/// Why anything but a `bundle` part is refused on a device or a collection.
+const ONLY_BUNDLES: &str = "holds `bundle` parts and nothing else";
+
+/// The rules that tie one part to the parts before it, beyond its address: a device's roles, a
+/// card's socket, an N64 cartridge's one chip and a 64DD disk's one area.
+///
+/// [`Bundle::validate`] walks every part through one of these, and [`Checker`] keeps one as the
+/// parts go by, so the two cannot disagree.
+struct Across {
+    /// The shape the header named.
+    shape: Shape,
+    /// The header's `system`.
+    system: Option<String>,
+    /// Each role a device's part has taken, to the `id` that took it.
+    roles: HashMap<Slug, u64>,
+    /// The socket a card's first part named, once one has gone by.
+    card_socket: Socket,
+    /// The `id` of the part with the role `cartridge` in a bundle naming `n64`.
+    cartridge: Option<u64>,
+    /// Whether a 64DD disk's save has held its area yet.
+    area: bool,
+}
+
+impl Across {
+    fn new(header: &Header) -> Self {
+        Across {
+            shape: header.shape.clone(),
+            system: header.system.as_ref().map(|system| system.as_str().to_owned()),
+            roles: HashMap::new(),
+            card_socket: Socket::Unseen,
+            cartridge: None,
+            area: false,
+        }
+    }
+
+    /// Checks one part, whose payload is `len` bytes, against the ones before it.
+    fn part(&mut self, part: &Part, len: u64, path: &str) -> Result<(), Error> {
+        match &self.shape {
+            Shape::Device => {
+                if let Some(role) = &part.role
+                    && let Some(first) = self.roles.insert(role.clone(), part.id)
+                {
+                    return Err(Error::at(path, ErrorKind::RoleShared { first, second: part.id }));
+                }
+            }
+            // A card sat in one slot when it was read, so its parts name one socket or none.
+            Shape::Card => match &self.card_socket {
+                Socket::Unseen => self.card_socket = Socket::Named(part.role.clone()),
+                Socket::Named(role) if *role != part.role => {
+                    return Err(Error::at(path, ErrorKind::CardRolesDisagree));
+                }
+                Socket::Named(_) => {}
+            },
+            // A save on a card is a save of its own, so no part of one names a card's slot.
+            Shape::Save | Shape::State => {
+                if let Some(role) = part.role.as_ref().filter(|role| names_a_card_slot(role.as_str())) {
+                    return Err(Error::at(
+                        format!("{path}.role"),
+                        ErrorKind::CardSlotOnASavePart(role.as_str().to_owned()),
+                    ));
+                }
+            }
+            _ => {}
+        }
+
+        if self.system.as_deref() == Some("n64")
+            && part.role.as_ref().is_some_and(|role| role.as_str() == "cartridge")
+        {
+            if let Some(first) = self.cartridge {
+                return Err(Error::at(path, ErrorKind::SecondCartridge { first, second: part.id }));
+            }
+            self.cartridge = Some(part.id);
+        }
+
+        // A 64DD disk's save holds its RAM area as its one `save` part, with no role, which is how
+        // a decoder finds it; the area's length is how a consumer tells the disk's type.
+        if self.shape == Shape::Save && self.system.as_deref() == Some("n64dd") && part.kind == PartKind::Save
+        {
+            if self.area {
+                return Err(Error::at(
+                    path,
+                    ErrorKind::N64ddArea("holds its RAM area in one `save` part, and holds another"),
+                ));
+            }
+            self.area = true;
+            if part.role.is_some() {
+                return Err(Error::at(
+                    format!("{path}.role"),
+                    ErrorKind::N64ddArea("holds its RAM area in a `save` part with no role"),
+                ));
+            }
+            if !N64DD_AREAS.contains(&len) {
+                return Err(Error::at(
+                    format!("{path}.payload"),
+                    ErrorKind::N64ddWrongLength(usize::try_from(len).unwrap_or(usize::MAX)),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The socket a card's parts name: none yet, or the one its first part named, which may be none.
+enum Socket {
+    /// No part has gone by.
+    Unseen,
+    /// The role the first part named.
+    Named(Option<Slug>),
+}
+
+/// How long a 64DD disk's RAM area is for each disk type, 0 to 5. A type 6 disk has none.
+const N64DD_AREAS: [u64; 6] = [38_444_480, 29_501_120, 21_303_040, 13_850_240, 7_142_720, 1_942_080];
+
+/// Whether a role names a memory card's slot: `memcard-<n>`, `controller-pak-<n>` or
+/// `neogeo-card`.
+///
+/// A prefix covers a whole number from 1 up with no leading zero, so `memcard-01` is no slot this
+/// version knows, and is not refused for being one.
+fn names_a_card_slot(role: &str) -> bool {
+    let numbered = |prefix: &str| {
+        role.strip_prefix(prefix).is_some_and(|number| {
+            !number.is_empty() && !number.starts_with('0') && number.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    };
+    role == "neogeo-card" || numbered("memcard-") || numbered("controller-pak-")
+}
+
+/// Where `x.1sav.n64` belongs, as an error names it.
+const N64_PLACE: &str = "the `cartridge` save part of a bundle naming `n64`";
+
+/// Checks the extension keys on a part, which follow its payload: `x.1sav.n64` where an N64
+/// cartridge's chip is, and nowhere else.
+///
+/// It is the one extension value a decoder looks inside, since the chip fixes how long the payload
+/// beside it is. Every other key is round-tripped wherever it sits.
+pub(crate) fn check_part_extensions(
+    header: &Header,
+    kind: &PartKind,
+    role: Option<&Slug>,
+    len: u64,
+    extensions: &Extensions,
+    path: &str,
+) -> Result<(), Error> {
+    let chip_part = header.system.as_ref().is_some_and(|system| system.as_str() == "n64")
+        && *kind == PartKind::Save
+        && role.is_some_and(|role| role.as_str() == "cartridge");
+    let value = extensions.cbor(&N64::KEY);
+    if !chip_part {
+        return match value {
+            Some(_) => Err(n64_out_of_place(path)),
+            None => Ok(()),
+        };
+    }
+    let Some(value) = value else {
+        return Err(Error::at(path, ErrorKind::N64ChipMissing));
+    };
+    let chip = n64_chip(&value).map_err(|kind| Error::at(format!("{path}[\"x.1sav.n64\"]"), kind))?;
+    if len != chip.size() as u64 {
+        return Err(Error::at(
+            format!("{path}.payload"),
+            ErrorKind::N64PayloadWrongLength {
+                chip: chip.as_str(),
+                expected: chip.size(),
+                found: usize::try_from(len).unwrap_or(usize::MAX),
+            },
+        ));
+    }
+    Ok(())
+}
+
+/// The chip an `x.1sav.n64` value names: a map whose key 0 is a chip the key's page lists.
+///
+/// Any other integer key is a later version's, and is round-tripped rather than refused; a chip a
+/// later version lists is not, since nothing could say how long its payload is.
+fn n64_chip(value: &CBOR) -> Result<N64Save, ErrorKind> {
+    let unknown = |what: String| ErrorKind::N64ChipUnknown(what);
+    let map = value.as_map().ok_or_else(|| unknown("it is not a map".to_owned()))?;
+    let mut chip = None;
+    for (key, value) in map.iter() {
+        match key.as_case() {
+            CBORCase::Unsigned(0) => {
+                let name = value.as_text().ok_or_else(|| unknown("its chip is not text".to_owned()))?;
+                chip = Some(N64Save::from_name(name).ok_or_else(|| unknown(format!("`{name}` is none")))?);
+            }
+            CBORCase::Unsigned(_) => {}
+            _ => return Err(unknown("it has a key that is not an unsigned integer".to_owned())),
+        }
+    }
+    chip.ok_or_else(|| unknown("it has no key 0".to_owned()))
+}
+
+fn n64_out_of_place(path: &str) -> Error {
+    Error::at(
+        format!("{path}[\"x.1sav.n64\"]"),
+        ErrorKind::KeyOutOfPlace { key: N64::KEY.as_str().to_owned(), allowed: N64_PLACE },
+    )
+}
+
+/// `x.1sav.n64` on a header, in a `game` map or in `taken_with`, none of which holds a chip.
+fn check_no_n64(extensions: &Extensions, path: &str) -> Result<(), Error> {
+    if extensions.contains_key(&N64::KEY) { Err(n64_out_of_place(path)) } else { Ok(()) }
+}
+
+/// The rules on one part's own keys: what it may carry for its kind, what it may not repeat of the
+/// header, and what is never empty.
+fn check_part_fields(part: &Part, header: &Header, path: &str) -> Result<(), Error> {
+    // A part's `game` or `source` replaces the header's whole, so one equal to it is the header's
+    // spelled out again: on a card of one game, an index copy on every save.
+    if part.game.is_some() && part.game == header.game {
+        return Err(Error::at(format!("{path}.game"), ErrorKind::RepeatsTheHeader("game")));
+    }
+    if part.source.is_some() && part.source == header.source {
+        return Err(Error::at(format!("{path}.source"), ErrorKind::RepeatsTheHeader("source")));
+    }
+    if let Some(source) = &part.source {
+        check_source(source, &format!("{path}.source"))?;
+    }
+    if let Some(game) = &part.game {
+        check_game(game, &format!("{path}.game"))?;
+    }
+    if let Some(found) = &part.path {
+        check_path(found, &format!("{path}.path"))?;
+    }
+    if part.dirent.as_ref().is_some_and(Vec::is_empty) {
+        return Err(Error::at(format!("{path}.dirent"), ErrorKind::EmptyContainer));
+    }
+    if part.content_type.as_ref().is_some_and(String::is_empty) {
+        return Err(Error::at(format!("{path}.content_type"), ErrorKind::EmptyContainer));
+    }
+
+    // Key 12 indexes a nested bundle's `system`, so only a `bundle` part has one to copy.
+    if part.system.is_some() && part.kind != PartKind::Bundle {
+        return Err(Error::at(
+            path,
+            ErrorKind::KeyNotOnPart { kind: kind_name(&part.kind), field: "system" },
+        ));
+    }
+    match part.kind {
+        // Its media type is this format's by construction, and a binding belongs on the part
+        // inside that holds the bound bytes.
+        PartKind::Bundle => {
+            for (field, present) in [
+                ("content_type", part.content_type.is_some()),
+                ("binding", part.binding.is_some()),
+                ("bound_to", part.bound_to.is_some()),
+            ] {
+                if present {
+                    return Err(Error::at(path, ErrorKind::KeyNotOnPart { kind: "bundle", field }));
+                }
+            }
+        }
+        // A whole card belongs to no one game, and is no entry in a directory.
+        PartKind::CardImage => {
+            for (field, present) in [("game", part.game.is_some()), ("dirent", part.dirent.is_some())] {
+                if present {
+                    return Err(Error::at(path, ErrorKind::KeyNotOnPart { kind: "card-image", field }));
+                }
+            }
+        }
+        _ => {}
+    }
+    check_bound(part, path)
+}
+
+/// `bound_to` goes beside `binding`, and names only what that binding binds a payload to.
+fn check_bound(part: &Part, path: &str) -> Result<(), Error> {
+    let Some(bound_to) = &part.bound_to else { return Ok(()) };
+    let path = format!("{path}.bound_to");
+    let Some(binding) = &part.binding else {
+        return Err(Error::at(path, ErrorKind::BoundToWithoutBinding));
+    };
+    if bound_to.is_empty()
+        || [&bound_to.device, &bound_to.account, &bound_to.medium].into_iter().flatten().any(Vec::is_empty)
+    {
+        return Err(Error::at(path, ErrorKind::EmptyContainer));
+    }
+    // A binding a later version added names targets this one cannot know.
+    let Some((_, keys)) = BINDINGS.iter().find(|(name, _)| *name == binding.as_str()) else {
+        return Ok(());
+    };
+    if let Some(key) = bound_to.keys().find(|key| !keys.contains(key)) {
+        return Err(Error::at(
+            path,
+            ErrorKind::BoundToNamesAnotherTarget { binding: binding.as_str().to_owned(), key },
+        ));
+    }
+    Ok(())
+}
+
+/// A `source` names something, and every text in it is filled.
+fn check_source(source: &Source, path: &str) -> Result<(), Error> {
+    if source.is_empty() {
+        return Err(Error::at(path, ErrorKind::EmptyContainer));
+    }
+    for (field, text) in [
+        ("fingerprint", &source.fingerprint),
+        ("app_version", &source.app_version),
+        ("core_version", &source.core_version),
+        ("platform_version", &source.platform_version),
+    ] {
+        if text.as_ref().is_some_and(String::is_empty) {
+            return Err(Error::at(format!("{path}.{field}"), ErrorKind::EmptyContainer));
+        }
+    }
+    if source.utc_offset == Some(0) {
+        return Err(Error::at(format!("{path}.utc_offset"), ErrorKind::DefaultSpelledOut("UTC")));
+    }
+    Ok(())
+}
+
+/// The name a kind is written as, for an error to name it by.
+fn kind_name(kind: &PartKind) -> &'static str {
+    match kind {
+        PartKind::Save => "save",
+        PartKind::State => "state",
+        PartKind::Screenshot => "screenshot",
+        PartKind::CardImage => "card-image",
+        PartKind::Bundle => "bundle",
+        PartKind::System => "system",
+        PartKind::Aux | PartKind::Other(_) => "aux",
+    }
+}
+
 /// A part's kind and the address a consumer names it by: its `role`, `path` and `slot`.
 type Address = (PartKind, Option<crate::name::Slug>, Option<String>, Option<u64>);
 
@@ -309,6 +665,10 @@ pub(crate) struct Checker {
     addresses: HashMap<Address, u64>,
     /// Every `system` part's path so far, which is where a later one may sit.
     laid_down: HashSet<String>,
+    /// The header, which a part may not repeat and which says what an N64 part is.
+    header: Header,
+    /// What ties each part to the ones before it.
+    across: Across,
 }
 
 impl Checker {
@@ -324,6 +684,8 @@ impl Checker {
             screenshots: 0,
             addresses: HashMap::new(),
             laid_down: HashSet::new(),
+            header: header.clone(),
+            across: Across::new(header),
         })
     }
 
@@ -353,9 +715,9 @@ impl Checker {
 
     /// Checks a part's keys against the header and the parts before it.
     ///
-    /// `part` carries everything ahead of its payload; its payload, extension keys and unknown keys
-    /// are not looked at.
-    pub(crate) fn part(&mut self, index: u64, part: &Part) -> Result<(), Error> {
+    /// `part` carries everything ahead of its payload, and `len` is how long its payload is; its
+    /// payload's bytes, extension keys and unknown keys are not looked at.
+    pub(crate) fn part(&mut self, index: u64, part: &Part, len: u64) -> Result<(), Error> {
         let path = format!("parts[{index}]");
         if let Some(previous) = self.previous {
             if previous == part.id {
@@ -369,11 +731,13 @@ impl Checker {
 
         self.check_shape(index, part)?;
 
-        let address = (part.kind.clone(), part.role.clone(), part.path.clone(), part.slot);
-        if let Some(&first) = self.addresses.get(&address) {
-            return Err(Error::at(&path, ErrorKind::PartsShareAnAddress { first, second: part.id }));
+        if self.shape != Shape::Collection {
+            let address = (part.kind.clone(), part.role.clone(), part.path.clone(), part.slot);
+            if let Some(&first) = self.addresses.get(&address) {
+                return Err(Error::at(&path, ErrorKind::PartsShareAnAddress { first, second: part.id }));
+            }
+            self.addresses.insert(address, part.id);
         }
-        self.addresses.insert(address, part.id);
 
         if part.kind == PartKind::System
             && let Some(entry) = part.path.as_deref()
@@ -399,10 +763,8 @@ impl Checker {
         }
 
         check_part_kind(part, &path)?;
-        if let Some(game) = &part.game {
-            check_game(game, &format!("{path}.game"))?;
-        }
-        Ok(())
+        check_part_fields(part, &self.header, &path)?;
+        self.across.part(part, len, &path)
     }
 
     /// What [`check_parts_against_shape`](Bundle::check_parts_against_shape) says about this one
@@ -452,6 +814,11 @@ impl Checker {
                         return refuse("save", "holds no nested bundle");
                     }
                     PartKind::System if *shape != Shape::Card => return refuse(name, SYSTEM_ONLY_ON_A_CARD),
+                    PartKind::Save if *shape == Shape::Card => return refuse("card", BARE_SAVE_ON_A_CARD),
+                    PartKind::Bundle => {}
+                    _ if matches!(shape, Shape::Device | Shape::Collection) => {
+                        return refuse(name, ONLY_BUNDLES);
+                    }
                     _ => {}
                 }
                 if *shape == Shape::Device && part.role.is_none() {
@@ -462,13 +829,16 @@ impl Checker {
         Ok(())
     }
 
-    /// Checks the extension keys that follow a part's payload.
+    /// Checks the extension keys that follow a part's payload, which was `len` bytes.
     pub(crate) fn part_extensions(
+        &self,
         index: u64,
         kind: &PartKind,
-        extensions: &crate::Extensions,
+        role: Option<&Slug>,
+        len: u64,
+        extensions: &Extensions,
     ) -> Result<(), Error> {
-        check_key_placement(extensions, Place::Part(kind), &format!("parts[{index}]"))
+        check_part_extensions(&self.header, kind, role, len, extensions, &format!("parts[{index}]"))
     }
 
     /// Checks what takes every part to say, once the last has gone by.
@@ -561,12 +931,21 @@ fn check_header(header: &Header) -> Result<(), Error> {
         Shape::Unknown(_) => {}
     }
 
-    check_key_placement(&header.extensions, Place::Header(&header.shape), "header")?;
+    check_no_n64(&header.extensions, "header")?;
+    if header.description.as_ref().is_some_and(String::is_empty) {
+        return Err(Error::at("header.description", ErrorKind::EmptyContainer));
+    }
+    if let Some(source) = &header.source {
+        check_source(source, "header.source")?;
+    }
     if let Some(game) = &header.game {
         check_game(game, "header.game")?;
     }
     if let Some(taken_with) = &header.taken_with {
         check_taken_with(taken_with, "header.taken_with")?;
+    }
+    if header.card.as_ref().and_then(|card| card.system_area.as_ref()).is_some_and(Vec::is_empty) {
+        return Err(Error::at("header.card.system_area", ErrorKind::EmptyContainer));
     }
     Ok(())
 }
@@ -683,6 +1062,7 @@ fn check_part_kind(part: &Part, path: &str) -> Result<(), Error> {
         ("game", part.game.is_some()),
         ("system", part.system.is_some()),
         ("binding", part.binding.is_some()),
+        ("bound_to", part.bound_to.is_some()),
     ];
     if let Some((field, _)) = present.iter().find(|(_, present)| *present) {
         return Err(Error::at(path, ErrorKind::KeyNotOnPart { kind, field }));
@@ -721,81 +1101,26 @@ fn check_system_part(part: &Part, path: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Where an extension key sits, which is what its specification places it by.
-#[derive(Clone, Copy)]
-enum Place<'a> {
-    /// A bundle's header, of this shape.
-    Header(&'a Shape),
-    /// A part, of this kind.
-    Part(&'a PartKind),
-    /// A `game` map or `taken_with`, which describe a game or a machine rather than one save or
-    /// one state of it.
-    Elsewhere,
-}
-
-/// An extension subtree the specifications place, and where.
-struct Placement {
-    /// The subtree, matched at label boundaries.
-    root: ReverseDnsName,
-    /// Whether a place is one the key's specification admits.
-    admits: fn(Place<'_>) -> bool,
-    /// Those places, as an error names them.
-    allowed: &'static str,
-}
-
-/// The extension keys the specifications place, as whole subtrees rather than exact names.
-///
-/// Every clock key lives under `x.1sav.rtc` — the portable reading is that name, and each chip is
-/// a label below it — so one label-boundary test covers the family and a chip added later is
-/// covered without touching this list. A clock reading describes the bytes rather than the
-/// wrapper, so it lives in the save's or the state's own header, where it stays correct once the
-/// bundle is sliced out of whatever holds it; on a part it would be dropped by the byte copy that
-/// extracting a save is. mGBA's cheat list loads with the core's data, so it rides on the state
-/// part and stays behind when an in-game save is lifted out of the state.
-const PLACEMENTS: [Placement; 2] = [
-    Placement {
-        root: ReverseDnsName::from_static("x.1sav.rtc"),
-        admits: on_a_save_or_state_header,
-        allowed: "a save's or a state's bundle header",
-    },
-    Placement {
-        root: ReverseDnsName::from_static("x.1sav.cheats.mgba"),
-        admits: on_a_state_part,
-        allowed: "a state's `state` part",
-    },
-];
-
-/// A shape this version does not define constrains nothing, its header included.
-fn on_a_save_or_state_header(place: Place<'_>) -> bool {
-    matches!(place, Place::Header(Shape::Save | Shape::State | Shape::Unknown(_)))
-}
-
-fn on_a_state_part(place: Place<'_>) -> bool {
-    matches!(place, Place::Part(PartKind::State))
-}
-
-fn check_key_placement(extensions: &crate::Extensions, place: Place<'_>, path: &str) -> Result<(), Error> {
-    for key in extensions.keys() {
-        // Label-boundary matching, never a string prefix: `x.1sav.rtcx` is somebody else's.
-        if let Some(placement) = PLACEMENTS.iter().find(|placement| key.is_under(&placement.root))
-            && !(placement.admits)(place)
-        {
-            return Err(Error::at(
-                format!("{path}[{:?}]", key.as_str()),
-                ErrorKind::KeyOutOfPlace { key: key.as_str().to_owned(), allowed: placement.allowed },
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Checks a `game` map, wherever it sits.
 ///
-/// Its extension keys describe the game and nothing about one save of it, so a clock reading is
-/// out of place here even inside a save's own header: two saves of one game carry one `game`.
+/// It describes a game rather than one save of it, so it holds no N64 chip, and nothing in it is
+/// empty.
 fn check_game(game: &Game, path: &str) -> Result<(), Error> {
+    if game.is_empty() {
+        return Err(Error::at(path, ErrorKind::EmptyContainer));
+    }
+    for (field, text) in
+        [("rom_filename", &game.rom_filename), ("serial", &game.serial), ("title", &game.title)]
+    {
+        if text.as_ref().is_some_and(String::is_empty) {
+            return Err(Error::at(format!("{path}.{field}"), ErrorKind::EmptyContainer));
+        }
+    }
+    if game.game_id.values().any(|id| matches!(id, crate::GameId::Text(text) if text.is_empty())) {
+        return Err(Error::at(format!("{path}.game_id"), ErrorKind::EmptyContainer));
+    }
     check_hashes(&game.rom_hashes, &format!("{path}.rom_hashes"))?;
-    check_key_placement(&game.extensions, Place::Elsewhere, path)
+    check_no_n64(&game.extensions, path)
 }
 
 /// Checks what a state was taken with.
@@ -830,7 +1155,7 @@ fn check_taken_with(taken_with: &TakenWith, path: &str) -> Result<(), Error> {
     {
         return Err(Error::at(format!("{path}.options"), ErrorKind::EmptyContainer));
     }
-    check_key_placement(&taken_with.extensions, Place::Elsewhere, path)
+    check_no_n64(&taken_with.extensions, path)
 }
 
 /// Whether a language tag is BCP 47 in its canonical case, stopping at the region.
@@ -903,30 +1228,13 @@ pub(crate) fn check_holds(outer: &Shape, inner: &Shape) -> Result<(), ErrorKind>
 /// Checks the rules a `bundle` part carries, all of them past what a schema can see.
 fn check_nested(part: &Part, header: &Header, path: &str) -> Result<(), Error> {
     let outer = &header.shape;
-    // A compressed `bundle` part is left to whoever inflates it. Inflating here would let a file of
-    // a few kilobytes make every decode allocate whatever its parts claim, and the bundle it
-    // carries is checked anyway the moment it is read, since reading one validates it.
-    let Payload::Embedded(bytes) = &part.payload else {
-        return Ok(());
-    };
+    let bytes = &part.payload;
 
     let inner = Bundle::from_cbor(
         &crate::codec::decode_cbor(bytes).map_err(|kind| Error::at(path, kind))?,
         Strictness::Decoder,
     )
     .map_err(|e| Error::at(path, ErrorKind::NestedPayloadNotABundle(Box::new(e))))?;
-
-    // Every inner part is uncompressed with its payload embedded, so an inner bundle's file hash
-    // and content hash are the same value. Compression belongs on the outer part, where it does
-    // not change `sha256` and compresses better anyway.
-    for (index, inner_part) in inner.parts.iter().enumerate() {
-        if !matches!(inner_part.payload, Payload::Embedded(_)) {
-            return Err(Error::at(
-                format!("{path}.payload.parts[{index}]"),
-                ErrorKind::NestedPartNotNormalized,
-            ));
-        }
-    }
 
     // The outer `sha256` is the inner bundle's identity, which is what makes extracting a save a
     // byte copy rather than a re-encode.
@@ -1046,113 +1354,51 @@ mod tests {
     }
 
     #[test]
-    fn a_clock_reading_belongs_on_a_saves_header_and_nowhere_else() {
-        // 0.2 narrowed this: the clock keys are a save's bundle header, full stop. A reading put
-        // on any part would vanish the moment the save is sliced out, and one on a card's header
-        // would belong to no save in particular.
-        let key = crate::ReverseDnsName::parse("x.1sav.rtc").unwrap();
-        let reading = dcbor::CBOR::from(1u64);
-
-        // On a `bundle` part, which is what the rule used to be about.
-        let mut outer = nested_save(0);
-        outer.extensions.insert_cbor(key.clone(), reading.clone());
-        assert_eq!(
-            collection_of(vec![outer]).validate().unwrap_err().kind(),
-            &ErrorKind::KeyOutOfPlace {
-                key: "x.1sav.rtc".to_owned(),
-                allowed: "a save's or a state's bundle header"
-            }
-        );
-
-        // And on a plain part, which it now also covers.
-        let mut plain = Part::new(0, *b"SAVE");
-        plain.extensions.insert_cbor(key.clone(), reading.clone());
-        assert!(bundle_of(vec![plain]).validate().is_err(), "not on a plain part either");
-
-        // A save's own header is where it belongs.
-        let mut save = bundle_of(vec![Part::new(0, *b"SAVE")]);
-        save.header.extensions.insert_cbor(key, reading);
-        save.validate().expect("a save's header carries the reading");
-    }
-
-    #[test]
-    fn a_clock_reading_is_refused_in_a_game_map() {
-        // A key in `game` describes the game, and a clock reading describes one save of it. That
-        // holds on a save's header too, which is the one place the reading itself may sit.
-        let key = crate::ReverseDnsName::parse("x.1sav.rtc").unwrap();
-        let mut game = Game { title: Some("Pokemon Ruby".into()), ..Game::default() };
-        game.extensions.insert_cbor(key, dcbor::CBOR::from(1u64));
-
-        let mut save = bundle_of(vec![Part::new(0, *b"SAVE")]);
-        save.header.game = Some(game.clone());
-        assert_eq!(
-            save.validate().unwrap_err().kind(),
-            &ErrorKind::KeyOutOfPlace {
-                key: "x.1sav.rtc".to_owned(),
-                allowed: "a save's or a state's bundle header"
-            }
-        );
-
-        let mut part = Part::new(0, *b"SAVE");
-        part.game = Some(game);
-        assert!(bundle_of(vec![part]).validate().is_err(), "nor in a part's game map");
-    }
-
-    #[test]
-    fn every_clock_key_is_refused_on_a_bundle_part() {
-        // The rule covers the whole family, including a chip nobody has added yet: the check is a
-        // label-boundary test against `x.1sav.rtc`, not a list of names to keep up to date.
-        for key in ["x.1sav.rtc", "x.1sav.rtc.mbc3", "x.1sav.rtc.s3511a", "x.1sav.rtc.future-chip"] {
-            let mut outer = nested_save(0);
-            outer.extensions.insert_cbor(crate::ReverseDnsName::parse(key).unwrap(), dcbor::CBOR::from(1u64));
-            assert!(
-                matches!(
-                    collection_of(vec![outer]).validate().unwrap_err().kind(),
-                    ErrorKind::KeyOutOfPlace { .. }
-                ),
-                "{key} on a bundle part"
-            );
-        }
-    }
-
-    #[test]
-    fn a_clock_reading_belongs_on_a_states_header_too() {
-        // A state's clock sits inside the core's data, and the keys are a reading of it, which an
-        // in-game save lifted out of the state takes with it.
-        let key = crate::ReverseDnsName::parse("x.1sav.rtc.s3511a").unwrap();
-        let mut state = state_of(vec![state_part(0)]);
-        state.header.extensions.insert_cbor(key.clone(), dcbor::CBOR::from(1u64));
-        state.validate().expect("a state's header carries the reading");
-
-        let mut part = state_part(0);
-        part.extensions.insert_cbor(key, dcbor::CBOR::from(1u64));
-        assert!(state_of(vec![part]).validate().is_err(), "but not its state part");
-    }
-
-    #[test]
-    fn mgbas_cheats_ride_on_the_state_part_and_nowhere_else() {
+    fn an_extension_key_is_kept_wherever_it_sits() {
+        // Since 0.10 the rules on an extension's page bind producers only: a decoder round-trips
+        // the key whatever it holds and wherever it sits. A clock reading on a `bundle` part, in a
+        // `game` map, on a state part or in `taken_with`, and mGBA's cheats on a header, are each
+        // somewhere a producer should not put them, and none makes the bundle malformed.
         use crate::extension::{CheatSet, CheatsMgba};
-        let cheats = CheatsMgba::new(vec![CheatSet::new(["D8BAE4D9 4864DCE5"])]);
+        let key = |name: &str| crate::ReverseDnsName::parse(name).unwrap();
+        let reading = || dcbor::CBOR::from(1u64);
+
+        for name in ["x.1sav.rtc", "x.1sav.rtc.mbc3", "x.1sav.rtc.future-chip"] {
+            let mut outer = nested_save(0);
+            outer.extensions.insert_cbor(key(name), reading());
+            collection_of(vec![outer]).validate().unwrap_or_else(|e| panic!("{name} on a bundle part: {e}"));
+        }
+
+        let mut game = Game { title: Some("Pokemon Ruby".into()), ..Game::default() };
+        game.extensions.insert_cbor(key("x.1sav.rtc"), reading());
+        let mut save = bundle_of(vec![Part::new(0, *b"SAVE")]);
+        save.header.game = Some(game);
+        save.validate().expect("a clock reading in a game map");
 
         let mut part = state_part(0);
-        part.extensions.insert(cheats.clone());
-        state_of(vec![part]).validate().expect("the state part carries mGBA's cheats");
+        part.extensions.insert_cbor(key("x.1sav.rtc.s3511a"), reading());
+        state_of(vec![part]).validate().expect("a clock on a state part");
+
+        let mut taken_with = TakenWith::default();
+        taken_with.extensions.insert_cbor(key("x.1sav.rtc"), reading());
+        let mut state = state_of(vec![state_part(0)]);
+        state.header.taken_with = Some(taken_with);
+        state.validate().expect("a clock reading in taken_with");
 
         let mut state = state_of(vec![state_part(0)]);
-        state.header.extensions.insert(cheats.clone());
-        assert_eq!(
-            state.validate().unwrap_err().kind(),
-            &ErrorKind::KeyOutOfPlace {
-                key: "x.1sav.cheats.mgba".to_owned(),
-                allowed: "a state's `state` part"
-            },
-            "not on the header"
-        );
+        state.header.extensions.insert(CheatsMgba::new(vec![CheatSet::new(["D8BAE4D9 4864DCE5"])]));
+        state.validate().expect("mGBA's cheats on a state's header");
+    }
 
-        // Nor on the in-game save beside it, which a consumer lifts out and leaves the cheats behind.
-        let mut save = Part::new(1, *b"SAVE");
-        save.extensions.insert(cheats);
-        assert!(state_of(vec![state_part(0), save]).validate().is_err(), "nor on a save part");
+    #[test]
+    fn a_device_reads_the_consoles_clock_on_its_header() {
+        // A console's own clock belongs to no one game, so a device carries it.
+        let mut device = Bundle {
+            header: Header::new(Shape::Device).system(Slug::parse("neogeo").unwrap()),
+            parts: vec![nested_save(0).role(Slug::parse("internal").unwrap())],
+        };
+        device.header.extensions.insert(crate::extension::Rtc::new(987_251_696));
+        device.validate().expect("an MVS board's clock on its device");
     }
 
     #[test]
@@ -1460,6 +1706,8 @@ mod tests {
         let save = bundle_of(vec![Part::new(0, *b"SAVE"), entry()]);
         assert_eq!(save.validate().unwrap_err().kind(), &ErrorKind::PartNotInShape { shape: "save", reason });
 
+        // A device and a collection hold `bundle` parts and nothing else, a `system` part
+        // included: it belongs inside the card it came off.
         let mut device = Bundle {
             header: Header::new(Shape::Device).system(Slug::parse("ps2").unwrap()),
             parts: vec![nested_save(0), entry().role(Slug::parse("memcard-1").unwrap())],
@@ -1467,7 +1715,7 @@ mod tests {
         device.parts[0].role = Some(Slug::parse("memcard-2").unwrap());
         assert_eq!(
             device.validate().unwrap_err().kind(),
-            &ErrorKind::PartNotInShape { shape: "device", reason }
+            &ErrorKind::PartNotInShape { shape: "device", reason: ONLY_BUNDLES }
         );
 
         let state = state_of(vec![state_part(0), entry()]);
@@ -1479,7 +1727,7 @@ mod tests {
         let collection = collection_of(vec![nested_save(0), entry()]);
         assert_eq!(
             collection.validate().unwrap_err().kind(),
-            &ErrorKind::PartNotInShape { shape: "collection", reason }
+            &ErrorKind::PartNotInShape { shape: "collection", reason: ONLY_BUNDLES }
         );
     }
 
@@ -1517,9 +1765,9 @@ mod tests {
     }
 
     #[test]
-    fn taken_with_carries_anyones_key_but_a_clock_reading() {
-        // An extension key there describes the machine, which a clock reading of one cartridge
-        // does not: it is a save's, or the state's own header's.
+    fn taken_with_carries_anyones_key_but_an_n64_chip() {
+        // An extension key there describes the machine. An N64 chip is the one key a decoder
+        // places, and it belongs on the cartridge's part.
         let with = |key: &str| {
             let mut taken_with = TakenWith::default();
             taken_with
@@ -1530,9 +1778,111 @@ mod tests {
             state.validate()
         };
         with("org.duckstation.renderer").expect("a key of the emulator's own is enough on its own");
-        let error = with("x.1sav.rtc").unwrap_err();
+        let error = with("x.1sav.n64").unwrap_err();
         assert!(matches!(error.kind(), ErrorKind::KeyOutOfPlace { .. }), "{error}");
         assert!(error.path().starts_with("header.taken_with"), "{error}");
+    }
+
+    /// An N64 cartridge's save: one part with the role `cartridge`, holding `len` bytes of `chip`.
+    fn n64_save(chip: N64Save, len: usize) -> Bundle {
+        let part =
+            Part::new(0, vec![0xFF; len]).role(Slug::parse("cartridge").unwrap()).extension(N64::new(chip));
+        Bundle { header: Header::default().system(Slug::parse("n64").unwrap()), parts: vec![part] }
+    }
+
+    #[test]
+    fn an_n64_cartridge_names_its_chip_and_holds_all_of_it() {
+        for chip in N64Save::ALL {
+            n64_save(chip, chip.size()).validate().unwrap_or_else(|e| panic!("{chip}: {e}"));
+        }
+        assert_eq!(
+            n64_save(N64Save::Eeprom16k, 512).validate().unwrap_err().kind(),
+            &ErrorKind::N64PayloadWrongLength { chip: "eeprom-16k", expected: 2048, found: 512 }
+        );
+
+        let mut missing = n64_save(N64Save::Eeprom4k, 512);
+        missing.parts[0].extensions = crate::Extensions::new();
+        assert_eq!(missing.validate().unwrap_err().kind(), &ErrorKind::N64ChipMissing);
+
+        // The key alone is not enough to make a part the chip's: without `n64` it is out of place.
+        let mut elsewhere = n64_save(N64Save::Eeprom4k, 512);
+        elsewhere.header.system = Some(Slug::parse("gb").unwrap());
+        assert!(matches!(elsewhere.validate().unwrap_err().kind(), ErrorKind::KeyOutOfPlace { .. }));
+
+        // A chip's bytes the producer could not tell go as `aux`, with no key and no length.
+        let mut unknown = n64_save(N64Save::Flash1m, 1000);
+        unknown.parts[0] = Part::new(0, vec![0; 1000]).kind(PartKind::Aux).path("game.sav");
+        unknown.validate().expect("a file whose chip nobody could tell");
+    }
+
+    #[test]
+    fn an_n64_chip_is_a_map_naming_one_the_page_lists() {
+        let with = |value: dcbor::CBOR| {
+            let mut save = n64_save(N64Save::Eeprom4k, 512);
+            save.parts[0].extensions.insert_cbor(N64::KEY, value);
+            save.validate()
+        };
+        let mut later = dcbor::Map::new();
+        later.insert(0u64, "eeprom-4k");
+        later.insert(1u64, "a later version's");
+        with(later.into()).expect("an integer key a later version assigns is round-tripped");
+
+        let mut undefined = dcbor::Map::new();
+        undefined.insert(0u64, "eeprom-512b");
+        for value in [undefined.into(), dcbor::CBOR::from("eeprom-4k")] {
+            assert!(matches!(with(value).unwrap_err().kind(), ErrorKind::N64ChipUnknown(_)));
+        }
+    }
+
+    #[test]
+    fn an_n64_bundle_holds_one_cartridge() {
+        let mut two = n64_save(N64Save::Eeprom4k, 512);
+        let mut second = two.parts[0].clone().path("again");
+        second.id = 1;
+        two.parts.push(second);
+        assert_eq!(two.validate().unwrap_err().kind(), &ErrorKind::SecondCartridge { first: 0, second: 1 });
+    }
+
+    #[test]
+    fn a_save_part_never_names_a_cards_slot() {
+        for role in ["memcard-1", "controller-pak-4", "neogeo-card"] {
+            let part = Part::new(0, *b"NOTE").role(Slug::parse(role).unwrap());
+            assert!(
+                matches!(
+                    bundle_of(vec![part]).validate().unwrap_err().kind(),
+                    ErrorKind::CardSlotOnASavePart(_)
+                ),
+                "{role}"
+            );
+        }
+        // A number this version would not write is a role it does not know, not a slot.
+        for role in ["memcard-0", "memcard-01", "transfer-pak-1"] {
+            bundle_of(vec![Part::new(0, *b"SAVE").role(Slug::parse(role).unwrap())])
+                .validate()
+                .unwrap_or_else(|e| panic!("{role}: {e}"));
+        }
+    }
+
+    #[test]
+    fn a_64dd_disks_save_is_its_ram_area_and_nothing_less() {
+        let disk = |parts: Vec<Part>| Bundle {
+            header: Header::default().system(Slug::parse("n64dd").unwrap()),
+            parts,
+        };
+        disk(vec![Part::new(0, vec![0; 1_942_080])]).validate().expect("a type 5 disk's area");
+        assert_eq!(
+            disk(vec![Part::new(0, vec![0; 32_768])]).validate().unwrap_err().kind(),
+            &ErrorKind::N64ddWrongLength(32_768)
+        );
+        assert!(matches!(
+            disk(vec![Part::new(0, vec![0; 1_942_080]).role(Slug::parse("cartridge").unwrap())])
+                .validate()
+                .unwrap_err()
+                .kind(),
+            ErrorKind::N64ddArea(_)
+        ));
+        let two = vec![Part::new(0, vec![0; 1_942_080]), Part::new(1, vec![0; 1_942_080]).path("b")];
+        assert!(matches!(disk(two).validate().unwrap_err().kind(), ErrorKind::N64ddArea(_)));
     }
 
     #[test]

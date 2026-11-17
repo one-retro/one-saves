@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use one_saves::{Bundle, HashValue, Header, Part, PartKind, Payload, Shape};
+use one_saves::{Bundle, HashValue, Header, Part, PartKind, Shape};
 
 /// A directory of this test's own, empty.
 fn scratch(name: &str) -> PathBuf {
@@ -58,8 +58,8 @@ fn stderr(output: &Output) -> String {
 fn resealed_collection() -> Vec<u8> {
     let mut save = Bundle::new(Header::default(), vec![Part::new(0, *b"SAVE")]);
     save.parts[0].sha256 = HashValue::sha256_of(b"EVAS");
-    let nested = Part::new(0, save.to_vec().unwrap()).kind(PartKind::Bundle);
-    Bundle::new(Header::new(Shape::Collection), vec![nested]).to_vec().unwrap()
+    let nested = Part::new(0, save.to_cbor().to_cbor_data()).kind(PartKind::Bundle);
+    Bundle::new(Header::new(Shape::Collection), vec![nested]).to_cbor().to_cbor_data()
 }
 
 #[test]
@@ -70,7 +70,12 @@ fn verify_finds_a_bad_digest_inside_a_nested_bundle() {
 
     let output = run_on("verify", &file);
     assert!(failed(&output), "verify passed a bundle holding a save that does not match its digest");
-    assert!(stderr(&output).contains("part 0 > part 0: sha256 does not match"), "{}", stderr(&output));
+    assert!(
+        stderr(&output)
+            .contains("parts[0].payload.parts[0]: `sha256` does not equal the digest of the payload"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -79,33 +84,12 @@ fn extract_writes_nothing_it_did_not_check() {
     let file = directory.join("save.1saves");
     let mut bundle = Bundle::new(Header::default(), vec![Part::new(0, *b"SAVE")]);
     bundle.parts[0].sha256 = HashValue::sha256_of(b"EVAS");
-    std::fs::write(&file, bundle.to_vec().unwrap()).unwrap();
+    std::fs::write(&file, bundle.to_cbor().to_cbor_data()).unwrap();
 
     let output = run_on("extract", &file);
     assert!(failed(&output), "{}", stderr(&output));
-    assert!(stderr(&output).contains("sha256 does not match"), "{}", stderr(&output));
+    assert!(stderr(&output).contains("does not equal the digest of the payload"), "{}", stderr(&output));
     assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1, "something was written");
-}
-
-#[test]
-fn a_part_claiming_a_terabyte_is_turned_down_without_being_inflated() {
-    let directory = scratch("claim");
-    let file = directory.join("bomb.1saves");
-    let mut part = Part::new(0, *b"SAVE");
-    part.payload = Payload::Compressed { bytes: b"not even zstd".to_vec(), size: 1 << 40 };
-    std::fs::write(&file, Bundle::new(Header::default(), vec![part]).to_vec().unwrap()).unwrap();
-
-    for command in ["verify", "extract"] {
-        let output = run_on(command, &file);
-        assert!(failed(&output), "{command}: {}", stderr(&output));
-        assert!(
-            stderr(&output).contains("not inflated, claiming 1099511627776 bytes"),
-            "{command}: {}",
-            stderr(&output)
-        );
-    }
-    let output = run_on("hash", &file);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("content unavailable: its parts claim"));
 }
 
 #[test]
@@ -125,12 +109,11 @@ fn cbor_nested_without_end_is_an_error_and_not_an_abort() {
 
 #[test]
 fn an_error_quoting_the_file_reaches_the_terminal_escaped() {
-    // The one encoding is `zstd`, and an error naming any other quotes it. Spelled as an escape
-    // sequence the same length, it would clear the screen.
-    let mut part = Part::new(0, *b"SAVE");
-    part.payload = Payload::Compressed { bytes: b"x".to_vec(), size: 4 };
-    let mut bytes = Bundle::new(Header::default(), vec![part]).to_vec().unwrap();
-    let at = bytes.windows(5).position(|window| window == b"\x64zstd").expect("the encoding is in there");
+    // A screenshot names its image type, and an error refusing one quotes it. Spelled as an escape
+    // sequence, it would clear the screen.
+    let part = Part::new(0, *b"\x89PNG").kind(PartKind::Screenshot).content_type("ESCP");
+    let mut bytes = Bundle::new(Header::new(Shape::Screenshot), vec![part]).to_cbor().to_cbor_data();
+    let at = bytes.windows(5).position(|window| window == b"\x64ESCP").expect("the type is in there");
     bytes[at + 1..at + 5].copy_from_slice(b"\x1b[2J");
 
     let directory = scratch("escape");

@@ -80,6 +80,53 @@
     "family": "WonderSwan and Neo Geo Pocket"
   },
   {
+    "slug": "ares",
+    "name": "ares",
+    "kind": "standalone",
+    "systems": [
+      "atari-2600",
+      "atari-5200",
+      "colecovision",
+      "fds",
+      "gb",
+      "gba",
+      "gbc",
+      "genesis",
+      "mame",
+      "mastersystem",
+      "mega-ld",
+      "msx",
+      "msx2",
+      "my-vision",
+      "n64",
+      "n64dd",
+      "neogeo",
+      "nes",
+      "ngp",
+      "ngpc",
+      "pc-engine-ld",
+      "pcengine",
+      "pcenginecd",
+      "pocket-challenge-v2",
+      "psx",
+      "satellaview",
+      "saturn",
+      "sc-3000",
+      "sega-32x",
+      "sega-cd",
+      "sega-gg",
+      "sg-1000",
+      "snes",
+      "sufami-turbo",
+      "supergrafx",
+      "wonderswan",
+      "wonderswan-color",
+      "zx-spectrum"
+    ],
+    "aliases": [],
+    "family": "Multi-system"
+  },
+  {
     "slug": "armsx2",
     "name": "ARMSX2",
     "kind": "libretro",
@@ -107,7 +154,8 @@
     "name": "Atari800",
     "kind": "libretro",
     "systems": [
-      "atari-5200"
+      "atari-5200",
+      "atari-800"
     ],
     "aliases": [],
     "family": "Atari"
@@ -117,7 +165,8 @@
     "name": "Atari800_MiSTer",
     "kind": "mister",
     "systems": [
-      "atari-5200"
+      "atari-5200",
+      "atari-800"
     ],
     "aliases": [
       "ATARI5200"
@@ -153,7 +202,9 @@
     "systems": [
       "gba"
     ],
-    "aliases": [],
+    "aliases": [
+      "Mednafen VBA-M"
+    ],
     "family": "Game Boy family"
   },
   {
@@ -188,7 +239,9 @@
     "systems": [
       "pcfx"
     ],
-    "aliases": [],
+    "aliases": [
+      "Mednafen PC-FX"
+    ],
     "family": "PC Engine"
   },
   {
@@ -197,7 +250,8 @@
     "kind": "libretro",
     "systems": [
       "pcengine",
-      "pcenginecd"
+      "pcenginecd",
+      "supergrafx"
     ],
     "aliases": [],
     "family": "PC Engine"
@@ -222,7 +276,9 @@
     "systems": [
       "psx"
     ],
-    "aliases": [],
+    "aliases": [
+      "Mednafen PSX"
+    ],
     "family": "PlayStation"
   },
   {
@@ -232,7 +288,9 @@
     "systems": [
       "psx"
     ],
-    "aliases": [],
+    "aliases": [
+      "Mednafen PSX HW"
+    ],
     "family": "PlayStation"
   },
   {
@@ -263,7 +321,8 @@
     "kind": "libretro",
     "systems": [
       "supergrafx",
-      "pcengine"
+      "pcengine",
+      "pcenginecd"
     ],
     "aliases": [
       "Mednafen SuperGrafx"
@@ -288,7 +347,8 @@
     "kind": "libretro",
     "systems": [
       "wonderswan",
-      "wonderswan-color"
+      "wonderswan-color",
+      "pocket-challenge-v2"
     ],
     "aliases": [
       "Mednafen WonderSwan"
@@ -311,7 +371,15 @@
     "name": "BlastEm",
     "kind": "libretro",
     "systems": [
-      "genesis"
+      "genesis",
+      "sega-cd",
+      "sega-32x",
+      "mastersystem",
+      "sega-gg",
+      "sg-1000",
+      "colecovision",
+      "sega-pico",
+      "sc-3000"
     ],
     "aliases": [],
     "family": "Sega 8- and 16-bit"
@@ -334,7 +402,11 @@
       "msx",
       "msx2",
       "colecovision",
-      "sg-1000"
+      "sg-1000",
+      "msx2-plus",
+      "msx-turbo-r",
+      "spectravideo",
+      "sc-3000"
     ],
     "aliases": [],
     "family": "MSX and ColecoVision"
@@ -375,7 +447,9 @@
     "name": "bsnes",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -385,7 +459,9 @@
     "name": "bsnes-hd beta",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -395,7 +471,9 @@
     "name": "bsnes-jg",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -405,7 +483,9 @@
     "name": "bsnes-mercury",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -415,7 +495,9 @@
     "name": "bsnes2014",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -473,7 +555,9 @@
     "name": "ChimeraSNES",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -538,6 +622,7 @@
     "kind": "standalone",
     "systems": [
       "mastersystem",
+      "sega-gg",
       "sg-1000",
       "colecovision"
     ],
@@ -690,6 +775,16 @@
     "family": "Sega 8- and 16-bit"
   },
   {
+    "slug": "fake-08",
+    "name": "fake-08",
+    "kind": "libretro",
+    "systems": [
+      "pico-8"
+    ],
+    "aliases": [],
+    "family": "Other systems"
+  },
+  {
     "slug": "fb-alpha",
     "name": "FB Alpha",
     "kind": "libretro",
@@ -705,7 +800,8 @@
     "name": "FCEUmm",
     "kind": "libretro",
     "systems": [
-      "nes"
+      "nes",
+      "fds"
     ],
     "aliases": [],
     "family": "NES"
@@ -727,7 +823,21 @@
     "kind": "libretro",
     "systems": [
       "neogeo",
-      "mame"
+      "mame",
+      "colecovision",
+      "sega-gg",
+      "mastersystem",
+      "genesis",
+      "pcengine",
+      "supergrafx",
+      "sg-1000",
+      "msx",
+      "nes",
+      "fds",
+      "ngp",
+      "ngpc",
+      "channel-f",
+      "zx-spectrum"
     ],
     "aliases": [],
     "family": "Neo Geo and arcade"
@@ -790,7 +900,8 @@
     "kind": "libretro",
     "systems": [
       "msx",
-      "msx2"
+      "msx2",
+      "msx2-plus"
     ],
     "aliases": [],
     "family": "MSX and ColecoVision"
@@ -832,7 +943,8 @@
     "kind": "mister",
     "systems": [
       "gb",
-      "gbc"
+      "gbc",
+      "mega-duck"
     ],
     "aliases": [
       "GAMEBOY",
@@ -870,7 +982,8 @@
     "name": "Gearcoleco",
     "kind": "libretro",
     "systems": [
-      "colecovision"
+      "colecovision",
+      "coleco-adam"
     ],
     "aliases": [],
     "family": "MSX and ColecoVision"
@@ -882,7 +995,8 @@
     "systems": [
       "pcengine",
       "pcenginecd",
-      "supergrafx"
+      "supergrafx",
+      "pc-engine-ld"
     ],
     "aliases": [],
     "family": "PC Engine"
@@ -918,7 +1032,8 @@
       "mastersystem",
       "sega-gg",
       "sg-1000",
-      "sega-cd"
+      "sega-cd",
+      "sega-pico"
     ],
     "aliases": [],
     "family": "Sega 8- and 16-bit"
@@ -932,7 +1047,8 @@
       "mastersystem",
       "sega-gg",
       "sg-1000",
-      "sega-cd"
+      "sega-cd",
+      "sega-pico"
     ],
     "aliases": [],
     "family": "Sega 8- and 16-bit"
@@ -1040,7 +1156,9 @@
     "name": "JollyCV",
     "kind": "libretro",
     "systems": [
-      "colecovision"
+      "colecovision",
+      "creativision",
+      "my-vision"
     ],
     "aliases": [],
     "family": "MSX and ColecoVision"
@@ -1234,7 +1352,8 @@
       "supergrafx",
       "virtualboy",
       "wonderswan",
-      "wonderswan-color"
+      "wonderswan-color",
+      "apple-ii"
     ],
     "aliases": [],
     "family": "Multi-system"
@@ -1244,7 +1363,8 @@
     "name": "Mednafen bSNES",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -1281,7 +1401,8 @@
     "name": "melonDS",
     "kind": "libretro",
     "systems": [
-      "nds"
+      "nds",
+      "dsi"
     ],
     "aliases": [],
     "family": "Nintendo DS"
@@ -1291,7 +1412,8 @@
     "name": "melonDS DS",
     "kind": "libretro",
     "systems": [
-      "nds"
+      "nds",
+      "dsi"
     ],
     "aliases": [],
     "family": "Nintendo DS"
@@ -1301,7 +1423,8 @@
     "name": "Mesen",
     "kind": "libretro",
     "systems": [
-      "nes"
+      "nes",
+      "fds"
     ],
     "aliases": [],
     "family": "NES"
@@ -1311,7 +1434,8 @@
     "name": "Mesen-S",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview"
     ],
     "aliases": [],
     "family": "SNES"
@@ -1344,7 +1468,8 @@
     "kind": "mister",
     "systems": [
       "msx",
-      "msx2"
+      "msx2",
+      "msx2-plus"
     ],
     "aliases": [
       "MSX"
@@ -1368,7 +1493,8 @@
     "name": "Mupen64Plus",
     "kind": "standalone",
     "systems": [
-      "n64"
+      "n64",
+      "n64dd"
     ],
     "aliases": [],
     "family": "Nintendo 64"
@@ -1378,7 +1504,8 @@
     "name": "Mupen64Plus-Next",
     "kind": "libretro",
     "systems": [
-      "n64"
+      "n64",
+      "n64dd"
     ],
     "aliases": [],
     "family": "Nintendo 64"
@@ -1388,7 +1515,8 @@
     "name": "N64_MiSTer",
     "kind": "mister",
     "systems": [
-      "n64"
+      "n64",
+      "n64dd"
     ],
     "aliases": [
       "N64"
@@ -1436,7 +1564,8 @@
     "name": "Nestopia",
     "kind": "libretro",
     "systems": [
-      "nes"
+      "nes",
+      "fds"
     ],
     "aliases": [],
     "family": "NES"
@@ -1446,7 +1575,8 @@
     "name": "NooDS",
     "kind": "libretro",
     "systems": [
-      "nds"
+      "nds",
+      "gba"
     ],
     "aliases": [],
     "family": "Nintendo DS"
@@ -1456,7 +1586,8 @@
     "name": "O2EM",
     "kind": "libretro",
     "systems": [
-      "odyssey2"
+      "odyssey2",
+      "videopac-plus"
     ],
     "aliases": [],
     "family": "Other systems"
@@ -1508,7 +1639,8 @@
     "name": "ParaLLEl N64",
     "kind": "libretro",
     "systems": [
-      "n64"
+      "n64",
+      "n64dd"
     ],
     "aliases": [],
     "family": "Nintendo 64"
@@ -1561,7 +1693,11 @@
       "genesis",
       "sega-32x",
       "sega-cd",
-      "mastersystem"
+      "mastersystem",
+      "sega-gg",
+      "sg-1000",
+      "sega-pico",
+      "sc-3000"
     ],
     "aliases": [],
     "family": "Sega 8- and 16-bit"
@@ -1585,6 +1721,17 @@
     ],
     "aliases": [],
     "family": "PlayStation Portable"
+  },
+  {
+    "slug": "project64",
+    "name": "Project64",
+    "kind": "standalone",
+    "systems": [
+      "n64",
+      "n64dd"
+    ],
+    "aliases": [],
+    "family": "Nintendo 64"
   },
   {
     "slug": "prosystem",
@@ -1628,6 +1775,16 @@
     ],
     "aliases": [],
     "family": "WonderSwan and Neo Geo Pocket"
+  },
+  {
+    "slug": "retro-8-alpha",
+    "name": "retro-8 (alpha)",
+    "kind": "libretro",
+    "systems": [
+      "pico-8"
+    ],
+    "aliases": [],
+    "family": "Other systems"
   },
   {
     "slug": "rustation",
@@ -1698,6 +1855,16 @@
     "family": "Game Boy family"
   },
   {
+    "slug": "simple64",
+    "name": "simple64",
+    "kind": "standalone",
+    "systems": [
+      "n64"
+    ],
+    "aliases": [],
+    "family": "Nintendo 64"
+  },
+  {
     "slug": "skyemu",
     "name": "SkyEmu",
     "kind": "libretro",
@@ -1739,7 +1906,9 @@
     "name": "SNES_MiSTer",
     "kind": "mister",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [
       "SNES"
@@ -1751,7 +1920,9 @@
     "name": "Snes9x",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -1761,7 +1932,9 @@
     "name": "Snes9x 2002",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -1771,7 +1944,9 @@
     "name": "Snes9x 2005",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -1781,7 +1956,9 @@
     "name": "Snes9x 2005 Plus",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -1791,7 +1968,9 @@
     "name": "Snes9x 2010",
     "kind": "libretro",
     "systems": [
-      "snes"
+      "snes",
+      "satellaview",
+      "sufami-turbo"
     ],
     "aliases": [],
     "family": "SNES"
@@ -2092,7 +2271,8 @@
     "name": "VICE x128",
     "kind": "libretro",
     "systems": [
-      "c64"
+      "c64",
+      "c128"
     ],
     "aliases": [],
     "family": "Other systems"
@@ -2112,7 +2292,8 @@
     "name": "VICE x64dtv",
     "kind": "libretro",
     "systems": [
-      "c64"
+      "c64",
+      "c64-dtv"
     ],
     "aliases": [],
     "family": "Other systems"
@@ -2163,7 +2344,8 @@
     "kind": "mister",
     "systems": [
       "wonderswan",
-      "wonderswan-color"
+      "wonderswan-color",
+      "pocket-challenge-v2"
     ],
     "aliases": [
       "WonderSwan"

@@ -170,7 +170,7 @@ fn check_mgba(expected: &Mgba, bundle: &Bundle) {
     let screenshot = bundle.parts.iter().find(|part| part.kind == PartKind::Screenshot);
     match (expected.screen, screenshot) {
         (Some((width, height)), Some(part)) => {
-            let png = part.bytes().unwrap();
+            let png = part.payload.as_slice();
             let size = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
             assert_eq!((size(16), size(20)), (width, height), "{file}: the screen it showed");
         }
@@ -179,13 +179,13 @@ fn check_mgba(expected: &Mgba, bundle: &Bundle) {
     }
     let saves: Vec<_> = bundle.parts.iter().filter(|part| part.kind == PartKind::Save).collect();
     assert_eq!(saves.len(), 1, "{file}");
-    assert_eq!(saves[0].bytes().unwrap().len(), expected.save, "{file}");
+    assert_eq!(saves[0].payload.as_slice().len(), expected.save, "{file}");
 
     let mbc3 = bundle.header.extensions.get::<RtcMbc3>();
     match (expected.clock, mbc3) {
         (Some((registers, anchor)), Some(clock)) => {
             assert_eq!((clock.live, clock.latched), (registers, Some(registers)), "{file}");
-            assert_eq!(clock.taken_at, anchor, "{file}: the anchor is when mGBA wrote the footer");
+            assert_eq!(clock.taken_at, Some(anchor), "{file}: the anchor is when mGBA wrote the footer");
             assert!(anchor < bundle.header.taken_at.unwrap(), "{file}: which was before the state");
             assert!(bundle.header.extensions.get::<Rtc>().is_some(), "{file}: and the reading beside it");
         }
@@ -307,11 +307,11 @@ fn check_duckstation(expected: &DuckStation, bundle: &Bundle) {
     assert_eq!(state.slot, expected.slot, "{file}");
     let origin = if expected.slot.is_none() { Some(Origin::Auto) } else { None };
     assert_eq!(bundle.header.origin, origin, "{file}");
-    assert_eq!(state.bytes().unwrap().len(), expected.data, "{file}: the data, inflated");
+    assert_eq!(state.payload.as_slice().len(), expected.data, "{file}: the data, inflated");
 
     let screenshot =
         bundle.parts.iter().find(|part| part.kind == PartKind::Screenshot).expect("a screenshot");
-    let png = screenshot.bytes().unwrap();
+    let png = screenshot.payload.as_slice();
     let size = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
     assert_eq!((size(16), size(20)), expected.screen, "{file}: the screen it showed");
     assert_eq!(png[25], 2, "{file}: every pixel opaque, so RGB");
@@ -380,7 +380,7 @@ fn check_retroarch(expected: &RetroArch, bundle: &Bundle) {
     assert_eq!(source.core.as_ref().map(Name::as_str), Some(expected.core), "{file}");
     let state = bundle.parts.iter().find(|part| part.kind == PartKind::State).expect("{file}: a state part");
     assert_eq!(state.slot, Some(expected.slot), "{file}");
-    assert_eq!(state.bytes().unwrap().len(), expected.data, "{file}");
+    assert_eq!(state.payload.as_slice().len(), expected.data, "{file}");
 }
 
 /// What RetroArch inflates an RZIP version 1 file to, or `None` for one it does not keep that way.

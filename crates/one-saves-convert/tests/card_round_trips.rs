@@ -39,7 +39,7 @@ fn round_trip(format: Format, original: &[u8]) -> (Bundle, Vec<u8>) {
 fn every_save_names_a_game(bundle: &Bundle) {
     for part in bundle.parts.iter().filter(|part| part.kind == PartKind::Bundle) {
         assert!(part.game.is_some(), "the save at {:?} names no game", part.path);
-        let inner = Bundle::from_slice(&part.bytes().expect("a payload")).expect("a nested save");
+        let inner = Bundle::from_slice(&part.payload).expect("a nested save");
         assert!(inner.header.game.is_some(), "the save at {:?} names no game inside", part.path);
     }
 }

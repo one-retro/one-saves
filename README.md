@@ -14,7 +14,7 @@ card.mcr -> card.1saves (PS1 memory card, 2 save(s), 58034 bytes)
 
 $ 1saves inspect card.1saves
 card.1saves
-  58034 bytes, spec version 0.7
+  58034 bytes, spec version 0.10
   shape        card
   system       psx (PlayStation)
   card         ps1-mc, capacity 131072 bytes
@@ -96,7 +96,7 @@ consumer pays for what it uses. Reading and writing bundles needs none of them.
 | `dat-cmpro` | `one-saves-convert`, `one-saves-cli` | `winnow` |
 | `rom` | `one-saves-convert`, `one-saves-cli` | `crc32fast`, `md-5`, `sha1` |
 | `states` | `one-saves-cli`; off in `one-saves-convert` | `flate2` and `png`, for the state files emulators compress and the framebuffers they keep |
-| `zstd` | those two and `one-saves` | `zstd`, and the C library it compiles |
+| `zstd` | `one-saves-cli`; off in `one-saves-convert`, where it brings `states` | `zstd`, and the C library it compiles, for the state files emulators compress with it; a bundle compresses nothing |
 | `multithread` | off; `one-saves-convert` and `one-saves` | nothing — `Arc` rather than `Rc` under `dcbor`, so a `Bundle` is `Send` and `Sync` |
 
 `multithread` is the one that is off by default: it buys nothing unless a bundle has to cross a
@@ -365,8 +365,8 @@ original file again puts it right.
 
 ## Conformance
 
-`one-saves` passes the [conformance corpus][corpus] published alongside the specification: all 37
-valid cases and all 92 invalid ones, vendored under
+`one-saves` passes the [conformance corpus][corpus] published alongside the specification: all 54
+valid cases, all 8 round-trip ones and all 155 invalid ones, vendored under
 [`crates/one-saves/tests/conformance/`](crates/one-saves/tests/conformance).
 
 A green corpus run is deliberately not full coverage, and its README says so. The four properties
@@ -430,7 +430,7 @@ is what CI checks. Nothing at build time needs either form.
 
 ## Status
 
-Tracking version 0.8 of the specification, which is **not yet stabilized**. Until the spec reaches
+Tracking version 0.10 of the specification, which is **not yet stabilized**. Until the spec reaches
 1.0, breaking changes happen in place under the same bundle tag.
 
 ## License

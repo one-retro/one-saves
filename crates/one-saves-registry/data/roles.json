@@ -1,34 +1,31 @@
 {
   "roles": [
     {
+      "role": "64dd",
+      "description": "The disk in a 64DD drive. Its save is an n64dd one.",
+      "common": false,
+      "systems": [
+        "n64"
+      ]
+    },
+    {
       "role": "cartridge",
       "description": "The game cartridge's own save memory, whether battery-backed SRAM, EEPROM or flash.",
       "common": true,
-      "systems": [
-        "fds"
-      ]
-    },
-    {
-      "role": "extdata",
-      "description": "Extra data a title stores outside its own save, as a directory.",
-      "common": false,
-      "systems": [
-        "3ds"
-      ]
+      "systems": []
     },
     {
       "role": "internal",
-      "description": "Save storage built into the console itself, as distinct from anything removable.",
+      "description": "Save storage built into the console itself, as distinct from anything removable: a Wii's NAND included.",
       "common": true,
       "systems": [
         "sega-cd",
         "saturn",
-        "pcengine",
         "pcenginecd",
         "neogeo",
         "neogeo-cd",
-        "psp",
         "ps3",
+        "psp",
         "psvita"
       ]
     },
@@ -48,8 +45,8 @@
     },
     {
       "role": "ram-cart",
-      "description": "The Backup RAM Cart, which extends internal storage rather than replacing it. A console can carry saves in both at once.",
-      "common": false,
+      "description": "An add-on that extends the console's own save storage rather than replacing it. Saves can be in both.",
+      "common": true,
       "systems": [
         "sega-cd",
         "saturn",
@@ -60,15 +57,6 @@
     {
       "role": "sd",
       "description": "A removable SD card.",
-      "common": true,
-      "systems": [
-        "wii",
-        "3ds"
-      ]
-    },
-    {
-      "role": "sysnand",
-      "description": "Internal flash holding system-managed save data (Wii, 3DS), as distinct from an SD card.",
       "common": true,
       "systems": [
         "wii",
@@ -102,6 +90,14 @@
         "dreamcast",
         "psx",
         "ps2"
+      ]
+    },
+    {
+      "prefix": "transfer-pak-",
+      "description": "N64 Transfer Pak slots, one per controller port.",
+      "common": true,
+      "systems": [
+        "n64"
       ]
     }
   ]

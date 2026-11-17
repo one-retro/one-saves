@@ -17,9 +17,19 @@ use one_saves::extension::{Icon, IconFrame};
 /// The `x.1sav.icon` value: the frames in display order, and a banner where a format keeps one.
 ///
 /// `None` for a save with no frame to show, since the key carries at least one.
-pub(crate) fn value(frames: Vec<IconFrame>, banner: Option<Vec<u8>>) -> Option<Icon> {
+///
+/// A still icon's one frame has no hold, and every frame of an animated one has one. A reader
+/// gives each frame the hold its format says, or one of its own where the format runs every frame
+/// at one rate it does not state, as the PS1 does. An animated icon a frame of which still has
+/// none is given as a still of its first frame; the rest stay in the payload, where they always
+/// were.
+pub(crate) fn value(mut frames: Vec<IconFrame>, banner: Option<Vec<u8>>) -> Option<Icon> {
     if frames.is_empty() {
         return None;
+    }
+    if frames.len() == 1 || frames.iter().any(|frame| frame.hold_ms.is_none()) {
+        frames.truncate(1);
+        frames[0].hold_ms = None;
     }
     let icon = Icon::new(frames);
     Some(match banner {

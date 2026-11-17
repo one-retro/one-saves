@@ -84,9 +84,32 @@ fn title_of(data: &[u8]) -> Option<one_saves::extension::Label> {
 /// picture that still looks like something: every pair of pixels is swapped, which combs each
 /// solid shape into stripes a pixel wide. The order here is the one that draws the Gran Turismo
 /// card under `data/saves` as solid shapes rather than as a comb.
+///
+/// A save states no hold for its frames: the console runs them at a rate of its own, which no
+/// source this follows writes down. An animated icon's every frame carries one, so each is given
+/// [`FRAME_HOLD_MS`], the rate 1cards has always animated them at.
 #[cfg(feature = "icon")]
 fn pictures(data: &[u8]) -> Option<one_saves::extension::Icon> {
-    use crate::icon::{Rgba, value};
+    let mut frames = frames(data)?;
+    if frames.len() > 1 {
+        for frame in &mut frames {
+            frame.hold_ms = Some(FRAME_HOLD_MS);
+        }
+    }
+    crate::icon::value(frames, None)
+}
+
+/// How long each frame of an animated PS1 icon shows, in milliseconds.
+///
+/// Not the console's figure, which nothing this follows records, but the four frames a second
+/// 1cards animates them at.
+#[cfg(feature = "icon")]
+const FRAME_HOLD_MS: u64 = 250;
+
+/// Every frame of a PS1 save's icon, in display order.
+#[cfg(feature = "icon")]
+fn frames(data: &[u8]) -> Option<Vec<one_saves::extension::IconFrame>> {
+    use crate::icon::Rgba;
     use one_saves::extension::IconFrame;
 
     if !data.starts_with(header::MAGIC) {
@@ -109,7 +132,7 @@ fn pictures(data: &[u8]) -> Option<one_saves::extension::Icon> {
         // A PS1 icon holds no timing of its own; the console runs the frames at its own rate.
         frames.push(IconFrame::new(rgba.to_png()?));
     }
-    value(frames, None)
+    Some(frames)
 }
 
 /// One BGR555 colour, in which an all-zero entry is transparent rather than black.
@@ -202,6 +225,45 @@ mod tests {
     use super::*;
     use one_saves::PartKind;
 
+    /// A title frame asking for three icon frames, each a solid block of colour `n`, its first two
+    /// alike, as Gran Turismo's are.
+    #[cfg(feature = "icon")]
+    fn three_frame_title() -> Vec<u8> {
+        let mut data = vec![0u8; header::ICON + 3 * header::FRAME_LEN];
+        data[..2].copy_from_slice(header::MAGIC);
+        data[header::FRAMES] = 0x13;
+        // A grey of a different shade for each colour.
+        for colour in 1u16..4 {
+            let at = header::CLUT + usize::from(colour) * 2;
+            data[at..at + 2].copy_from_slice(&(colour * 8 * 0x0421).to_le_bytes());
+        }
+        for (frame, colour) in [1u8, 1, 2].into_iter().enumerate() {
+            let at = header::ICON + frame * header::FRAME_LEN;
+            data[at..at + header::FRAME_LEN].fill(colour << 4 | colour);
+        }
+        data
+    }
+
+    #[cfg(feature = "icon")]
+    #[test]
+    fn every_frame_is_walked_and_each_holds_as_long_as_the_next() {
+        let data = three_frame_title();
+        let icon = pictures(&data).expect("an icon");
+        assert_eq!(icon.frames.len(), 3, "the header asks for three");
+        assert_eq!(icon.frames[0].png, icon.frames[1].png, "the first two frames are one picture");
+        assert_ne!(icon.frames[2].png, icon.frames[0].png, "and the third is another, so they are walked");
+        assert!(
+            icon.frames.iter().all(|frame| frame.hold_ms == Some(FRAME_HOLD_MS)),
+            "an animated icon's every frame holds"
+        );
+
+        // One frame is a still, which holds for as long as it is shown.
+        let mut still = data;
+        still[header::FRAMES] = 0x11;
+        let icon = pictures(&still).expect("an icon");
+        assert_eq!((icon.frames.len(), icon.frames[0].hold_ms), (1, None));
+    }
+
     /// Builds a card holding the given saves, each of the given block count.
     fn card_with(saves: &[(&str, usize)]) -> Vec<u8> {
         let mut builder = CardBuilder::new();
@@ -251,7 +313,7 @@ mod tests {
         let bundle = read(&card, &CardOptions::default()).expect("reads");
         assert_eq!(bundle.parts.len(), 1);
 
-        let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).expect("inner bundle");
+        let inner = Bundle::from_slice(&bundle.parts[0].payload).expect("inner bundle");
         // Every block the save occupied, and the fact that they were not adjacent is not recorded.
         assert_eq!(inner.parts[0].payload.len(), 16384);
     }
@@ -274,7 +336,7 @@ mod tests {
 
         assert_eq!(bundle.parts.len(), 1);
         assert_eq!(bundle.parts[0].kind, PartKind::CardImage);
-        assert_eq!(bundle.parts[0].payload.len(), ps1_memcard::CAPACITY as u64);
+        assert_eq!(bundle.parts[0].payload.len(), ps1_memcard::CAPACITY);
         assert_eq!(bundle.header.card.as_ref().unwrap().format.as_str(), "ps1-mc");
         bundle.validate().expect("valid bundle");
 

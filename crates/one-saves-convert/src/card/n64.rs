@@ -124,20 +124,33 @@ fn build(bundle: &Bundle, id_area: Option<Vec<u8>>) -> Result<Vec<u8>> {
     if let Some(area) = bundle.header.card.as_ref().and_then(|card| card.system_area.as_ref()) {
         builder.label(area.clone());
     }
+    for note in notes_of(bundle)? {
+        builder.add(note);
+    }
+    builder.build().map_err(into_error)
+}
+
+/// A pak card's saves as the notes a pak holds, in the card's order.
+///
+/// A save's game code is the one its entry carries, verbatim. One that arrived without an entry
+/// takes the code its serial names, which is what a writer then puts in the entry it builds.
+pub(crate) fn notes_of(bundle: &Bundle) -> Result<Vec<Note>> {
+    let mut notes = Vec::new();
     for save in nested_saves(bundle)? {
         let path = save.path.unwrap_or_default();
         let (name, extension) = name_and_extension(&path);
-        // Only reached for a save that arrived without an entry; one that has an entry carries its
-        // game code inside it, verbatim.
-        let game_code = save
-            .inner
-            .header
-            .game
-            .as_ref()
-            .and_then(|game| game.serial.as_deref())
-            .map(|serial| game_code_of(serial).to_owned())
-            .unwrap_or_default();
-        builder.add(Note {
+        let game_code = match save.dirent.as_deref().and_then(|entry| entry.get(..4)) {
+            Some(code) => String::from_utf8_lossy(code).into_owned(),
+            None => save
+                .inner
+                .header
+                .game
+                .as_ref()
+                .and_then(|game| game.serial.as_deref())
+                .map(|serial| game_code_of(serial).to_owned())
+                .unwrap_or_default(),
+        };
+        notes.push(Note {
             slot: 0,
             game_code,
             name: name.to_owned(),
@@ -146,13 +159,13 @@ fn build(bundle: &Bundle, id_area: Option<Vec<u8>>) -> Result<Vec<u8>> {
             data: save.bytes,
         });
     }
-    builder.build().map_err(into_error)
+    Ok(notes)
 }
 
-/// Whether the format lets a `path` be this: not empty, not starting with `/`, and with no `..`
-/// between slashes. A note's name can spell any of those, since `/` and `.` are in the table.
+/// Whether the format lets a `path` be this: segments between slashes, none of them empty, `.` or
+/// `..`. A note's name can spell any of those, since `/` and `.` are in the table.
 fn a_path_may_be(spelling: &str) -> bool {
-    !spelling.is_empty() && !spelling.starts_with('/') && !spelling.split('/').any(|segment| segment == "..")
+    !spelling.split('/').any(|segment| matches!(segment, "" | "." | ".."))
 }
 
 /// A path split back into the name and the extension a note would have been written with.
@@ -224,7 +237,7 @@ mod tests {
         assert_eq!(bundle.parts[0].dirent.as_ref().map(Vec::len), Some(32));
         assert_eq!(bundle.parts[0].game.as_ref().unwrap().serial.as_deref(), Some("NUS-NMKJ"));
 
-        let inner = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap();
+        let inner = Bundle::from_slice(&bundle.parts[0].payload).unwrap();
         assert_eq!(inner.parts[0].payload.len(), 512, "two pages");
         bundle.validate().expect("valid bundle");
     }
@@ -283,7 +296,7 @@ mod tests {
         let pak = pak_with(&[("NKTE", "MARIOKART64", 1)]);
         for serial in ["NUS-NKTE", "NKTE"] {
             let mut bundle = read(&pak, &CardOptions::default()).expect("reads");
-            let mut save = Bundle::from_slice(&bundle.parts[0].bytes().unwrap()).unwrap();
+            let mut save = Bundle::from_slice(&bundle.parts[0].payload).unwrap();
             save.header.game = Some(Game::default().serial(serial));
             bundle.parts[0] = one_saves::Part::new(0, save.to_vec().unwrap())
                 .kind(one_saves::PartKind::Bundle)
@@ -301,7 +314,10 @@ mod tests {
         assert_eq!(name_and_extension("MR.DRILLER"), ("MR.DRILLER", ""), "no extension is seven long");
         assert_eq!(name_and_extension("GAME"), ("GAME", ""));
         assert!(!a_path_may_be("") && !a_path_may_be("/A") && !a_path_may_be("A/../B"));
-        assert!(a_path_may_be(".A") && a_path_may_be("A/B"));
+        assert!(
+            !a_path_may_be("A/") && !a_path_may_be("A//B") && !a_path_may_be(".") && !a_path_may_be("A/./B")
+        );
+        assert!(a_path_may_be(".A") && a_path_may_be("A/B") && a_path_may_be("..A"));
     }
 
     #[test]

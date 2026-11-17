@@ -48,7 +48,7 @@ dependency order. A crate cannot be packaged until everything it depends on is a
 `cargo package` resolves path dependencies against the registry, not against the workspace.
 
 ```
-1. one-saves            (dcbor, sha2, zstd)
+1. one-saves            (dcbor, sha2)
 2. one-saves-registry   (nothing)
 3. dreamcast-vmu        (nothing)
    gc-memcard           (nothing)

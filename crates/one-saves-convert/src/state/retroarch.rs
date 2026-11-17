@@ -157,9 +157,9 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     let order: Vec<([u8; 4], &[u8])> = blocks
         .iter()
         .filter(|(tag, _)| tag == b"RPLY")
-        .map(|(tag, data)| (*tag, data.as_ref()))
-        .chain([(*b"MEM ", state.as_ref())])
-        .chain(blocks.iter().filter(|(tag, _)| tag != b"RPLY").map(|(tag, data)| (*tag, data.as_ref())))
+        .map(|(tag, data)| (*tag, *data))
+        .chain([(*b"MEM ", state)])
+        .chain(blocks.iter().filter(|(tag, _)| tag != b"RPLY").map(|(tag, data)| (*tag, *data)))
         .chain([(*b"END ", &[][..])])
         .collect();
     let headers = order.iter().map(|(tag, data)| block_header(*tag, data)).collect::<Result<Vec<_>>>()?;
@@ -182,7 +182,7 @@ pub fn write(bundle: &Bundle, stem: &str) -> Result<Rebuilt> {
     // RetroArch's thumbnail is a PNG; a JPEG would need encoding again, which loses what the first
     // encode already dropped, so it stays in the bundle instead.
     let screenshot = match contents.screenshot {
-        Some(part) if part.content_type.as_deref() == Some("image/png") => Some(part.bytes()?.into_owned()),
+        Some(part) if part.content_type.as_deref() == Some("image/png") => Some(part.payload.clone()),
         Some(part) => {
             left_out.push(part.id);
             None
@@ -292,7 +292,7 @@ fn unwrap(plain: &[u8]) -> Result<(Range<usize>, Blocks)> {
 }
 
 /// A part's bytes as a block, held to what is left of `room` for it, and taken out of `room`.
-fn block_within<'a>(part: &'a Part, room: &mut usize) -> Result<Cow<'a, [u8]>> {
+fn block_within<'a>(part: &'a Part, room: &mut usize) -> Result<&'a [u8]> {
     let data = crate::state::bytes_within(part, room.saturating_sub(8), "a RetroArch state")?;
     *room = room.saturating_sub(8 + data.len().next_multiple_of(8));
     Ok(data)
@@ -390,7 +390,7 @@ mod tests {
 
         let bundle = read(&file(&rzip(&[&wrapped]), "Sonic CD (USA).state3"), &options()).unwrap();
         assert_eq!(bundle.parts[0].kind, PartKind::State);
-        assert_eq!(bundle.parts[0].bytes().unwrap(), core.as_slice());
+        assert_eq!(bundle.parts[0].payload.as_slice(), core.as_slice());
         assert_eq!(bundle.parts[0].slot, Some(3));
         assert_eq!(
             (bundle.parts[1].kind.clone(), bundle.parts[1].path.as_deref()),
@@ -410,7 +410,7 @@ mod tests {
     #[test]
     fn a_bare_core_state_is_the_cores_data_whole() {
         let bundle = read(&file(b"GENPLUS-GX 1.7.7", "game.state.auto"), &options()).unwrap();
-        assert_eq!(bundle.parts[0].bytes().unwrap().as_ref(), b"GENPLUS-GX 1.7.7");
+        assert_eq!(bundle.parts[0].payload.as_slice(), b"GENPLUS-GX 1.7.7");
         assert_eq!((bundle.header.origin.clone(), bundle.parts[0].slot), (Some(Origin::Auto), None));
         assert_eq!(write(&bundle, "game").unwrap().name, "game.state.auto");
     }
@@ -485,7 +485,7 @@ mod tests {
         let state = StateFile { bytes: &file, name: "game.state1", screenshot: Some(&png) };
         let bundle = read(&state, &options()).unwrap();
         assert_eq!(bundle.parts[1].kind, PartKind::Screenshot);
-        assert_eq!(bundle.parts[1].bytes().unwrap().as_ref(), png.as_slice(), "kept as RetroArch wrote it");
+        assert_eq!(bundle.parts[1].payload.as_slice(), png.as_slice(), "kept as RetroArch wrote it");
 
         let rebuilt = write(&bundle, "game").unwrap();
         assert_eq!(rebuilt.screenshot, Some(png), "written beside the state, as RetroArch keeps it");
@@ -513,7 +513,7 @@ mod tests {
         let plain = wrapped(&[(*b"MEM ", &core)]);
         for file in [plain.clone(), rzip_of(1, 4096, &plain, image::deflate_zlib)] {
             let bundle = read(&self::file(&file, "game.state"), &options()).unwrap();
-            assert_eq!(bundle.parts[0].bytes().unwrap().as_ref(), core.as_slice());
+            assert_eq!(bundle.parts[0].payload.as_slice(), core.as_slice());
         }
     }
 
@@ -524,7 +524,7 @@ mod tests {
         let plain = wrapped(&[(*b"MEM ", &core)]);
         let file = rzip_of(2, RZIP_CHUNK, &plain, |piece| zstd::stream::encode_all(piece, 0).unwrap());
         let bundle = read(&self::file(&file, "game.state"), &options()).unwrap();
-        assert_eq!(bundle.parts[0].bytes().unwrap().as_ref(), core.as_slice());
+        assert_eq!(bundle.parts[0].payload.as_slice(), core.as_slice());
     }
 
     #[cfg(not(feature = "zstd"))]
@@ -593,22 +593,6 @@ mod tests {
                 other => panic!("{claim}: {other:?}"),
             }
         }
-    }
-
-    #[test]
-    fn a_part_claiming_more_than_the_file_is_read_back_at_is_refused_before_it_is_inflated() {
-        // Past 4 GiB a block once panicked on its `u32` length, after it had been inflated.
-        let bundle = read(&file(&wrapped(&[(*b"MEM ", b"CORE")]), "game.state"), &options()).unwrap();
-        let mut odd = bundle.clone();
-        odd.parts.push(crate::state::part_claiming(1, (1 << 32) + 16).kind(PartKind::Aux).path("ACHV"));
-        let error = write(&odd, "game").unwrap_err();
-        assert!(matches!(error, Error::NotConvertible(_)), "{error}");
-
-        // The core's data alone at the cap leaves no room for RetroArch's wrapping around it.
-        let mut odd = bundle;
-        odd.parts[0] = crate::state::part_claiming(0, MAX_STATE as u64).kind(PartKind::State);
-        let error = write(&odd, "game").unwrap_err();
-        assert!(matches!(error, Error::NotConvertible(_)), "the core's data: {error}");
     }
 
     #[test]

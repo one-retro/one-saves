@@ -3,11 +3,8 @@
 //! Shared by `tests/stream.rs` and the fuzz target in `fuzz/fuzz_targets/stream.rs`, which
 //! includes this file by path, so the two hold the reader to one contract:
 //!
-//! 1. **The verdict.** For every input, the reader accepts exactly when `from_slice` accepts and
-//!    every part's `verify` passes. Said in `from_slice`'s terms: where `from_slice` refuses, the
-//!    reader refuses; where it accepts, the reader accepts unless a part's payload does not hash to
-//!    its `sha256` or does not inflate to its `size`, which `from_slice` leaves to whoever reads
-//!    the payload and the reader reads them all. [`agree`] panics on anything else.
+//! 1. **The verdict.** For every input, the reader accepts exactly when `from_slice` accepts. Both
+//!    check every part's `sha256` against its payload. [`agree`] panics on anything else.
 //! 2. **The error, where only one thing is wrong.** [`single_faults`] breaks a good bundle in
 //!    exactly one place, at every place it can, and there the reader has to give the error
 //!    `from_slice` gives. With several things wrong it may name another of them: it reports the
@@ -24,7 +21,7 @@
 use std::ops::Range;
 
 use one_saves::stream::{Done, Event, Limits, PartHead, PartTail, Reader};
-use one_saves::{Bundle, Error, ErrorKind, HashValue, Header, PartKind, Payload, Strictness};
+use one_saves::{Bundle, Error, ErrorKind, HashValue, Header, PartKind, Strictness};
 
 /// An error as a comparison sees it: where, and what.
 pub type Fault = (String, ErrorKind);
@@ -33,17 +30,14 @@ pub fn fault(error: &Error) -> Fault {
     (error.path().to_owned(), error.kind().clone())
 }
 
-/// The verdict the reader is held to: `from_slice`'s, then `verify` on every part in order.
+/// The verdict the reader is held to: `from_slice`'s.
 pub fn reference(bytes: &[u8], strictness: Strictness) -> Result<Bundle, Fault> {
     let bundle = Bundle::from_slice_with(bytes, strictness).map_err(|e| fault(&e))?;
-    for (index, part) in bundle.parts.iter().enumerate() {
-        let path = format!("parts[{index}]");
-        match part.verify() {
-            Ok(true) => {}
-            Ok(false) => return Err((path, ErrorKind::PayloadHashMismatch)),
-            Err(e) => return Err((path, e.kind().clone())),
-        }
-    }
+    // `from_slice` checks every digest, so a part it hands back is one that hashes to it.
+    assert!(
+        bundle.parts.iter().all(one_saves::Part::verify),
+        "from_slice handed back a part it did not check"
+    );
     Ok(bundle)
 }
 
@@ -134,11 +128,10 @@ pub fn assert_same(name: &str, bundle: &Bundle, streamed: &Streamed, bytes: &[u8
     for (part, (head, data, tail)) in bundle.parts.iter().zip(&streamed.parts) {
         let rebuilt = head.clone().into_part(tail.clone(), part.payload.clone());
         assert_eq!(&rebuilt, part, "{name}: part {}", part.id);
-        assert_eq!(head.size, part.payload.len(), "{name}: part {} size", part.id);
-        assert_eq!(data.as_slice(), part.bytes().unwrap().as_ref(), "{name}: part {} bytes", part.id);
+        assert_eq!(head.size, part.payload.len() as u64, "{name}: part {} size", part.id);
+        assert_eq!(data.as_slice(), part.payload.as_slice(), "{name}: part {} bytes", part.id);
     }
-    assert_eq!(streamed.done.file_hash, HashValue::sha256_of(bytes), "{name}: file hash");
-    assert_eq!(streamed.done.file_hash, bundle.file_hash().unwrap(), "{name}: file hash");
+    assert_eq!(streamed.done.content_hash, HashValue::sha256_of(bytes), "{name}: content hash");
     assert_eq!(streamed.done.content_hash, bundle.content_hash().unwrap(), "{name}: content hash");
 }
 
@@ -377,11 +370,13 @@ pub fn single_faults(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
 
     if let Ok(bundle) = Bundle::from_slice(bytes) {
         for (index, part) in bundle.parts.iter().enumerate() {
-            let (PartKind::Bundle, Payload::Embedded(inner)) = (&part.kind, &part.payload) else { continue };
-            for (name, broken) in single_faults(inner) {
+            if part.kind != PartKind::Bundle {
+                continue;
+            }
+            for (name, broken) in single_faults(&part.payload) {
                 let mut outer = bundle.clone();
                 outer.parts[index].sha256 = HashValue::sha256_of(&broken);
-                outer.parts[index].payload = Payload::Embedded(broken);
+                outer.parts[index].payload = broken;
                 faults.push((format!("parts[{index}]: {name}"), outer.to_cbor().to_cbor_data()));
             }
         }

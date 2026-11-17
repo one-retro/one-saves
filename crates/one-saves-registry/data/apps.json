@@ -7,6 +7,13 @@
     ]
   },
   {
+    "slug": "ares",
+    "name": "ares",
+    "cores": [
+      "ares"
+    ]
+  },
+  {
     "slug": "azahar",
     "name": "Azahar",
     "cores": [
@@ -98,6 +105,13 @@
     ]
   },
   {
+    "slug": "minui",
+    "name": "MinUI",
+    "cores": [
+      "libretro"
+    ]
+  },
+  {
     "slug": "mister",
     "name": "MiSTer",
     "cores": [
@@ -115,8 +129,10 @@
     "slug": "openemu",
     "name": "OpenEmu",
     "cores": [
+      "4do",
       "atari800",
       "bliss",
+      "bluemsx",
       "bsnes",
       "crabemu",
       "desmume",
@@ -124,6 +140,7 @@
       "fceux",
       "gambatte",
       "genesis-plus-gx",
+      "jollycv",
       "mednafen",
       "mgba",
       "mupen64plus",
@@ -134,7 +151,8 @@
       "prosystem",
       "snes9x",
       "stella",
-      "vecx"
+      "vecx",
+      "virtual-jaguar"
     ]
   },
   {
@@ -152,30 +170,38 @@
     ]
   },
   {
+    "slug": "project64",
+    "name": "Project64",
+    "cores": [
+      "project64"
+    ]
+  },
+  {
     "slug": "provenance",
     "name": "Provenance",
     "cores": [
       "libretro",
       "4do",
       "atari800",
+      "azahar",
       "bliss",
       "crabemu",
       "dolphin-emu",
       "emuthreeds",
       "fceux",
+      "fmsx",
       "gambatte",
       "genesis-plus-gx",
       "mednafen",
+      "mgba",
       "mupen64plus",
-      "o2em",
       "picodrive",
       "ppsspp",
       "prosystem",
       "snes9x",
       "stella",
       "tgb-dual",
-      "vba-m",
-      "virtual-jaguar"
+      "vba-m"
     ]
   },
   {
@@ -186,10 +212,24 @@
     ]
   },
   {
+    "slug": "rmg",
+    "name": "Rosalie's Mupen GUI",
+    "cores": [
+      "mupen64plus"
+    ]
+  },
+  {
     "slug": "sameboy",
     "name": "SameBoy",
     "cores": [
       "sameboy"
+    ]
+  },
+  {
+    "slug": "simple64",
+    "name": "simple64",
+    "cores": [
+      "simple64"
     ]
   },
   {

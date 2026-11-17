@@ -23,8 +23,10 @@ const POWER_ON_ALARM: [u8; 2] = [0x00, 0x80];
 pub struct RtcS3511a {
     /// The seven latched BCD bytes: year since 2000, month, day, weekday, hour, minute, second.
     pub components: [u8; 7],
-    /// The control register as read. Bit 6 is 24-hour mode.
-    pub control: u8,
+    /// The control register as read, one byte: bit 6 is 24-hour mode and bit 7 the power-off
+    /// status. `None` where the producer's source does not keep it, as MiSTer's WonderSwan core
+    /// and Mednafen do not; see [`control_or_default`](Self::control_or_default).
+    pub control: Option<u8>,
     /// The producer's clock when it took the components, in epoch seconds. The anchor, not the
     /// reading, and not necessarily UTC: MiSTer gives its cores local standard time counted as
     /// though it were.
@@ -53,16 +55,30 @@ pub enum S3511aAlarm {
 }
 
 impl RtcS3511a {
-    /// Whether the chip is in 24-hour mode, which is bit 6 of the control register.
+    /// The control register a rebuild with none to go on uses: 24-hour mode, with the power on
+    /// and no interrupt. Every game the specification names sets that mode.
+    pub const DEFAULT_CONTROL: u8 = 0x40;
+
+    /// Whether the chip is in 24-hour mode, which is bit 6 of the control register, and which a
+    /// clock whose register nobody kept is taken to be.
     #[must_use]
     pub fn hour24(&self) -> bool {
-        self.control & 0x40 != 0
+        self.control_or_default() & 0x40 != 0
+    }
+
+    /// The control register as read, or [`DEFAULT_CONTROL`](Self::DEFAULT_CONTROL) where the
+    /// producer's source did not keep it.
+    #[must_use]
+    pub fn control_or_default(&self) -> u8 {
+        self.control.unwrap_or(Self::DEFAULT_CONTROL)
     }
 
     /// The chip's clock on the Unix scale: its components, read as though they were UTC.
     ///
     /// The chip keeps no zone, so its wall clock goes on the scale the way `x.1sav.dirent` puts a
-    /// console's there. In 12-hour mode, bit 7 of the hour byte is what says it is after noon.
+    /// console's there. In 12-hour mode, bit 7 of the hour byte is what says it is after noon. In
+    /// 24-hour mode the chip sets that bit itself for the hours 12 to 23, and the digits are the
+    /// hour.
     ///
     /// `taken_at` is not the answer, since it is when the components were taken rather than what
     /// they say, and the two can be years apart: GBA_MiSTer starts the chip at
@@ -103,7 +119,7 @@ impl From<RtcS3511a> for CBOR {
     fn from(clock: RtcS3511a) -> Self {
         let mut map = Map::new();
         map.insert(0u64, CBOR::to_byte_string(clock.components));
-        map.insert(1u64, u64::from(clock.control));
+        map.insert(1u64, super::or_null(clock.control, |control| u64::from(control).into()));
         if let Some(taken_at) = clock.taken_at {
             map.insert(2u64, epoch(taken_at));
         }
@@ -129,7 +145,7 @@ impl TryFrom<CBOR> for RtcS3511a {
         };
         Ok(RtcS3511a {
             components: want_bytes(&field(map, 0)?)?,
-            control: want_uint(&field(map, 1)?)?,
+            control: super::nullable(&field(map, 1)?, want_uint)?,
             taken_at: optional_epoch(map, 2)?,
             alarm,
         })
@@ -171,14 +187,14 @@ mod tests {
     fn a_seiko_clock_shows_its_digits() {
         let clock = RtcS3511a {
             components: [0x26, 0x08, 0x12, 0x03, 0x10, 0x39, 0x43],
-            control: 0x40,
+            control: Some(0x40),
             taken_at: None,
             alarm: S3511aAlarm::NeverSet,
         };
         assert_eq!(RtcS3511a::try_from(CBOR::from(clock)).unwrap(), clock);
         assert_eq!(clock.to_string(), "2026-08-12 10:39:43, 24-hour");
         let garbled =
-            RtcS3511a { components: [0x01, 0x20, 0x3f, 0x00, 0x3d, 0x9c, 0xbb], control: 0, ..clock };
+            RtcS3511a { components: [0x01, 0x20, 0x3f, 0x00, 0x3d, 0x9c, 0xbb], control: Some(0), ..clock };
         assert_eq!(garbled.to_string(), "not BCD: h'01203f003d9cbb', 12-hour");
     }
 
@@ -187,7 +203,7 @@ mod tests {
         // Key 2 is optional: a bundle written before it existed has only keys 0 and 1.
         let clock = RtcS3511a {
             components: [0x10, 0x01, 0x01, 0x00, 0x00, 0x08, 0x47],
-            control: 0x40,
+            control: Some(0x40),
             taken_at: Some(1_792_576_838),
             alarm: S3511aAlarm::NeverSet,
         };
@@ -201,7 +217,7 @@ mod tests {
     fn the_alarm_is_absent_null_or_what_the_game_wrote() {
         let clock = RtcS3511a {
             components: [0x26, 0x08, 0x12, 0x03, 0x10, 0x39, 0x43],
-            control: 0x40,
+            control: Some(0x40),
             taken_at: None,
             alarm: S3511aAlarm::Unknown,
         };
@@ -220,14 +236,14 @@ mod tests {
     fn the_reading_is_the_components_as_utc() {
         let clock = RtcS3511a {
             components: [0x26, 0x10, 0x21, 0x03, 0x13, 0x40, 0x16],
-            control: 0x40,
+            control: Some(0x40),
             taken_at: Some(1),
             alarm: S3511aAlarm::Unknown,
         };
         assert_eq!(clock.reading(), Some(Rtc::new(1_792_590_016)));
         // 1:40 PM on the 12-hour clock is the same moment.
         let twelve =
-            RtcS3511a { components: [0x26, 0x10, 0x21, 0x03, 0x81, 0x40, 0x16], control: 0, ..clock };
+            RtcS3511a { components: [0x26, 0x10, 0x21, 0x03, 0x81, 0x40, 0x16], control: Some(0), ..clock };
         assert_eq!(twelve.reading(), clock.reading());
         // And the 31st of September is no moment at all.
         let invalid = RtcS3511a { components: [0x26, 0x09, 0x31, 0x03, 0x13, 0x40, 0x16], ..clock };

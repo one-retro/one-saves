@@ -104,6 +104,8 @@ pub struct DeviceKind {
 pub struct Binding {
     pub value: String,
     pub bound_to: String,
+    /// The keys of `bound_to` that name what this value binds a payload to.
+    pub keys: Vec<u64>,
 }
 
 /// How one core lays out clock state, as `clocks.json` records it.
@@ -399,10 +401,22 @@ fn device_kinds(page: &str) -> Fallible<Vec<DeviceKind>> {
 
 fn bindings(page: &str) -> Fallible<Vec<Binding>> {
     let mut out = Vec::new();
-    for table in tables(page).iter().filter(|t| t.header == ["Value", "Bound to"]) {
+    for table in tables(page).iter().filter(|t| t.header == ["Value", "Bound to", "`bound_to` keys"]) {
         for row in &table.rows {
-            out.push(Binding { value: one_code(&row[0])?, bound_to: prose(&row[1]) });
+            // "0", "1", "0 and 1": every number in the cell is a key.
+            let keys = row[2]
+                .split(|c: char| !c.is_ascii_digit())
+                .filter(|n| !n.is_empty())
+                .map(|n| n.parse().map_err(|e| format!("bound_to key {n:?}: {e}")))
+                .collect::<Fallible<Vec<u64>>>()?;
+            if keys.is_empty() {
+                return Err(format!("binding {} names no bound_to key", row[0]));
+            }
+            out.push(Binding { value: one_code(&row[0])?, bound_to: prose(&row[1]), keys });
         }
+    }
+    if out.is_empty() {
+        return Err("the bundle page lists no binding: has its table changed?".to_owned());
     }
     Ok(out)
 }

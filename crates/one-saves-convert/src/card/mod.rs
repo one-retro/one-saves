@@ -408,7 +408,7 @@ pub fn card_format_of(bundle: &Bundle) -> Result<Option<Slug>> {
     }
     let mut formats = Vec::new();
     for part in bundle.parts.iter().filter(|part| part.kind == PartKind::Bundle) {
-        if let Some(card) = Bundle::from_slice(&part.bytes()?)?.header.card {
+        if let Some(card) = Bundle::from_slice(&part.payload)?.header.card {
             formats.push(card.format);
         }
     }
@@ -430,13 +430,13 @@ pub fn nested_saves(bundle: &Bundle) -> Result<Vec<NestedSave>> {
         if part.kind != PartKind::Bundle {
             continue;
         }
-        let payload = part.bytes()?;
-        let inner = Bundle::from_slice(&payload)?;
+        let payload = part.payload.as_slice();
+        let inner = Bundle::from_slice(payload)?;
         // A save made of several files is one run of bytes on the card; the files are told apart
         // by `path` inside the nested bundle, and their order is the part order.
         let mut bytes = Vec::new();
         for inner_part in &inner.parts {
-            bytes.extend_from_slice(&inner_part.bytes()?);
+            bytes.extend_from_slice(&inner_part.payload);
         }
         saves.push(NestedSave {
             bytes,
@@ -473,7 +473,7 @@ pub fn image_only(bundle: &Bundle) -> Result<Option<Vec<u8>>> {
         return Ok(None);
     }
     match bundle.parts.iter().find(|part| part.kind == PartKind::CardImage) {
-        Some(image) => Ok(Some(image.bytes()?.into_owned())),
+        Some(image) => Ok(Some(image.payload.clone())),
         None => Ok(None),
     }
 }

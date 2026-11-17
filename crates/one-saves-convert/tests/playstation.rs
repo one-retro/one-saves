@@ -24,11 +24,7 @@ fn card() -> Bundle {
 
 /// The saves, in the order the directory lists them: Gran Turismo, then Crash 2.
 fn saves() -> Vec<Bundle> {
-    card()
-        .parts
-        .iter()
-        .map(|part| Bundle::from_slice(&part.bytes().expect("nested")).expect("a save"))
-        .collect()
+    card().parts.iter().map(|part| Bundle::from_slice(&part.payload).expect("a save")).collect()
 }
 
 #[cfg(feature = "shift-jis")]
@@ -103,7 +99,8 @@ fn an_animated_icon_keeps_every_frame_in_display_order() {
     assert_eq!(digests[1], digests[0], "the first two frames really are one picture");
     assert_eq!(digests[2], "ed0574e23eb443f9", "and the third is another");
 
-    assert!(frames.iter().all(|(_, hold)| hold.is_none()), "a PS1 states no hold");
+    // A PS1 states no hold, and every frame of an animated icon carries one: a quarter second each.
+    assert!(frames.iter().all(|(_, hold)| *hold == Some(250)), "each frame holds 250 ms");
 }
 
 #[cfg(feature = "icon")]
@@ -123,7 +120,7 @@ fn from_psv(rest: &str) -> Bundle {
     let image = ps1_memcard::CardBuilder::new().add(save).build().expect("one save fits");
     let card =
         one_saves_convert::card::read(Format::Ps1Card, &image, &CardOptions::default()).expect("reads");
-    Bundle::from_slice(&card.parts[0].bytes().expect("nested")).expect("a save")
+    Bundle::from_slice(&card.parts[0].payload).expect("a save")
 }
 
 /// A Japanese release's title, which is the case the Shift-JIS table exists for.
