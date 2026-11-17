@@ -16,9 +16,16 @@ one-saves-registry.workspace = true
 # Reading CHD, behind a feature: it brings four decompressors (zlib, LZMA, zstd and FLAC for audio
 # tracks), and the crate depends on nothing outside this workspace without it.
 chd = { workspace = true, optional = true }
+# Hashing a disc, behind features for the same reason: they are the things here that read a disc
+# whole, and a caller identifying discs should not compile digests it never takes.
+md-5 = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 
 [features]
 chd = ["dep:chd"]
+redump = ["dep:md-5", "dep:sha1"]
+disc-data = ["dep:sha1", "dep:sha2"]
 
 [lints]
 workspace = true

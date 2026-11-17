@@ -70,6 +70,10 @@ const TRACK_TAGS: [&[u8; 4]; 3] = [b"CHT2", b"CHTR", b"CHGD"];
 /// The tag of a hard disk's geometry.
 const GEOMETRY_TAG: &[u8; 4] = b"GDDD";
 
+/// The tag chdman's `createdvd` marks a DVD with, checked against chdman 0.289.
+#[cfg(any(feature = "redump", feature = "disc-data"))]
+const DVD_TAG: &[u8; 4] = b"DVD ";
+
 /// The A/V Huffman codec, which compresses LaserDisc video: `avhu` in a version
 /// 5 header, and 3 in an older one.
 const AV_CODECS: [u32; 2] = [u32::from_be_bytes(*b"avhu"), 3];
@@ -376,143 +380,325 @@ fn metadata_chain<F: Read + Seek>(file: &mut F, first: u64) -> io::Result<Vec<Me
     Ok(chain)
 }
 
-/// Where the data track starts, and how much of each frame is its data.
+/// Where a CHD stores one track, as its track table states it.
+struct Stored {
+    /// Frames stored ahead of it: every earlier track, and its padding.
+    before: usize,
+    /// Frames it stores. chdman's `FRAMES` counts a pregap the file holds, so
+    /// this is the track as Redump cuts it.
+    #[cfg_attr(not(any(feature = "redump", feature = "disc-data")), allow(dead_code))]
+    frames: usize,
+    /// Of those, how many are that pregap, ahead of the track's content.
+    pregap: usize,
+    /// Its `TYPE`: `AUDIO`, or how a data track keeps its sectors.
+    kind: String,
+}
+
+impl Stored {
+    /// Whether it is a data track: `MODE1` or `MODE2`, however stored.
+    fn data(&self) -> bool {
+        self.kind.starts_with("MODE")
+    }
+
+    /// Whether it keeps whole 2352-byte sectors, sync header and all, where a
+    /// cooked one stores only user data at the head of each frame.
+    fn raw(&self) -> bool {
+        self.kind.ends_with("_RAW")
+    }
+
+    /// How a data track keeps its sectors, as chdman names them, or `None` for
+    /// audio and for a type this does not know.
+    #[cfg(feature = "disc-data")]
+    fn layout(&self) -> Option<crate::disc_data::Layout> {
+        use crate::disc_data::Layout;
+        match self.kind.as_str() {
+            "MODE1_RAW" | "MODE2_RAW" => Some(Layout::Raw),
+            "MODE1" | "MODE2_FORM1" => Some(Layout::Cooked),
+            "MODE2" | "MODE2_FORM_MIX" => Some(Layout::Mode2),
+            "MODE2_FORM2" => Some(Layout::Form2),
+            _ => None,
+        }
+    }
+}
+
+/// A track table whose frames add up past a `usize`: the numbers are the
+/// file's say, and a disc that long is not one.
+struct PastAnyDisc;
+
+/// Every track in a CHD's track table, in order, and where each is stored.
+///
+/// chdman stores each track's frames padded out to a whole number of
+/// [`TRACK_PADDING`]: a CD's and a GD-ROM's alike. A GD-ROM's table carries a
+/// `PAD` field as well, and it is not that padding but the gap between the
+/// track and the next on the disc: Mat Hoffman's Pro BMX opens
+/// `FRAMES:450 PAD:150` then `FRAMES:44550 PAD:44024`, and its file holds
+/// 549,160 frames, which is its five tracks rounded up to fours and 44,464
+/// fewer than the frames and `PAD`s add up to. All 27 GD-ROM CHDs checked hold
+/// their tracks this way.
+///
+/// A track that ends past any disc is an error, and so is every one after it.
+/// Lazy, so a walk that stops at the track it wants is not failed by a later
+/// one.
+fn stored(entries: &[String]) -> impl Iterator<Item = Result<Stored, PastAnyDisc>> + '_ {
+    let mut before = Some(0usize);
+    entries.iter().map(move |entry| {
+        let at = before.ok_or(PastAnyDisc)?;
+        let field =
+            |name: &str| -> Option<&str> { entry.split_whitespace().find_map(|f| f.strip_prefix(name)) };
+        let kind = field("TYPE:").unwrap_or("").to_string();
+        let frames: usize = field("FRAMES:").and_then(|v| v.parse().ok()).unwrap_or(0);
+        // A `PGTYPE` beginning with `V` means the pregap is *stored* ahead of
+        // the track rather than synthesised. Verified against two PC Engine
+        // discs: one `MODE1` with `PGTYPE:MODE1` and one `MODE1_RAW` with
+        // `PGTYPE:VMODE1_RAW`, and only the second carries its 225 frames in
+        // the file. Its `FRAMES` counts them: five more PC Engine CHDs store
+        // exactly as many frames as Redump's track file holds sectors, pregap
+        // and all.
+        let pregap = if field("PGTYPE:").is_some_and(|t| t.starts_with('V')) {
+            field("PREGAP:").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0)
+        } else {
+            0
+        };
+        before = frames
+            .div_ceil(TRACK_PADDING)
+            .checked_mul(TRACK_PADDING)
+            .and_then(|padded| at.checked_add(padded));
+        if before.is_none() {
+            return Err(PastAnyDisc);
+        }
+        Ok(Stored { before: at, frames, pregap, kind })
+    })
+}
+
+/// The first data track in a CHD's track table, or `None` for a table that
+/// names none.
 ///
 /// **Track one is not always the data track.** A PC Engine CD commonly opens
 /// with audio and puts the program on track two, so starting at frame zero
 /// hands the identifier music. The `CHT2` metadata names each track's type, so
-/// this walks it and returns where the first `MODE1` or `MODE2` track begins.
+/// this walks it to the first `MODE1` or `MODE2` track.
+fn first_data(entries: &[String]) -> Result<Option<Stored>, PastAnyDisc> {
+    for track in stored(entries) {
+        let track = track?;
+        if track.data() {
+            return Ok(Some(track));
+        }
+    }
+    Ok(None)
+}
+
+/// Where the data track's content starts, and how much of each frame is its
+/// data.
 ///
 /// Zero for the ordinary case — Sega CD, PlayStation, Saturn all put data on
-/// track one — so this changes nothing for them.
+/// track one — so following the table changes nothing for them. A pregap the
+/// file stores is stepped over, since a header is read from the content.
 ///
-/// `None` for a table whose frames add up past a `usize`: the numbers are the
-/// file's say, and a disc that long is not one.
+/// A `_RAW` track is read at its full width and a cooked one at 2048 bytes.
+/// Taking the wrong width leaves the image with a stride the sector layer
+/// cannot infer, so every lookup past the first lands in the wrong place.
+///
+/// `None` for a table whose frames add up past a `usize`.
 fn data_track(entries: &[String]) -> Option<(usize, usize)> {
-    let mut frames = 0usize;
-    for entry in entries {
-        let field =
-            |name: &str| -> Option<&str> { entry.split_whitespace().find_map(|f| f.strip_prefix(name)) };
-        let kind = field("TYPE:").unwrap_or("");
-        if kind.starts_with("MODE") {
-            // A `PGTYPE` beginning with `V` means the pregap is *stored* ahead
-            // of the track rather than synthesised, so it has to be stepped
-            // over too. Verified against two PC Engine discs: one `MODE1` with
-            // `PGTYPE:MODE1` and one `MODE1_RAW` with `PGTYPE:VMODE1_RAW`, and
-            // only the second carries its 225 frames in the file.
-            if field("PGTYPE:").is_some_and(|t| t.starts_with('V')) {
-                let pregap = field("PREGAP:").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-                frames = frames.checked_add(pregap)?;
-            }
-            // A `_RAW` track keeps the whole 2352-byte sector, sync header and
-            // all; a cooked one stores only its 2048 bytes of user data at the
-            // head of the frame. Taking the wrong width leaves the image with a
-            // stride the sector layer cannot infer, so every lookup past the
-            // first lands in the wrong place.
-            let width = if kind.ends_with("_RAW") { CD_SECTOR } else { COOKED_SECTOR };
-            return Some((frames, width));
-        }
-        let count: usize = field("FRAMES:").and_then(|v| v.parse().ok()).unwrap_or(0);
-        // `PAD` states the padding outright where the writer recorded it, and
-        // a GD-ROM's is not the rounding a CD's is: Shenmue's opening track is
-        // `FRAMES:450 PAD:150`, where the rule below would guess 452 and put
-        // every later lookup 148 frames out. Trust the number when it is there.
-        let stored = match field("PAD:").and_then(|v| v.parse::<usize>().ok()) {
-            Some(pad) => count.checked_add(pad)?,
-            // chdman pads each stored track out to a whole number of groups.
-            None => count.div_ceil(TRACK_PADDING).checked_mul(TRACK_PADDING)?,
-        };
-        frames = frames.checked_add(stored)?;
-    }
+    let Ok(found) = first_data(entries) else { return None };
     // No data track named: read from the start rather than refusing outright.
-    Some((0, CD_SECTOR))
+    let Some(stored) = found else { return Some((0, CD_SECTOR)) };
+    let width = if stored.raw() { CD_SECTOR } else { COOKED_SECTOR };
+    Some((stored.before.checked_add(stored.pregap)?, width))
 }
 
 fn other(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
 }
 
-/// A CHD's first data track, decompressed on demand.
-///
-/// Hunks hold several frames each and are compressed, so nothing can be looked
-/// at until the hunk holding it is inflated. This grows a buffer of the
-/// **image** rather than the file: subcode dropped, frames belonging to earlier
-/// tracks skipped, so what comes out is what a `.bin` of the same track would
-/// hold and the sector layer can read it without knowing a CHD was involved.
-struct Image<F: Read + Seek> {
+fn past_any_disc() -> io::Error {
+    invalid("a CHD track table whose frames add up past any disc".into())
+}
+
+/// A CHD vetted and opened, with what it says about itself.
+struct Opened<F: Read + Seek> {
     chd: Chd<F>,
-    hunk_count: u32,
-    next: u32,
+    /// Its metadata chain, as [`vet`] walked it.
+    #[cfg_attr(not(any(feature = "redump", feature = "disc-data")), allow(dead_code))]
+    metadata: Vec<Metadata>,
+    /// Its track table, an entry a track, where it is a CD.
+    tracks: Vec<String>,
     /// Whether frames carry subcode to drop, which a DVD or hard disk CHD
     /// does not.
     cd: bool,
-    sector_width: usize,
-    drop_frames: usize,
-    compressed: Vec<u8>,
-    hunk_buf: Vec<u8>,
-    bytes: Vec<u8>,
 }
 
-impl<F: Read + Seek> Image<F> {
-    /// Open a CHD and position on the first data track.
-    fn open(mut file: F) -> io::Result<Self> {
-        let metadata = vet(&mut file)?;
-        let mut chd = Chd::open(file, None).map_err(other)?;
+/// Vet a CHD, open it, and read its track table.
+fn open<F: Read + Seek>(mut file: F) -> io::Result<Opened<F>> {
+    let metadata = vet(&mut file)?;
+    let mut chd = Chd::open(file, None).map_err(other)?;
+    let cd = chd.header().unit_bytes() as usize == CD_FRAME;
+
+    // Where the program lives, which is not always where the disc starts.
+    //
+    // Every tag that carries the table is read. Reading only `CHT2` left
+    // older dumps and every Dreamcast one with no track table at all, so
+    // the reader fell back to frame zero and handed the identifier
+    // whatever track one happened to be -- music, on a disc that opens
+    // with audio. The entries are the ones `vet` walked, rather than the
+    // crate's own walk of them, which would follow a chain that loops.
+    let tracks: Vec<String> = metadata
+        .iter()
+        .filter(|entry| TRACK_TAGS.contains(&&entry.tag))
+        .filter_map(|entry| entry.read(chd.inner()).ok())
+        .map(|value| String::from_utf8_lossy(&value).trim_end_matches('\0').to_string())
+        .collect();
+    Ok(Opened { chd, metadata, tracks, cd })
+}
+
+/// A CHD's image as a stream, inflated a hunk at a time.
+///
+/// Hunks hold several frames each and are compressed, so nothing can be looked
+/// at until the hunk holding it is inflated. What comes out is the **image**
+/// rather than the file: it starts `skip` frames in, drops each frame's
+/// subcode, cuts each to `width`, and ends after `limit` bytes or the last
+/// hunk, so it reads like a `.bin` of the same track. Only one hunk is ever
+/// held, which is what lets a whole track be hashed out of a disc.
+struct Frames<F: Read + Seek> {
+    chd: Chd<F>,
+    hunk_count: u32,
+    next: u32,
+    cd: bool,
+    width: usize,
+    /// Frames of the next hunk still to drop: the ones before `skip`.
+    drop: usize,
+    /// Bytes still to hand out.
+    left: u64,
+    compressed: Vec<u8>,
+    hunk: Vec<u8>,
+    /// The current hunk's share of the image, read up to `at`.
+    out: Vec<u8>,
+    at: usize,
+}
+
+impl<F: Read + Seek> Frames<F> {
+    fn new(chd: Chd<F>, skip: usize, width: usize, limit: u64) -> Self {
         let hunk_size = chd.header().hunk_size() as usize;
         let hunk_count = chd.header().hunk_count();
         let cd = chd.header().unit_bytes() as usize == CD_FRAME;
-
-        // Where the program lives, which is not always where the disc starts.
-        //
-        // Every tag that carries the table is read. Reading only `CHT2` left
-        // older dumps and every Dreamcast one with no track table at all, so
-        // the reader fell back to frame zero and handed the identifier
-        // whatever track one happened to be -- music, on a disc that opens
-        // with audio. The entries are the ones `vet` walked, rather than the
-        // crate's own walk of them, which would follow a chain that loops.
-        let tracks: Vec<String> = metadata
-            .iter()
-            .filter(|entry| TRACK_TAGS.contains(&&entry.tag))
-            .filter_map(|entry| entry.read(chd.inner()).ok())
-            .map(|value| String::from_utf8_lossy(&value).trim_end_matches('\0').to_string())
-            .collect();
-        let (skip_frames, sector_width) = if cd {
-            data_track(&tracks)
-                .ok_or_else(|| invalid("a CHD track table whose frames add up past any disc".into()))?
-        } else {
-            (0, CD_SECTOR)
-        };
-
-        // Start at the hunk holding the data track, then drop the frames of it
-        // that still belong to whatever came before.
-        let frames_per_hunk = hunk_size / CD_FRAME.max(1);
-        let (next, drop_frames) = if cd && frames_per_hunk > 0 {
+        // Start at the hunk holding the first frame wanted, then drop the
+        // frames of it that still belong to whatever came before.
+        let frames_per_hunk = hunk_size / CD_FRAME;
+        let (next, drop) = if cd && frames_per_hunk > 0 {
             (
                 // A hunk past `u32` is past every hunk a CHD can hold, so reading from it finds
                 // nothing and the disc goes unidentified, as one that short would.
-                u32::try_from(skip_frames / frames_per_hunk).unwrap_or(u32::MAX),
-                skip_frames % frames_per_hunk,
+                u32::try_from(skip / frames_per_hunk).unwrap_or(u32::MAX),
+                skip % frames_per_hunk,
             )
         } else {
             (0, 0)
         };
-
-        Ok(Image {
+        Frames {
             chd,
             hunk_count,
             next,
             cd,
-            sector_width,
-            drop_frames,
+            width,
+            drop,
+            left: limit,
             compressed: Vec::new(),
-            hunk_buf: vec![0u8; hunk_size],
-            bytes: Vec::new(),
-        })
+            hunk: vec![0u8; hunk_size],
+            out: Vec::new(),
+            at: 0,
+        }
+    }
+
+    /// Whether everything there is has been read.
+    fn exhausted(&self) -> bool {
+        self.at == self.out.len() && (self.left == 0 || self.next >= self.hunk_count)
+    }
+
+    /// The CHD back, to read another track out of.
+    #[cfg(feature = "disc-data")]
+    fn into_chd(self) -> Chd<F> {
+        self.chd
+    }
+
+    /// Inflate the next hunk into `out`.
+    fn fill(&mut self) -> io::Result<()> {
+        self.chd
+            .hunk(self.next)
+            .map_err(other)?
+            .read_hunk_in(&mut self.compressed, &mut self.hunk)
+            .map_err(other)?;
+        self.next += 1;
+        self.out.clear();
+        self.at = 0;
+        if self.cd {
+            // Keep the sector, drop the subcode that follows it.
+            for frame in self.hunk.chunks(CD_FRAME) {
+                if self.drop > 0 {
+                    self.drop -= 1;
+                    continue;
+                }
+                let take = self.width.min(frame.len());
+                self.out.extend_from_slice(&frame[..take]);
+            }
+        } else {
+            self.out.extend_from_slice(&self.hunk);
+        }
+        let keep = usize::try_from(self.left).unwrap_or(usize::MAX).min(self.out.len());
+        self.out.truncate(keep);
+        self.left -= keep as u64;
+        Ok(())
+    }
+
+    /// The next stretch of image, at most a hunk of it, or `None` once there is
+    /// no more.
+    fn chunk(&mut self) -> io::Result<Option<&[u8]>> {
+        while self.at == self.out.len() {
+            if self.exhausted() {
+                return Ok(None);
+            }
+            self.fill()?;
+        }
+        let from = self.at;
+        self.at = self.out.len();
+        Ok(Some(&self.out[from..]))
+    }
+}
+
+impl<F: Read + Seek> Read for Frames<F> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        while self.at == self.out.len() {
+            if self.exhausted() {
+                return Ok(0);
+            }
+            self.fill()?;
+        }
+        let n = buf.len().min(self.out.len() - self.at);
+        buf[..n].copy_from_slice(&self.out[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
+}
+
+/// A CHD's first data track, inflated into a buffer on demand.
+///
+/// For identification, which reads a few hunks: the sector layer looks at the
+/// buffer without knowing a CHD was involved.
+struct Image<F: Read + Seek> {
+    frames: Frames<F>,
+    bytes: Vec<u8>,
+}
+
+impl<F: Read + Seek> Image<F> {
+    /// Open a CHD and position on the first data track's content.
+    fn open(file: F) -> io::Result<Self> {
+        let Opened { chd, tracks, cd, .. } = open(file)?;
+        let (skip, width) = if cd { data_track(&tracks).ok_or_else(past_any_disc)? } else { (0, CD_SECTOR) };
+        Ok(Image { frames: Frames::new(chd, skip, width, u64::MAX), bytes: Vec::new() })
     }
 
     /// Whether every hunk has been read.
     fn exhausted(&self) -> bool {
-        self.next >= self.hunk_count
+        self.frames.exhausted()
     }
 
     /// The image decompressed so far.
@@ -522,28 +708,9 @@ impl<F: Read + Seek> Image<F> {
 
     /// Inflate until the image holds `want` bytes, or the CHD runs out.
     fn grow_to(&mut self, want: usize) -> io::Result<()> {
-        while self.bytes.len() < want && !self.exhausted() {
-            self.chd
-                .hunk(self.next)
-                .map_err(other)?
-                .read_hunk_in(&mut self.compressed, &mut self.hunk_buf)
-                .map_err(other)?;
-            self.next += 1;
-            if self.cd {
-                // Keep the sector, drop the subcode that follows it.
-                for frame in self.hunk_buf.chunks(CD_FRAME) {
-                    if self.drop_frames > 0 {
-                        self.drop_frames -= 1;
-                        continue;
-                    }
-                    let take = self.sector_width.min(frame.len());
-                    self.bytes.extend_from_slice(&frame[..take]);
-                }
-            } else {
-                let hunk = std::mem::take(&mut self.hunk_buf);
-                self.bytes.extend_from_slice(&hunk);
-                self.hunk_buf = hunk;
-            }
+        while self.bytes.len() < want {
+            let Some(chunk) = self.frames.chunk()? else { break };
+            self.bytes.extend_from_slice(chunk);
         }
         Ok(())
     }
@@ -611,9 +778,117 @@ pub fn user_data_prefix<F: Read + Seek>(file: F, sectors: usize) -> io::Result<O
     }
 }
 
+/// The Redump hash of the disc inside a CHD.
+///
+/// The CHD counterpart of [`redump::track`](crate::redump::track), and it
+/// gives the same value as the cue sheet and track files the CHD was made from:
+/// the first data track's frames, subcode dropped, from its stored pregap to
+/// its last frame, which is the bytes of Redump's file for that track. A CD
+/// track is inflated a hunk at a time and hashed as it goes, never held.
+///
+/// A DVD, which chdman's `createdvd` marks as one, is hashed whole, as Redump
+/// hashes a DVD's image.
+///
+/// `Ok(None)` for a CD whose first data track is stored cooked (`MODE1`,
+/// `MODE2_FORM1` and the rest without `_RAW`), since the bytes Redump hashed
+/// are not in it; for a disc of only audio; for a CHD that is neither a CD nor
+/// a DVD; and for one whose hunks end before its track does. An error means
+/// the CHD itself could not be read.
+#[cfg(feature = "redump")]
+pub fn redump<F: Read + Seek>(file: F) -> io::Result<Option<crate::redump::RedumpHash>> {
+    use crate::redump::{Framed, raw_track, whole};
+
+    let Opened { chd, metadata, tracks, cd } = open(file)?;
+    if !cd {
+        if !metadata.iter().any(|entry| &entry.tag == DVD_TAG) {
+            return Ok(None);
+        }
+        // The last hunk is padded past the image; the header says where it ends.
+        let logical = chd.header().logical_bytes();
+        let found = whole(Frames::new(chd, 0, CD_SECTOR, logical))?;
+        return Ok((found.size == logical).then_some(found));
+    }
+    let Some(stored) = first_data(&tracks).map_err(|PastAnyDisc| past_any_disc())? else {
+        return Ok(None);
+    };
+    if !stored.raw() {
+        return Ok(None);
+    }
+    let sector = CD_SECTOR as u64;
+    let (Some(span), Some(content)) =
+        ((stored.frames as u64).checked_mul(sector), (stored.pregap as u64).checked_mul(sector))
+    else {
+        return Ok(None);
+    };
+    raw_track(Frames::new(chd, stored.before, CD_SECTOR, span), &Framed::At(content), Some(span))
+}
+
+/// The [`disc-data`](crate::disc_data) fingerprint of the disc inside a CHD.
+///
+/// The CHD counterpart of [`disc_data::sheet`](crate::disc_data::sheet), and
+/// it gives the same value as the cue sheet and files the CHD was made from,
+/// stored raw or cooked: each data track's frames from its content to its end,
+/// a stored pregap stepped over, inflated a hunk at a time and never held. The
+/// hunks of audio tracks are not inflated at all.
+///
+/// A DVD, which chdman's `createdvd` marks as one, is one track, its whole
+/// image.
+///
+/// `Ok(None)` for a disc whose data tracks hold nothing, or of only audio; for a
+/// data track of a type this does not know; for a CHD that is neither a CD nor
+/// a DVD, or a CD with no track table; and for one whose hunks end before its
+/// tracks do. An error means the CHD itself could not be read.
+#[cfg(feature = "disc-data")]
+pub fn disc_data<F: Read + Seek>(file: F) -> io::Result<Option<crate::disc_data::DiscData>> {
+    use crate::disc_data::{DiscData, Layout, read_track};
+
+    let Opened { mut chd, metadata, tracks, cd } = open(file)?;
+    if !cd {
+        if !metadata.iter().any(|entry| &entry.tag == DVD_TAG) {
+            return Ok(None);
+        }
+        // The last hunk is padded past the image; the header says where it ends.
+        let logical = chd.header().logical_bytes();
+        let read = read_track(Frames::new(chd, 0, CD_SECTOR, logical), Layout::Cooked)?;
+        if read.bytes < logical {
+            return Ok(None);
+        }
+        return Ok(read.track.and_then(|track| DiscData::from_tracks(vec![track])));
+    }
+    if tracks.is_empty() {
+        return Ok(None);
+    }
+    let mut found = Vec::new();
+    for stored in stored(&tracks) {
+        let stored = stored.map_err(|PastAnyDisc| past_any_disc())?;
+        if !stored.data() {
+            continue;
+        }
+        let Some(layout) = stored.layout() else { return Ok(None) };
+        let width = layout.width();
+        let (Some(skip), Some(bytes)) = (
+            stored.before.checked_add(stored.pregap),
+            stored
+                .frames
+                .checked_sub(stored.pregap)
+                .and_then(|count| (count as u64).checked_mul(width as u64)),
+        ) else {
+            return Ok(None);
+        };
+        let mut frames = Frames::new(chd, skip, width, bytes);
+        let read = read_track(&mut frames, layout)?;
+        if read.bytes < bytes {
+            return Ok(None);
+        }
+        found.extend(read.track);
+        chd = frames.into_chd();
+    }
+    Ok(DiscData::from_tracks(found))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CD_SECTOR, COOKED_SECTOR, MAX_HUNK, MAX_HUNKS, MAX_METADATA, data_track, identify};
+    use super::{CD_SECTOR, COOKED_SECTOR, MAX_HUNK, MAX_HUNKS, MAX_METADATA, data_track, identify, stored};
 
     fn entries(raw: &[&str]) -> Vec<String> {
         raw.iter().map(|s| (*s).to_string()).collect()
@@ -640,23 +915,34 @@ mod tests {
         assert_eq!(data_track(&tracks), Some((3668, COOKED_SECTOR)), "3665 padded to 3668");
     }
 
-    /// A GD-ROM states its padding rather than leaving it to be inferred, and
-    /// its padding is not the CD rounding rule: Shenmue's opening track is
-    /// `FRAMES:450 PAD:150`, where rounding to a multiple of four would guess
-    /// 452 and leave every later lookup 148 frames short.
+    /// A GD-ROM's `PAD` is the gap to the next track on the disc, not padding
+    /// in the file, which is the rounding a CD's is. The track table of Mat
+    /// Hoffman's Pro BMX (USA), whose CHD holds 549,160 frames: rounding each
+    /// track to four accounts for every one of them, and adding the `PAD`s
+    /// would put its program 44,170 frames past where it is.
     #[test]
-    fn stated_padding_is_used_rather_than_inferred() {
+    fn a_gd_rom_pads_its_tracks_as_a_cd_does() {
+        let tracks = entries(&[
+            "TRACK:1 TYPE:MODE1_RAW SUBTYPE:NONE FRAMES:450 PAD:150 PREGAP:0 PGTYPE:MODE1",
+            "TRACK:2 TYPE:AUDIO SUBTYPE:NONE FRAMES:44550 PAD:44024 PREGAP:0 PGTYPE:MODE1",
+            "TRACK:3 TYPE:MODE1_RAW SUBTYPE:NONE FRAMES:502967 PAD:150 PREGAP:0 PGTYPE:MODE1",
+            "TRACK:4 TYPE:AUDIO SUBTYPE:NONE FRAMES:601 PAD:150 PREGAP:0 PGTYPE:MODE1",
+            "TRACK:5 TYPE:MODE1_RAW SUBTYPE:NONE FRAMES:582 PAD:0 PREGAP:0 PGTYPE:MODE1",
+        ]);
+        let starts: Vec<usize> = stored(&tracks).map(|track| track.ok().unwrap().before).collect();
+        assert_eq!(starts, [0, 452, 45_004, 547_972, 548_576]);
+        assert_eq!(548_576 + 584, 549_160, "and the last, rounded, ends where the file does");
+
         let tracks = entries(&[
             "TRACK:1 TYPE:AUDIO SUBTYPE:NONE FRAMES:450 PAD:150 PREGAP:0",
             "TRACK:2 TYPE:MODE1_RAW SUBTYPE:NONE FRAMES:1000 PAD:0 PREGAP:0",
         ]);
-        assert_eq!(data_track(&tracks), Some((600, CD_SECTOR)), "450 + 150 stated");
+        assert_eq!(data_track(&tracks), Some((452, CD_SECTOR)), "450 rounded to 452");
     }
 
-    /// Without a `PAD` field the rounding rule still applies, so a CD track
-    /// table written by an older chdman reads the same as it always did.
+    /// A CD's table states no `PAD`, and its tracks are rounded the same way.
     #[test]
-    fn padding_falls_back_to_the_rounding_rule() {
+    fn a_cd_pads_each_track_to_four_frames() {
         let tracks = entries(&[
             "TRACK:1 TYPE:AUDIO SUBTYPE:NONE FRAMES:450 PREGAP:0",
             "TRACK:2 TYPE:MODE1 SUBTYPE:NONE FRAMES:1000 PREGAP:0",

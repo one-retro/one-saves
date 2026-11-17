@@ -86,6 +86,12 @@ test-features:
     cargo test -p one-saves-convert --no-default-features --features states
     # disc-id without `chd`, the build that carries no decompressor; `just test` only sees it with.
     cargo test -p disc-id
+    # Each of its features on its own: the CHD reader keeps a track's frame count only for the
+    # hashes, and the hashes' tests read a CHD only with the reader.
+    cargo clippy -p disc-id --all-targets --features chd
+    cargo test -p disc-id --features redump
+    cargo test -p disc-id --features disc-data
+    cargo test -p disc-id --features chd,disc-data
     # The default build, which `lint` does not reach: it runs --all-features, and what a user gets
     # by installing this is neither that nor --no-default-features. `icon` is the one off by
     # default that other code reads around, so this is the arm where an unread constant shows up.

@@ -15,6 +15,13 @@
 //! files, and never guesses: a signature it does not recognise is [`None`], not
 //! a plausible answer.
 //!
+//! Two digests of a disc are here, each behind a feature since each reads a
+//! disc whole. `disc-data` adds `disc_data`, 1Retro's fingerprint of a disc's
+//! program: every data track's user data, the same whatever container holds
+//! it and different for anything that changes the program. `redump` adds
+//! `redump`, which streams the first data track's raw sectors through SHA-1 and
+//! MD5, the per-track hash Redump publishes.
+//!
 //! # I/O is the caller's
 //!
 //! This crate reads nothing. [`identify_prefix`] is handed whatever bytes a
@@ -38,7 +45,11 @@
 #[cfg(feature = "chd")]
 pub mod chd;
 pub mod cue;
+#[cfg(feature = "disc-data")]
+pub mod disc_data;
 pub mod iso9660;
+#[cfg(feature = "redump")]
+pub mod redump;
 pub mod sector;
 
 use std::io::{self, Read, Seek, SeekFrom};
@@ -255,6 +266,16 @@ pub fn identify_seekable<R: Read + Seek>(mut reader: R) -> io::Result<Option<Dis
         system: if generation == "ps2" { systems::PS2 } else { systems::PSX },
         serial: Some(serial),
     }))
+}
+
+/// Bytes as lower-case hex, two digits each, as digests are written.
+#[cfg(any(feature = "redump", feature = "disc-data"))]
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
 }
 
 /// Fill `buf` from `reader`, returning how much was read before the end.
