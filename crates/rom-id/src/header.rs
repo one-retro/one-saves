@@ -27,6 +27,7 @@ pub(crate) type Parser = fn(View<'_>, &[System]) -> Option<RomId>;
 /// Every parser, strongest first, so a weak check never shadows a strong one.
 pub(crate) static PARSERS: &[(Strength, Parser)] = &[
     (Strength::Strong, crate::n64::header),
+    (Strength::Strong, crate::n64dd::header),
     (Strength::Strong, ines),
     (Strength::Strong, unif),
     (Strength::Strong, fds),
@@ -69,6 +70,7 @@ pub(crate) fn windows(len: u64) -> Vec<Range<u64>> {
         ranges.extend(SNES_HEADERS.map(|at| base + at..base + at + 0x20));
     }
     ranges.push(len.saturating_sub(TAIL)..len);
+    ranges.extend(crate::n64dd::disk_id_window(len));
 
     let mut clipped: Vec<Range<u64>> = ranges
         .into_iter()

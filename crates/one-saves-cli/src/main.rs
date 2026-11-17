@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use one_saves::extension::{Civil, SHOWN_BYTES, SHOWN_CHARS};
 use one_saves::{Bundle, Game, Name, Origin, Part, PartKind, Recorded, Source, TakenWith};
-use one_saves_convert::{Format, Profile, card, detect, raw};
+use one_saves_convert::{Format, Profile, card, detect, n64dd, raw};
 
 mod n64;
 mod state;
@@ -26,7 +26,8 @@ enum Command {
     ///
     /// The input may be a .zip holding a card, or holding loose PlayStation saves, in which
     /// case a card is built to carry them. A RetroArch, mGBA or DuckStation state is recognised
-    /// as one, and RetroArch's thumbnail beside it is taken along.
+    /// as one, and RetroArch's thumbnail beside it is taken along. A Saturn's internal memory
+    /// takes the `.bcr` cart and `.smpc` clock Mednafen keeps beside it along, as one device.
     Convert(Box<Convert>),
     /// Write a bundle back out in the format it came from: a save, a card, an emulator's state
     /// file, or a screenshot's image.
@@ -195,7 +196,8 @@ struct Extract {
     #[arg(long, value_name = "TARGET")]
     n64: Option<n64::Target>,
     /// For an N64 save, the file to write it onto: a `.srm` for RetroArch, an `.mpk` otherwise.
-    /// For a Controller Pak, the pak's own file.
+    /// For a Controller Pak, the pak's own file. For a 64DD disk's save, the disk's image, which
+    /// comes out as a copy holding the save, as an emulator that keeps the disk whole keeps it.
     ///
     /// What the bundle says nothing about is kept from it, so one game's notes go onto a pak without
     /// taking the others off, and a pak keeps the ID block a console knows it by.
@@ -582,7 +584,7 @@ fn convert(args: Convert) -> Fallible {
     // A sidecar that records its own instant ignores the one passed beside it.
     let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at.unwrap_or_default()));
 
-    let system = system_of(&args, rom_system, profile.as_ref(), source.as_ref(), &extension);
+    let system = system_of(&args, rom_system, profile.as_ref(), source.as_ref(), &extension, bytes.len());
 
     let mut label = format.label().to_owned();
     let mut bundle = if n64::is_n64(system.as_deref(), &extension, &bytes) {
@@ -606,15 +608,9 @@ fn convert(args: Convert) -> Fallible {
             memory,
             ..raw::RawOptions::default()
         };
-        raw::wrap(&bytes, &options)?
+        read_flat(&args.input, &bytes, options)?
     } else {
-        let options = card::CardOptions {
-            role: args.role.as_deref().map(|role| slug_flag("--role", role)).transpose()?,
-            // A format names its own system, except a Neo Geo card's, which can be a Neo Geo CD's.
-            system: system.as_deref().map(|system| slug_flag("--system", system)).transpose()?,
-            source,
-        };
-        card::read(format, &bytes, &options)?
+        read_card(&args, format, &bytes, &extension, system.as_deref(), source)?
     };
     // On a card, a header `game` would claim the whole card is that game, which is only true when
     // every save on it is. Naming one is the caller's doing, so it is honoured rather than guessed.
@@ -673,9 +669,220 @@ fn convert(args: Convert) -> Fallible {
         "{} -> {} ({}, {what}, {} bytes)",
         args.input.display(),
         output.display(),
-        if backup_ram { "Sega CD backup RAM" } else { label.as_str() },
+        match () {
+            () if backup_ram => "Sega CD backup RAM",
+            () if n64dd::is_disk_save(&bundle) => "64DD disk save",
+            () if n64dd::is_drive(&bundle) => "64DD disk save and the drive's clock",
+            () => label.as_str(),
+        },
         encoded.len()
     );
+    Ok(())
+}
+
+/// A flat save; or a 64DD disk's, from its RAM area or a whole copy of the disk, with the drive's
+/// clock when ares keeps one beside it, under the name it gives the file in a saves folder.
+fn read_flat(
+    input: &Path,
+    bytes: &[u8],
+    mut options: raw::RawOptions,
+) -> Result<Bundle, Box<dyn std::error::Error>> {
+    if !n64dd::is_image(bytes) && options.system.as_deref() != Some(n64dd::SYSTEM) {
+        return Ok(raw::wrap(bytes, &options)?);
+    }
+    if options.rtc_sidecar.is_none() {
+        let beside = input.with_file_name(one_saves_convert::console_clock::ARES_N64DD_RTC);
+        if let Some(clock) = read_beside(&beside, MAX_SIDECAR_CLOCK)? {
+            println!("read {} beside it", beside.display());
+            options.rtc_sidecar = Some((clock, 0));
+        }
+    }
+    Ok(n64dd::read(bytes, &options)?)
+}
+
+/// A card, read as the caller described it; or for a Saturn's internal memory with an emulator's
+/// files beside it, the device they make.
+fn read_card(
+    args: &Convert,
+    format: Format,
+    bytes: &[u8],
+    extension: &str,
+    system: Option<&str>,
+    source: Option<Source>,
+) -> Result<Bundle, Box<dyn std::error::Error>> {
+    let options = card::CardOptions {
+        role: args.role.as_deref().map(|role| slug_flag("--role", role)).transpose()?,
+        // A format names its own system, except a Neo Geo card's, which can be a Neo Geo CD's.
+        system: system.map(|system| slug_flag("--system", system)).transpose()?,
+        source,
+    };
+    match saturn_device(args, format, bytes, extension, &options)? {
+        Some(device) => Ok(device),
+        None => Ok(card::read(format, bytes, &options)?),
+    }
+}
+
+/// The longest a Saturn cart's file beside the internal memory could be: the largest volume, which
+/// gzipped is shorter still, with room to spare.
+#[cfg(feature = "saturn")]
+const MAX_SATURN_CART: u64 = 8 << 20;
+
+/// The longest an SMPC's file could be, with room to spare: Mednafen's is twelve bytes.
+#[cfg(feature = "saturn")]
+const MAX_SMPC: u64 = 64 << 10;
+
+/// A Saturn's internal memory with the files Mednafen or Beetle Saturn keeps beside it, as the
+/// device they make: the cart's volume and the SMPC, found under the internal memory's name.
+///
+/// `None` when the input is not the internal memory itself, read straight off the disk, or when
+/// nothing is beside it. A cart's volume named on its own stays the card it is.
+#[cfg(feature = "saturn")]
+fn saturn_device(
+    args: &Convert,
+    format: Format,
+    bytes: &[u8],
+    extension: &str,
+    options: &card::CardOptions,
+) -> Result<Option<Bundle>, Box<dyn std::error::Error>> {
+    use one_saves_convert::card::saturn;
+    // What came out of an archive has nothing beside it here, whatever is beside the archive.
+    if format != Format::SaturnBup || extension != extension_of(&args.input) || !saturn::is_internal(bytes) {
+        return Ok(None);
+    }
+    let beside = |extension: &str, limit: u64| -> Result<Option<(PathBuf, Vec<u8>)>, String> {
+        let path = args.input.with_extension(extension);
+        Ok(read_beside(&path, limit)?.map(|bytes| (path, bytes)))
+    };
+    let cart = beside(saturn::CART_EXTENSION, MAX_SATURN_CART)?;
+    let smpc = beside(saturn::SMPC_EXTENSION, MAX_SMPC)?;
+    if cart.is_none() && smpc.is_none() {
+        return Ok(None);
+    }
+    for (path, _) in cart.iter().chain(&smpc) {
+        println!("read {} beside it", path.display());
+    }
+    let files = saturn::DeviceFiles {
+        internal: bytes.to_vec(),
+        cart: cart.map(|(_, bytes)| bytes),
+        smpc: smpc.map(|(_, bytes)| bytes),
+    };
+    Ok(Some(saturn::read_device(&files, options)?))
+}
+
+/// Without `saturn`, a Saturn volume is refused before anything would look beside it.
+#[cfg(not(feature = "saturn"))]
+#[allow(clippy::unnecessary_wraps)]
+fn saturn_device(
+    _: &Convert,
+    _: Format,
+    _: &[u8],
+    _: &str,
+    _: &card::CardOptions,
+) -> Result<Option<Bundle>, Box<dyn std::error::Error>> {
+    Ok(None)
+}
+
+/// What is written as something other than one file in a format: a Saturn's internal memory, its
+/// cart and its clock, which an emulator keeps as three, and a 64DD disk's save written into a
+/// copy of the disk. `None` for everything else.
+fn extract_apart(args: &Extract, bundle: &Bundle) -> Option<Fallible> {
+    #[cfg(feature = "saturn")]
+    if one_saves_convert::card::saturn::is_device(bundle)
+        && args.to.as_deref().is_none_or(|to| Format::from_name(to) == Some(Format::SaturnBup))
+    {
+        return Some(extract_saturn(args, bundle));
+    }
+    if n64dd::is_drive(bundle) {
+        return Some(extract_drive(args, bundle));
+    }
+    let onto = args.onto.as_deref().filter(|_| n64dd::is_disk_save(bundle))?;
+    Some(extract_disk_copy(args, bundle, onto))
+}
+
+/// A 64DD drive's disk and clock, written as ares keeps them in a saves folder: the disk's save,
+/// as a `.ram` or with `--onto` a copy of the disk, and `Nintendo 64DD.rtc` beside it.
+fn extract_drive(args: &Extract, bundle: &Bundle) -> Fallible {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_secs()).unwrap_or(i64::MAX));
+    let (save, clock) = n64dd::split_drive(bundle, now)?;
+    let (output, bytes, what) = match args.onto.as_deref() {
+        Some(onto) => {
+            let output = args.output.clone().unwrap_or_else(|| args.input.with_extension("ndr"));
+            let copy = disk_copy(&save, onto, &output)?;
+            (output, copy, "64DD disk holding the save")
+        }
+        None => (
+            args.output.clone().unwrap_or_else(|| args.input.with_extension(n64dd::EXTENSION)),
+            save.parts.first().map(|part| part.payload.clone()).unwrap_or_default(),
+            "64DD disk save",
+        ),
+    };
+    write_out(&output, &bytes, args.force)?;
+    println!("{} -> {} ({what}, {} bytes)", args.input.display(), output.display(), bytes.len());
+    if let Some(clock) = clock {
+        let path = output.with_file_name(one_saves_convert::console_clock::ARES_N64DD_RTC);
+        write_out(&path, &clock, args.force)?;
+        println!("clock -> {} ({} bytes)", path.display(), clock.len());
+    }
+    Ok(())
+}
+
+/// A 64DD disk's save written into a copy of the disk's image, in the image's own layout: what an
+/// emulator that keeps the disk whole reads, mupen64plus's `.ndr`, ares's `.disk` or
+/// Mupen64Plus-Next's `.disk_save`.
+fn extract_disk_copy(args: &Extract, bundle: &Bundle, onto: &Path) -> Fallible {
+    // mupen64plus and Project64 call a copy `.ndr`; another emulator's name is the caller's to
+    // give.
+    let output = args.output.clone().unwrap_or_else(|| args.input.with_extension("ndr"));
+    let copy = disk_copy(bundle, onto, &output)?;
+    write_out(&output, &copy, args.force)?;
+    println!(
+        "{} -> {} (64DD disk holding the save, {} bytes)",
+        args.input.display(),
+        output.display(),
+        copy.len()
+    );
+    Ok(())
+}
+
+/// A copy of the disk image at `onto` holding a disk's save: in the image's own layout, or in
+/// MAME's for an output named as ares names its copy, which it reads in no other.
+fn disk_copy(save: &Bundle, onto: &Path, output: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let image = std::fs::read(onto)?;
+    Ok(if extension_of(output) == n64dd::ARES_DISK_EXTENSION {
+        n64dd::write_ares_disk(save, &image)?
+    } else {
+        n64dd::write_image(save, &image)?
+    })
+}
+
+/// Writes a Saturn device back out as the files Mednafen and Beetle Saturn keep: the internal
+/// memory where the output goes, and the cart's volume and the SMPC beside it under its name.
+#[cfg(feature = "saturn")]
+fn extract_saturn(args: &Extract, bundle: &Bundle) -> Fallible {
+    use one_saves_convert::card::saturn;
+    if args.onto.is_some() {
+        return Err("--onto is for an N64 save, with --n64, or a Controller Pak".into());
+    }
+    let files = saturn::write_device(bundle)?;
+    let output =
+        args.output.clone().unwrap_or_else(|| args.input.with_extension(Format::SaturnBup.extension()));
+    let cart = files.cart.map(|cart| (output.with_extension(saturn::CART_EXTENSION), cart));
+    let smpc = files.smpc.map(|smpc| (output.with_extension(saturn::SMPC_EXTENSION), smpc));
+    write_out(&output, &files.internal, args.force)?;
+    println!(
+        "{} -> {} (Saturn internal memory, {} bytes)",
+        args.input.display(),
+        output.display(),
+        files.internal.len()
+    );
+    for (what, (path, bytes)) in
+        [("cart", cart), ("clock", smpc)].into_iter().filter_map(|(what, file)| Some((what, file?)))
+    {
+        write_out(&path, &bytes, args.force)?;
+        println!("{what} -> {} ({} bytes)", path.display(), bytes.len());
+    }
     Ok(())
 }
 
@@ -720,6 +927,7 @@ fn system_of(
     profile: Option<&Profile>,
     source: Option<&Source>,
     extension: &str,
+    len: usize,
 ) -> Option<String> {
     let core_system = source
         .and_then(|source| source.core.as_ref())
@@ -734,6 +942,11 @@ fn system_of(
         .or_else(|| profile.and_then(Profile::only_system).map(ToOwned::to_owned))
         .or_else(|| core_system.map(ToOwned::to_owned))
         .or_else(|| n64::system_of_extension(extension).map(ToOwned::to_owned))
+        // A `.ram` is a 64DD disk's RAM area when its length is one a disk type gives.
+        .or_else(|| {
+            (extension == n64dd::EXTENSION && n64dd::disk_type(len).is_some())
+                .then(|| n64dd::SYSTEM.to_owned())
+        })
 }
 
 fn slug_flag(flag: &str, text: &str) -> Result<one_saves::Slug, String> {
@@ -916,6 +1129,13 @@ fn extract(args: Extract) -> Fallible {
         return state::extract(&args, &bundle);
     }
 
+    // A drive's disk and clock, and a Saturn's three files, are written as their emulators keep
+    // them, ahead of the N64 cartridge saves that need a target named.
+    if args.n64.is_none()
+        && let Some(done) = extract_apart(&args, &bundle)
+    {
+        return done;
+    }
     // An N64 save is several files or one, in either word order, depending on what reads it, so
     // which is the caller's to say.
     if let Some(target) = args.n64 {
@@ -968,7 +1188,7 @@ fn extract(args: Extract) -> Fallible {
     // A Controller Pak is the one card with something of its own no bundle carries, the ID block a
     // console knows it by, so it is the one a card can be written onto.
     if args.onto.is_some() && target != Format::N64Pak {
-        return Err("--onto is for an N64 save, with --n64, or a Controller Pak".into());
+        return Err("--onto is for an N64 save, with --n64, a Controller Pak, or a 64DD disk's save".into());
     }
     let reader = reader_of(&args, None)?;
     let unwrapped = (target == Format::Raw).then(|| raw::unwrap_as(&bundle, &reader)).transpose()?;
@@ -984,35 +1204,13 @@ fn extract(args: Extract) -> Fallible {
     };
     // `Format::Raw` covers every flat save and names the commonest of them, so a backup RAM would
     // otherwise go back out as `.srm`. The bundle knows better.
-    let is_backup_ram = bundle.header.system.as_ref().is_some_and(|s| s.as_str() == "sega-cd");
-    // A device written as one file is a MiSTer NeoGeo save, which the core names `.sav`. A flat
-    // save written back as its producer wrote it takes the name that producer gives it: `.sav` off a
-    // MiSTer, `.srm` out of RetroArch.
-    let suffix = match (target, producer_of(&bundle)) {
-        (Format::Raw, _) if is_backup_ram => "brm",
-        (Format::Raw, Some((core, app))) if args.to.is_none() => {
-            save_suffix(core, app, system_of_bundle(&bundle))
-        }
-        (Format::NeoGeoCard, _) if device => "sav",
-        _ => target.extension(),
-    };
-
+    let (suffix, what) = written_as(target, &bundle, args.to.is_none());
     let output = args.output.unwrap_or_else(|| args.input.with_extension(suffix));
 
     let (payload, beside) = clock_beside(&bundle, unwrapped.as_ref(), payload, args.rtc_file, &output)?;
 
     write_out(&output, &payload, args.force)?;
-    println!(
-        "{} -> {} ({}, {} bytes)",
-        args.input.display(),
-        output.display(),
-        match target {
-            Format::Raw if is_backup_ram => "Sega CD backup RAM",
-            Format::NeoGeoCard if device => "MiSTer NeoGeo save",
-            _ => target.label(),
-        },
-        payload.len()
-    );
+    println!("{} -> {} ({}, {} bytes)", args.input.display(), output.display(), what, payload.len());
     if let Some((path, sidecar)) = beside {
         write_out(&path, &sidecar, args.force)?;
         println!("clock -> {} ({} bytes)", path.display(), sidecar.len());
@@ -1021,6 +1219,28 @@ fn extract(args: Extract) -> Fallible {
         report_unwrapped(unwrapped, "its producer");
     }
     Ok(())
+}
+
+/// The extension a bundle written as `target` takes, and what to call the file in saying so.
+///
+/// `Format::Raw` covers every flat save and names the commonest of them, so a backup RAM or a
+/// 64DD disk's RAM area would otherwise go back out as `.srm`. The bundle knows better. A device
+/// written as one file is a MiSTer NeoGeo save, which the core names `.sav`. A flat save written
+/// back as its producer wrote it, with no `--to` saying otherwise, takes the name that producer
+/// gives it: `.sav` off a MiSTer, `.srm` out of RetroArch.
+fn written_as(target: Format, bundle: &Bundle, as_produced: bool) -> (&'static str, &'static str) {
+    let device = *bundle.shape() == one_saves::Shape::Device;
+    match (target, producer_of(bundle)) {
+        (Format::Raw, _) if bundle.header.system.as_ref().is_some_and(|s| s.as_str() == "sega-cd") => {
+            ("brm", "Sega CD backup RAM")
+        }
+        (Format::Raw, _) if n64dd::is_disk_save(bundle) => (n64dd::EXTENSION, "64DD disk save"),
+        (Format::Raw, Some((core, app))) if as_produced => {
+            (save_suffix(core, app, system_of_bundle(bundle)), target.label())
+        }
+        (Format::NeoGeoCard, _) if device => ("sav", "MiSTer NeoGeo save"),
+        _ => (target.extension(), target.label()),
+    }
 }
 
 /// What `--utc-offset` and `--rom` say about the reader and the cartridge, for writing a save.
@@ -1260,11 +1480,12 @@ fn system_of_bundle(bundle: &Bundle) -> Option<&str> {
 
 /// Whether a bundle records a cartridge clock, under any chip's key.
 fn has_clock(bundle: &Bundle) -> bool {
-    use one_saves::extension::{RtcHuc3, RtcMbc3, RtcS3511a};
+    use one_saves::extension::{RtcHuc3, RtcMbc3, RtcN64dd, RtcS3511a};
     let extensions = &bundle.header.extensions;
     extensions.get::<RtcMbc3>().is_some()
         || extensions.get::<RtcS3511a>().is_some()
         || extensions.get::<RtcHuc3>().is_some()
+        || extensions.get::<RtcN64dd>().is_some()
 }
 
 /// The readers `--to` and `--core` can mean for a save of `system`: one core, and the app running
@@ -1994,14 +2215,17 @@ mod tests {
     fn a_chip_s_file_names_its_system_only_when_nothing_else_does() {
         // A MiSTer runs every system, so `--from mister` leaves it to the file's own name.
         let args = convert_args(&["1saves", "convert", "--from", "mister", "Paper Mario (USA).fla"]);
-        assert_eq!(system_of(&args, None, None, None, "fla").as_deref(), Some("n64"));
-        assert_eq!(system_of(&args, None, None, None, "sav"), None);
+        assert_eq!(system_of(&args, None, None, None, "fla", 0).as_deref(), Some("n64"));
+        assert_eq!(system_of(&args, None, None, None, "sav", 0), None);
+        // A `.ram` is a 64DD disk's RAM area only at a length a disk type gives it.
+        assert_eq!(system_of(&args, None, None, None, "ram", 1_942_080).as_deref(), Some("n64dd"));
+        assert_eq!(system_of(&args, None, None, None, "ram", 32_768), None);
 
         // Anything that does say comes first, down to a profile covering one system.
         let args = convert_args(&["1saves", "convert", "--system", "gba", "save.fla"]);
-        assert_eq!(system_of(&args, None, None, None, "fla").as_deref(), Some("gba"));
+        assert_eq!(system_of(&args, None, None, None, "fla", 0).as_deref(), Some("gba"));
         let args = convert_args(&["1saves", "convert", "save.fla"]);
         let duckstation = one_saves_convert::profile("duckstation");
-        assert_eq!(system_of(&args, None, duckstation.as_ref(), None, "fla").as_deref(), Some("psx"));
+        assert_eq!(system_of(&args, None, duckstation.as_ref(), None, "fla", 0).as_deref(), Some("psx"));
     }
 }

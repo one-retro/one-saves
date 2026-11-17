@@ -12,6 +12,7 @@ keywords = ["rom", "cartridge", "header", "emulation", "retro"]
 readme = "README.md"
 
 [dependencies]
+n64dd-disk.workspace = true
 one-saves-registry.workspace = true
 
 [lints]

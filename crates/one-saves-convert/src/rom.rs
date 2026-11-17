@@ -46,10 +46,16 @@ pub struct RomInfo {
 pub fn identify(bytes: &[u8]) -> Option<RomInfo> {
     let id = rom_id::identify_bytes(None, bytes).filter(|id| id.evidence == rom_id::Evidence::Header)?;
     let n64 = id.system.slug == crate::n64::SYSTEM;
+    let serial = match id.system.slug {
+        crate::n64::SYSTEM => id.serial.as_deref().map(crate::n64::serial_of),
+        // A disk's product code is its game code behind `NUD-`, as a cartridge's is behind `NUS-`.
+        crate::n64dd::SYSTEM => id.serial.as_deref().map(|code| format!("NUD-{code}")),
+        _ => id.serial,
+    };
     Some(RomInfo {
         system: Some(id.system.slug),
         title: id.title,
-        serial: if n64 { id.serial.as_deref().map(crate::n64::serial_of) } else { id.serial },
+        serial,
         clock: id.cartridge.clock.map(rom_id::Clock::key),
         n64_save: if n64 { id.cartridge.save.and_then(n64_save) } else { None },
         memory: match id.system.slug {
@@ -108,11 +114,18 @@ pub fn hashes(bytes: &[u8]) -> Vec<HashValue> {
 }
 
 /// Builds the `game` hints a ROM supports: its header fields, its filename, and its digests.
+///
+/// The digests are of the ROM as a catalog holds it, which is what the specification has a
+/// producer hash: without a header a file format or a copier put in front of it, an N64 ROM
+/// big-endian whatever order the file keeps, and a 64DD disk as its retail dump.
 #[must_use]
 pub fn game_from_rom(bytes: &[u8], filename: Option<&str>) -> Game {
     let info = identify(bytes).unwrap_or_default();
     let mut game = Game::default();
-    game.rom_hashes = hashes(bytes);
+    game.rom_hashes = match rom_id::identify_bytes(filename, bytes) {
+        Some(id) => hashes(&rom_id::catalogued(&id, bytes)),
+        None => hashes(bytes),
+    };
     game.rom_filename = filename.map(ToOwned::to_owned);
     game.serial = info.serial;
     game.title = info.title;
@@ -189,7 +202,16 @@ mod tests {
             assert_eq!(info.title.as_deref(), Some("SUPER MARIO 64"), "{name}");
             assert_eq!(info.serial.as_deref(), Some("NUS-NSME"), "{name}");
             assert_eq!(info.n64_save, Some(N64Save::Eeprom4k), "{name}: a retail game's chip, by its ID");
+            // And hashed big-endian whichever order the file keeps, as No-Intro catalogs it.
+            assert_eq!(game_from_rom(rom, None).rom_hashes, hashes(&native), "{name}");
         }
+    }
+
+    #[test]
+    fn a_header_a_file_format_put_in_front_is_not_hashed() {
+        let mut nes = b"NES\x1A\x02\x01\0\0\0\0\0\0\0\0\0\0".to_vec();
+        nes.extend((0..0x8000 + 0x2000).map(|byte| u8::try_from(byte % 251).unwrap()));
+        assert_eq!(game_from_rom(&nes, Some("game.nes")).rom_hashes, hashes(&nes[16..]));
     }
 
     #[test]

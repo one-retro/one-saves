@@ -110,6 +110,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
     ("brm", "Sega CD backup RAM, internal or Backup RAM Cart"),
     ("rtc", "real-time clock state"),
     ("bsv", "bsnes save RAM"),
+    ("ram", "a 64DD disk's RAM area, as mupen64plus, Project64 and MiSTer keep it"),
 ];
 
 /// Whether an extension is one a flat save commonly takes.

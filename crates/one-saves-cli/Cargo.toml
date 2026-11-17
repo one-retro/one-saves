@@ -26,7 +26,7 @@ clap.workspace = true
 libc.workspace = true
 
 [features]
-default = ["archive", "cards", "dat", "dat-cmpro", "rom", "states", "zstd"]
+default = ["archive", "cards", "dat", "dat-cmpro", "rom", "saturn-gzip", "states", "zstd"]
 # Every card format. Each is forwarded to one-saves-convert, where it gates one crate and one
 # adapter. A format that is off is still named — `1saves inspect` reads a bundle of it, and
 # `convert` and `extract` say which feature would have handled it — and cannot be read or written.
@@ -37,8 +37,8 @@ neogeo = ["one-saves-convert/neogeo"]
 ps1 = ["one-saves-convert/ps1"]
 ps2 = ["one-saves-convert/ps2"]
 saturn = ["one-saves-convert/saturn"]
-# Reading a Saturn cart that standalone Mednafen gzipped. Off by default, like the library's: it
-# is the one card format whose producer compresses, and the deflate implementation is real weight.
+# Reading a Saturn cart that standalone Mednafen gzipped, as the library's feature of the same name
+# does. The inflater is the one `archive` and `states` bring already.
 saturn-gzip = ["saturn", "one-saves-convert/saturn-gzip"]
 vmu = ["one-saves-convert/vmu"]
 # `--dat FILE`. Unlike in the library, this one needs `rom`: the catalog is looked up by the ROM's

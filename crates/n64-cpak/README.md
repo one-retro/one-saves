@@ -33,6 +33,18 @@ letters at 26, and katakana follows the punctuation. Reading one as bytes yields
 up to the first NUL, and `None` when a byte has no character — which two readers of one note agree
 on.
 
+## A pak of several banks
+
+A large pak is up to 62 banks of 32 KiB that libultra switches between, and it is one filesystem:
+a note runs on from one bank into the next. The ID block records how many banks there are, and bank
+0 holds all the structure, an index page for every bank, then a backup of each, then the note
+table. An index entry names the bank in its high byte and the page in its low one. `Layout` says
+where each sits for a given count, `ControllerPak::parse` reads a pak of any count, as ares and
+N64FlashcartMenu keep one, bank 0 first, and `PakBuilder::banks` writes one.
+
+A pak that switches with a button shows the console one bank at a time, and each position records
+one bank, so each is an ordinary pak.
+
 ## Two notes can be the same note
 
 A pak permits two notes with the same game code and name, so the note table index is the only thing

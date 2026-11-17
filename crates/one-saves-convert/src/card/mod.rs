@@ -340,6 +340,22 @@ pub(crate) fn save_part_with(
     save_part_as(format.system(), options.role_for(format), id, payload, game, extensions)
 }
 
+/// A name a card's directory holds, as a `path`: the name itself, or `None` where it is no path,
+/// being empty or holding a segment that is empty, `.` or `..` between its slashes. A name can
+/// spell any of those, since a card takes what a game writes. The save's slot and entry still say
+/// which save it is.
+#[cfg(any(
+    feature = "gc",
+    feature = "n64",
+    feature = "ps1",
+    feature = "ps2",
+    feature = "saturn",
+    feature = "vmu"
+))]
+pub(crate) fn path_of_name(name: &str) -> Option<String> {
+    (!name.split('/').any(|segment| matches!(segment, "" | "." | ".."))).then(|| name.to_owned())
+}
+
 /// The same, for a format that does not settle the save's system or socket by itself: a Neo Geo
 /// card can be a Neo Geo CD's.
 #[cfg(any(

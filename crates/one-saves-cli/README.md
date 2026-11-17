@@ -31,6 +31,28 @@ match itself — `verify` says which part. An output is never written over an ex
 A clock or a thumbnail picked up from beside the input is read only when it is a plain file, since
 the user named the input and not it.
 
+A Saturn's internal memory brings the rest of its set along. Mednafen and Beetle Saturn keep a game's
+cart in a `.bcr` and the console's clock in a `.smpc` beside it, and `convert` makes the three one
+device, which `extract` writes back as the same three files:
+
+```console
+$ 1saves convert "NiGHTS.bkr"
+read NiGHTS.bcr beside it
+read NiGHTS.smpc beside it
+NiGHTS.bkr -> NiGHTS.1saves (Saturn backup RAM, 2 component(s), 18454 bytes)
+```
+
+A 64DD disk's save is its RAM area. `convert` takes it as the `.ram` mupen64plus, Project64 and
+MiSTer keep, or out of a whole copy of the disk, as another emulator keeps one, in the retail
+layout or MAME's. Where ares's drive clock is beside it, as `Nintendo 64DD.rtc` in a saves folder,
+the two make an N64 device. `extract` writes the `.ram` back, or with `--onto` and the disk's image,
+a copy of the disk holding the save:
+
+```console
+$ 1saves convert "Mario Artist.ram" --rom "Mario Artist.ndd" --dat No-Intro_64DD.dat
+$ 1saves extract "Mario Artist.1saves" --onto "Mario Artist.ndd" -o "Mario Artist.ndr"
+```
+
 `new` makes an empty, formatted card, written as the file an emulator or a flash cart loads:
 
 ```console
@@ -73,6 +95,9 @@ binary.
 | ------- | --------------- | -------------- |
 | `cards` | all seven card formats | the seven crates below |
 | `ps1` `n64` `gc` `vmu` `ps2` `neogeo` `saturn` | one card format each | that format's crate, and nothing else |
+| `saturn-gzip` | a Saturn cart standalone Mednafen gzipped | `flate2` and `zlib-rs` |
+| `archive` | a card, or loose saves, read straight out of a `.zip` | `zip` |
+| `states` | RetroArch's, mGBA's and DuckStation's save states | `flate2` and `png` |
 | `dat` | `--dat FILE` | `datary` and the XML reader, derive macro and proc-macro chain under it |
 | `dat-cmpro` | the ClrMamePro syntax for `--dat` | `winnow` |
 | `rom` | `--rom FILE` | `crc32fast`, `md-5`, `sha1` |

@@ -76,12 +76,19 @@ bundle's nested parts — and nothing else.
 
 Two more read what a game's own media says about it, for a program sorting a library of dumps or
 pairing a save with the game it belongs to. Each depends on `one-saves-registry`, for the systems
-it names, and on nothing else.
+it names; `rom-id` on `n64dd-disk` as well, to hash a 64DD disk in the form No-Intro catalogs it.
 
 | Crate | What it identifies |
 | ----- | ------------------ |
-| [`rom-id`](crates/rom-id) | A cartridge ROM: its system, its header, its save memory and clock chip |
+| [`rom-id`](crates/rom-id) | A cartridge ROM or a 64DD disk: its system, its header, its save memory and clock chip |
 | [`disc-id`](crates/disc-id) | A CD or DVD image: its system and the serial printed on the disc |
+
+A 64DD disk is a medium a game writes its saves onto, so it has a crate like a card's, which depends
+on nothing at all.
+
+| Crate | Format |
+| ----- | ------ |
+| [`n64dd-disk`](crates/n64dd-disk) | 64DD disk images, retail and MAME's, and the RAM area a game writes |
 
 ## Features
 

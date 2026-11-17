@@ -12,7 +12,7 @@ use dreamcast_vmu::{FileKind, Save, Vmu, VmuBuilder};
 use one_saves::{Bundle, Game};
 
 use crate::CardOptions;
-use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part};
+use crate::card::{card_header, card_image_part, image_only, nested_saves, path_of_name, save_part};
 use crate::detect::Format;
 use crate::error::{Error, Result};
 
@@ -45,10 +45,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
     for save in vmu.saves() {
         let game = Game::default().title(save.name.clone());
 
-        let part = save_part(Format::Vmu, parts.len(), save.data.clone(), Some(game), options)?
-            .path(save.name.clone())
+        let mut part = save_part(Format::Vmu, parts.len(), save.data.clone(), Some(game), options)?
             .slot(u64::try_from(save.slot).expect("slot fits"))
             .dirent(save.dirent.clone());
+        part.path = path_of_name(&save.name);
         parts.push(part);
     }
 

@@ -19,6 +19,8 @@ pub enum Error {
         /// How many data pages a pak has.
         available: usize,
     },
+    /// A bank count no pak has: 1 to [`MAX_BANKS`](crate::MAX_BANKS).
+    Banks(usize),
     /// More notes than the note table has entries.
     TooManyNotes {
         /// How many were offered.
@@ -31,9 +33,13 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::WrongLength(len) => {
-                write!(f, "a Controller Pak is {} bytes and this is {len}", crate::CAPACITY)
-            }
+            Error::WrongLength(len) => write!(
+                f,
+                "a Controller Pak is {} bytes a bank, up to {} banks, and this is {len} bytes",
+                crate::CAPACITY,
+                crate::MAX_BANKS
+            ),
+            Error::Banks(banks) => write!(f, "a pak has 1 to {} banks, not {banks}", crate::MAX_BANKS),
             Error::NotAControllerPak => {
                 f.write_str("neither the index table nor its backup reads as a chain")
             }

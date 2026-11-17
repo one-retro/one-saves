@@ -7,13 +7,15 @@
 //! | Format | Filesystem crate | Feature |
 //! | ------ | ---------------- | ------- |
 //! | Flat cartridge saves (`.srm`, `.sav`, `.eep`, `.fla`) | — | always |
+//! | 64DD disk saves (`.ram`, or a whole disk in either layout), in [`n64dd`] | [`n64dd_disk`] | always |
 //! | PS1 memory cards (`.mcr`, `.mcd`, `.gme`, `.vgs`, `.vmp`) | [`ps1_memcard`] | `ps1` |
-//! | N64 Controller Paks (`.mpk`) | [`n64_cpak`] | `n64` |
+//! | N64 Controller Paks (`.mpk`, `.pak`), of one bank or many | [`n64_cpak`] | `n64` |
 //! | N64 cartridge saves (`.eep`, `.sra`, `.fla`), and a libretro core's `.srm` of every chip and pak | [`n64_cpak`], for the paks | always; the `.srm`, `n64` |
 //! | GameCube memory cards (`.raw`, `.gcp`) | [`gc_memcard`] | `gc` |
 //! | Dreamcast VMU (`.bin`) | [`dreamcast_vmu`] | `vmu` |
 //! | PS2 memory cards (`.ps2`, with or without ECC) | [`ps2_memcard`] | `ps2` |
 //! | Neo Geo memory cards and a Neo Geo CD's memory (`.neo`, bare or in a MiSTer save) | [`neogeo_memcard`] | `neogeo` |
+//! | Saturn backup RAM (`.bkr`, `.bcr`), and Mednafen's three files a game as a device | [`saturn_backup`] | `saturn`; a gzipped cart, `saturn-gzip` |
 //! | RetroArch, mGBA and DuckStation save states, in [`state`] | — | `states` |
 //! | Screenshots on their own (`.png`, `.jpg`), in [`screenshot`] | — | always |
 //!
@@ -33,27 +35,36 @@
 //! the header's extension keys — `x.1sav.rtc` for the portable instant and `x.1sav.rtc.mbc3` for
 //! the chip's own state, so extraction hands the emulator back exactly the file it wrote.
 //!
+//! A console's own clock rides on a device's header instead, since every game on the console
+//! reads it: a Saturn's SMPC beside its backup RAM, a 64DD drive's beside a disk's save. Where an
+//! emulator keeps one in a file of its own, as ares does, [`console_clock`] reads it.
+//!
 //! Every card format here round-trips: a card read into a bundle and written back out is the
 //! same card. What that does **not** promise is byte-exact fidelity through a *rebuild* on PS2,
 //! where a writer reallocates the filesystem; keep a `card-image` part if you need that.
 //!
 //! # Features
 //!
-//! Everything optional is a feature. Those below are on by default but `states`, which compiles a
-//! PNG encoder and a deflate implementation a consumer of saves alone has no use for.
+//! Everything optional is a feature. Those below are on by default but the ones marked off, which
+//! compile something a consumer of saves alone has no use for.
 //!
 //! | Feature | What it is | What it brings |
 //! | ------- | ---------- | -------------- |
-//! | `cards` | All six card formats at once | the six below |
-//! | `ps1` `n64` `gc` `vmu` `ps2` `neogeo` | One card format each | that format's crate, and nothing else |
+//! | `cards` | All seven card formats at once | the seven below |
+//! | `ps1` `n64` `gc` `vmu` `ps2` `neogeo` `saturn` | One card format each | that format's crate, and nothing else |
+//! | `saturn-gzip` | A Saturn volume standalone Mednafen gzipped; brings `saturn` | `flate2` on `zlib-rs` |
 //! | `dat` | The `dat` module: resolving a digest through a DAT catalog | `datary`, an XML reader and a derive macro |
 //! | `dat-cmpro` | The ClrMamePro syntax as well as Logiqx XML | `winnow` |
 //! | `rom` | The `rom` module: ROM headers and digests | `crc32fast`, `md-5`, `sha1`, `sha2` |
-//! | `states` | Reading and writing save states | `flate2`, `png` |
-//! | `zstd` | Forwarded to [`one_saves`], and what inflates a DuckStation state | `zstd`, and the C library it compiles |
+//! | `shift-jis` | Titles a console stored in Shift-JIS | `encoding_rs` |
+//! | `icon` (off) | Decoding a console's icon to PNG for `x.1sav.icon` | `png` |
+//! | `archive` (off) | Reading a card, or loose saves, out of a `.zip` | `zip` |
+//! | `states` (off) | Reading and writing save states | `flate2`, `png` |
+//! | `zstd` (off) | The states an emulator compresses with zstd; brings `states` | `zstd`, and the C library it compiles |
+//! | `multithread` (off) | Forwarded to [`one_saves`]: `Arc` rather than `Rc` under `dcbor` | nothing |
 //!
-//! Flat saves, detection, profiles and [`rtc`] are always present: they are what this crate is,
-//! and they depend on nothing but [`one_saves`].
+//! Flat saves, 64DD disks, detection, profiles and [`rtc`] are always present: they are what this
+//! crate is, and they depend on nothing but [`one_saves`] and [`n64dd_disk`].
 //!
 //! [`Format`] keeps every variant whichever card features are on, so a downstream `match` compiles
 //! the same way in every build. What a format's feature takes away is the reader and the writer:
@@ -68,6 +79,7 @@
 #[cfg(feature = "archive")]
 pub mod archive;
 pub mod card;
+pub mod console_clock;
 #[cfg(feature = "dat")]
 #[cfg_attr(docsrs, doc(cfg(feature = "dat")))]
 pub mod dat;
@@ -87,6 +99,7 @@ pub mod layout;
 ))]
 mod label;
 pub mod n64;
+pub mod n64dd;
 pub mod profile;
 pub mod raw;
 #[cfg(feature = "rom")]

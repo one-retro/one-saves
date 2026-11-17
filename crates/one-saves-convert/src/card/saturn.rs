@@ -42,20 +42,31 @@
 //! The comment beside it rides as the detail line of [`x.1sav.label`], since it is what the BIOS
 //! shows and not what tells two saves apart.
 //!
+//! # A console's files, one device
+//!
+//! Mednafen and Beetle Saturn keep three files a game: the internal memory, `.bkr` (Beetle under
+//! RetroArch, `.srm`), a Backup RAM Cart's volume, `.bcr`, and the SMPC, `.smpc`, which holds the
+//! console's clock and four bytes of its settings. The clock is the console's and not a save's, so
+//! the three together are a [`device`](one_saves::Shape::Device): the internal memory in
+//! `internal`, the cart in `ram-cart`, and the clock on the header as
+//! [`x.1sav.rtc.smpc`](RtcSmpc), beside the [`x.1sav.rtc`](one_saves::extension::Rtc) reading it
+//! gives. See
+//! [`read_device`] and [`write_device`].
+//!
 //! [`x.1sav.dirent`]: https://docs.1retro.com/specifications/extensions/x.1sav.dirent/
 //! [`x.1sav.label`]: https://docs.1retro.com/specifications/extensions/x.1sav.label/
 
-use saturn_backup::{BackupBuilder, BackupRam, ENTRY_LEN, Geometry, Save, TAG_LEN};
+use saturn_backup::{BackupBuilder, BackupRam, ENTRY_LEN, Geometry, Save, Smpc, TAG_LEN};
 
 use crate::CardOptions;
 use crate::card::{
-    card_header, card_image_part, image_only, modified_only, nested_saves, save_part_with, slug,
+    card_header, card_image_part, image_only, modified_only, nested_saves, path_of_name, save_part_with, slug,
 };
 use crate::detect::Format;
 use crate::error::{Error, Result};
 use crate::label::value as label;
-use one_saves::Bundle;
-use one_saves::extension::{Dirent, Label};
+use one_saves::extension::{Dirent, Label, RtcSmpc};
+use one_saves::{Bundle, Header, Part, PartKind, Shape};
 
 /// What the format is called, for error messages.
 const FORMAT: &str = Format::SaturnBup.label();
@@ -125,7 +136,7 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<one_saves::Bundle> {
             // volume records a write and no creation — the shape `x.1sav.dirent` admits for exactly
             // this. No zone: the console keeps a wall clock and does not know one.
             .extension(modified_only(save.written_at(), None));
-        part.path = (!save.name.is_empty()).then(|| save.name.clone());
+        part.path = path_of_name(&save.name);
         parts.push(part);
     }
 
@@ -207,6 +218,123 @@ pub fn write(bundle: &one_saves::Bundle) -> Result<Vec<u8>> {
     builder.build().map_err(into_error)
 }
 
+/// The extension a Backup RAM Cart's volume takes beside the internal memory's, in Mednafen and
+/// Beetle Saturn alike.
+pub const CART_EXTENSION: &str = "bcr";
+
+/// The extension the SMPC's twelve bytes take beside the internal memory's.
+pub const SMPC_EXTENSION: &str = "smpc";
+
+/// What Mednafen and Beetle Saturn keep for one game: the files a Saturn [device](read_device) is
+/// read from and written back as.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeviceFiles {
+    /// The console's internal memory, a 32 KiB volume.
+    pub internal: Vec<u8>,
+    /// A Backup RAM Cart's volume, where one was in the slot.
+    pub cart: Option<Vec<u8>>,
+    /// The SMPC's twelve bytes, where the emulator kept them.
+    pub smpc: Option<Vec<u8>>,
+}
+
+/// Whether these bytes are a volume the size of the console's internal memory, which is what a
+/// device of an emulator's files is read around.
+#[must_use]
+pub fn is_internal(bytes: &[u8]) -> bool {
+    BackupRam::parse(bytes).is_ok_and(|volume| volume.geometry().is_internal())
+}
+
+/// Reads an emulator's files for one game into the device they make.
+///
+/// The internal memory goes in `internal` and a cart in `ram-cart`, whatever role `options` names:
+/// the files say which socket each came out of. An SMPC whose clock was set puts the clock on the
+/// header. One that was never set holds no reading, and nothing of it is kept.
+///
+/// A clock is no component, so the internal memory with neither a cart nor a set clock is no
+/// device: it comes back as the card it is, as [`read`] reads it.
+pub fn read_device(files: &DeviceFiles, options: &CardOptions) -> Result<Bundle> {
+    let with_role = |role: &str| CardOptions { role: Some(slug(role)), ..options.clone() };
+    if !is_internal(&files.internal) {
+        return Err(Error::NotConvertible(
+            "the console's memory is a 32 KiB volume, and this one is a Backup RAM Cart's".into(),
+        ));
+    }
+    let internal = read(&files.internal, &with_role(INTERNAL_ROLE))?;
+
+    let clock =
+        files.smpc.as_deref().map(Smpc::parse).transpose().map_err(into_error)?.filter(|smpc| smpc.valid);
+    if files.cart.is_none() && clock.is_none() {
+        return Ok(internal);
+    }
+
+    let component = |id: u64, role: &str, inner: &Bundle| -> Result<Part> {
+        Ok(Part::new(id, inner.to_vec()?).kind(PartKind::Bundle).role(slug(role)).system(slug(SYSTEM)))
+    };
+    let mut parts = vec![component(0, INTERNAL_ROLE, &internal)?];
+    if let Some(cart) = &files.cart {
+        if is_internal(cart) {
+            return Err(Error::NotConvertible(
+                "the cart's file holds a 32 KiB volume, which is the console's own memory and no cart".into(),
+            ));
+        }
+        parts.push(component(1, RAM_CART_ROLE, &read(cart, &with_role(RAM_CART_ROLE))?)?);
+    }
+
+    let mut header = Header::new(Shape::Device).system(slug(SYSTEM)).source(options.source.clone());
+    if let Some(smpc) = clock {
+        // Neither emulator records when it took the time, so there is no anchor to carry.
+        let clock = RtcSmpc { time: smpc.clock, smem: Some(smpc.save_mem), taken_at: None };
+        // A time that is no date gives no reading, and the chip's bytes still ride.
+        if let Some(reading) = clock.reading() {
+            header.extensions.insert(reading);
+        }
+        header.extensions.insert(clock);
+    }
+    Ok(Bundle::new(header, parts))
+}
+
+/// Whether a bundle is a Saturn device, which [`write_device`] writes back as an emulator's files.
+#[must_use]
+pub fn is_device(bundle: &Bundle) -> bool {
+    *bundle.shape() == Shape::Device
+        && bundle.header.system.as_ref().is_some_and(|system| system.as_str() == SYSTEM)
+}
+
+/// Writes a Saturn device back out as the files Mednafen and Beetle Saturn keep.
+///
+/// Each volume is written as [`write`](fn@write) writes it, packed and uncompressed, which both
+/// emulators read. The SMPC is written where the header carries
+/// [`x.1sav.rtc.smpc`](RtcSmpc), with its clock set. Memory the key holds as null is written as
+/// zeros, which is what both emulators give a console they start from nothing. A device whose
+/// header carries only an `x.1sav.rtc` reading gets no SMPC, and the emulator sets the clock from
+/// the host's, as it does by default.
+pub fn write_device(bundle: &Bundle) -> Result<DeviceFiles> {
+    if !is_device(bundle) {
+        return Err(Error::NotConvertible("this bundle is not a Saturn device".into()));
+    }
+    let mut files = DeviceFiles::default();
+    let mut internal = None;
+    for part in &bundle.parts {
+        let volume = write(&Bundle::from_slice(&part.payload)?)?;
+        match part.role.as_ref().map(one_saves::Slug::as_str) {
+            Some(INTERNAL_ROLE) => internal = Some(volume),
+            Some(RAM_CART_ROLE) => files.cart = Some(volume),
+            other => {
+                return Err(Error::NotConvertible(format!(
+                    "this device holds a {} component, which an emulator keeps no file for",
+                    other.unwrap_or("primary")
+                )));
+            }
+        }
+    }
+    files.internal =
+        internal.ok_or_else(|| Error::NotConvertible("this device holds no internal memory".into()))?;
+    files.smpc = bundle.header.extensions.get::<RtcSmpc>().map(|clock| {
+        Smpc { valid: true, clock: clock.time, save_mem: clock.smem.unwrap_or_default() }.to_bytes().to_vec()
+    });
+    Ok(files)
+}
+
 /// The comment to write back: the detail line of the save's own label.
 ///
 /// A save that arrived without one gets a blank rather than a refusal — the bytes are the save,
@@ -254,6 +382,111 @@ fn into_error(source: saturn_backup::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Beetle Saturn's three files for one game, as RetroArch names them.
+    fn beetle_set(game: &str) -> DeviceFiles {
+        DeviceFiles {
+            internal: fixture(game, "srm"),
+            cart: Some(fixture(game, CART_EXTENSION)),
+            smpc: Some(fixture(game, SMPC_EXTENSION)),
+        }
+    }
+
+    #[test]
+    fn an_emulator_s_files_for_a_game_are_one_device_with_the_console_s_clock() {
+        let files = beetle_set("Panzer Dragoon Saga");
+        let device = read_device(&files, &CardOptions::default()).expect("reads");
+        device.validate().expect("a valid device");
+        let roles: Vec<_> =
+            device.parts.iter().map(|part| part.role.as_ref().map(one_saves::Slug::as_str)).collect();
+        assert_eq!(roles, [Some(INTERNAL_ROLE), Some(RAM_CART_ROLE)]);
+
+        // 2026-09-22 17:56:00, which is when RetroArch last wrote the files, in local time.
+        let clock = device.header.extensions.get::<RtcSmpc>().expect("the clock");
+        assert_eq!((clock.to_string(), clock.weekday()), ("2026-09-22 17:56:00".to_owned(), 2));
+        assert_eq!(clock.smem, Some([0; 4]));
+        assert_eq!(
+            device.header.extensions.get::<one_saves::extension::Rtc>().map(|rtc| rtc.reading),
+            Some(1_790_099_760)
+        );
+
+        assert_eq!(write_device(&device).expect("writes"), files, "the same three files");
+    }
+
+    #[test]
+    fn the_console_s_settings_ride_beside_its_clock() {
+        // Sonic 3D Blast's SMPC holds a byte of settings the BIOS wrote.
+        let files = beetle_set("Sonic 3D Blast");
+        let device = read_device(&files, &CardOptions::default()).expect("reads");
+        assert_eq!(
+            device.header.extensions.get::<RtcSmpc>().and_then(|clock| clock.smem),
+            Some([0, 0, 4, 0])
+        );
+        assert_eq!(write_device(&device).expect("writes").smpc, files.smpc);
+
+        // A clock kept somewhere with no memory beside it comes back with the memory a fresh
+        // console has.
+        let mut kept_elsewhere = device.clone();
+        let clock = RtcSmpc { smem: None, ..*device.header.extensions.get::<RtcSmpc>().unwrap() };
+        kept_elsewhere.header.extensions.insert(clock);
+        let smpc = write_device(&kept_elsewhere).expect("writes").smpc.expect("an SMPC");
+        assert_eq!(smpc[8..], [0; 4]);
+        assert_eq!(smpc[..8], files.smpc.as_ref().unwrap()[..8]);
+    }
+
+    #[test]
+    fn a_clock_never_set_is_no_reading_and_makes_no_device() {
+        let mut files = beetle_set("Panzer Dragoon Saga");
+        files.smpc.as_mut().unwrap()[0] = 0;
+        let device = read_device(&files, &CardOptions::default()).expect("reads");
+        assert_eq!(*device.shape(), Shape::Device, "the cart still makes one");
+        assert!(device.header.extensions.is_empty(), "with no clock on it");
+        assert_eq!(write_device(&device).expect("writes").smpc, None);
+
+        files.cart = None;
+        let alone = read_device(&files, &CardOptions::default()).expect("reads");
+        assert_eq!(*alone.shape(), Shape::Card, "the internal memory alone is the card it is");
+        assert_eq!(alone, read(&files.internal, &CardOptions::default()).unwrap());
+    }
+
+    #[test]
+    fn a_cart_is_not_taken_for_the_console_s_memory_or_the_other_way_round() {
+        let files = beetle_set("Panzer Dragoon Saga");
+        let swapped = DeviceFiles {
+            internal: files.cart.clone().unwrap(),
+            cart: Some(files.internal.clone()),
+            ..files.clone()
+        };
+        assert!(read_device(&swapped, &CardOptions::default()).is_err());
+        let twice = DeviceFiles { cart: Some(files.internal.clone()), ..files };
+        assert!(read_device(&twice, &CardOptions::default()).is_err());
+    }
+
+    /// Standalone Mednafen gzips the cart's volume, and a device read from its files writes the
+    /// cart back plain, which Mednafen reads as well.
+    #[cfg(feature = "saturn-gzip")]
+    #[test]
+    fn mednafen_s_gzipped_cart_is_read_and_written_back_plain() {
+        let mednafen = |extension: &str| producer_fixture("NiGHTS into Dreams", "macos/mednafen", extension);
+        let files = DeviceFiles {
+            internal: mednafen("bkr"),
+            cart: Some(mednafen(CART_EXTENSION)),
+            smpc: Some(mednafen(SMPC_EXTENSION)),
+        };
+        assert_eq!(files.cart.as_ref().unwrap()[..2], saturn_backup::GZIP_MAGIC);
+        let device = read_device(&files, &CardOptions::default()).expect("reads");
+        device.validate().expect("a valid device");
+
+        let written = write_device(&device).expect("writes");
+        assert_eq!(written.internal, files.internal);
+        assert_eq!(written.smpc, files.smpc);
+        let cart = written.cart.expect("the cart");
+        assert_eq!(cart.len(), 524_288, "inflated");
+        assert_eq!(
+            read(&cart, &CardOptions::default()).unwrap(),
+            read(files.cart.as_ref().unwrap(), &CardOptions::default()).unwrap()
+        );
+    }
 
     #[test]
     fn something_that_is_not_a_volume_is_refused_in_this_format_s_words() {

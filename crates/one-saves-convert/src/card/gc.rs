@@ -7,11 +7,14 @@
 //! Slot A is [`memcard-1`](one_saves_registry::role) and Slot B is `memcard-2`. The registry keeps
 //! one numbering convention rather than mirroring each console's silkscreen.
 
-use gc_memcard::{CardBuilder, MemoryCard, Save};
+use gc_memcard::{CardBuilder, ENTRY_LEN, MemoryCard, Save};
+use one_saves::extension::{Dirent, DirentGcMc};
 use one_saves::{Bundle, Game};
 
 use crate::CardOptions;
-use crate::card::{card_header, card_image_part, image_only, modified_only, nested_saves, save_part_with};
+use crate::card::{
+    card_header, card_image_part, image_only, modified_only, nested_saves, path_of_name, save_part_with,
+};
 use crate::detect::Format;
 use crate::error::{Error, Result};
 use crate::label::{ascii_field, value as label};
@@ -203,13 +206,19 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             inner.insert(label);
         }
         let mut part = save_part_with(Format::GcCard, parts.len(), save.data.clone(), game, options, inner)?
-            .path(save.filename.clone())
             .slot(u64::try_from(save.slot).expect("slot fits"))
             .dirent(save.dirent.clone());
+        part.path = path_of_name(&save.filename);
         // The directory's own record of the save, which is the card's rather than the save's, so
         // it rides on the part beside the raw entry rather than in the nested bundle's header.
         if let Some(seconds) = modified_at(&save.dirent) {
             part.extensions.insert(modified_only(seconds, None));
+        }
+        // And the entry field by field, for a writer that has to build one.
+        if let Some(fields) =
+            <&[u8; ENTRY_LEN]>::try_from(save.dirent.as_slice()).ok().and_then(DirentGcMc::from_entry)
+        {
+            part.extensions.insert(fields);
         }
         parts.push(part);
     }
@@ -256,7 +265,7 @@ pub fn write(bundle: &Bundle) -> Result<Vec<u8>> {
         // Only reached for a save that arrived without an entry; one that has an entry carries its
         // codes inside it, verbatim.
         let serial = save.inner.header.game.as_ref().and_then(|game| game.serial.clone()).unwrap_or_default();
-        let dirent = save.dirent.unwrap_or_default();
+        let dirent = save.dirent.or_else(|| entry_from_fields(&save.extensions)).unwrap_or_default();
         // The codes are four ASCII characters and two, which is what the entry has room for and
         // the console shows. A serial is free text, though, and one that is not ASCII names
         // neither code — splitting it at byte four can land inside a character.
@@ -276,6 +285,19 @@ pub fn write(bundle: &Bundle) -> Result<Vec<u8>> {
         });
     }
     builder.build().map_err(into_error)
+}
+
+/// The entry a save's [`x.1sav.dirent.gc-mc`](DirentGcMc) fields make, dated by its
+/// `x.1sav.dirent` reading where it carries one, for a save that arrived without the entry itself.
+fn entry_from_fields(extensions: &one_saves::Extensions) -> Option<Vec<u8>> {
+    let fields = extensions.get::<DirentGcMc>()?;
+    // A time the entry cannot count is no time to it, which is what zero says.
+    let modtime = extensions
+        .get::<Dirent>()
+        .and_then(|dirent| dirent.modified_at.as_ref())
+        .and_then(|at| u32::try_from(at.seconds - GC_EPOCH).ok())
+        .unwrap_or(0);
+    Some(fields.to_entry(modtime).to_vec())
 }
 
 fn into_error(source: gc_memcard::Error) -> Error {
@@ -356,6 +378,18 @@ mod tests {
         bundle.to_vec().expect("encodes");
     }
 
+    /// A filename is what a game wrote, and one that is no path goes without one rather than
+    /// making the card one the format refuses. Its slot and its entry still say which save it is.
+    #[test]
+    fn a_save_whose_name_is_no_path_goes_without_one() {
+        let card = card_with(64, &[("GAFE01", "..", 1), ("GAFE01", "/root", 1), ("GM4E01", "PSO_SYSTEM", 1)]);
+        let bundle = read(&card, &CardOptions::default()).expect("reads");
+        let paths: Vec<Option<&str>> = bundle.parts.iter().map(|part| part.path.as_deref()).collect();
+        assert_eq!(paths, [None, None, Some("PSO_SYSTEM")]);
+        bundle.to_vec().expect("encodes");
+        assert_eq!(write(&bundle).expect("writes"), card, "and comes back from its entries");
+    }
+
     #[test]
     fn a_card_round_trips_through_a_bundle() {
         let card = card_with(64, &[("GAFE01", "super_mario_sunshine", 2), ("GM4E01", "PSO_SYSTEM", 1)]);
@@ -378,6 +412,41 @@ mod tests {
         let bundle = read(&card, &CardOptions::default()).expect("an empty card is still a card");
         assert_eq!(bundle.parts.len(), 1);
         assert_eq!(bundle.parts[0].kind, one_saves::PartKind::CardImage);
+        assert_eq!(write(&bundle).expect("writes"), card);
+    }
+
+    /// Every save carries its entry's fields, and one that arrives with the fields and its date
+    /// alone, as a writer that dropped the opaque bytes would leave it, is written back as it was.
+    #[test]
+    fn a_save_s_entry_rides_as_fields_and_is_rebuilt_from_them() {
+        let mut dirent = vec![0u8; ENTRY_LEN];
+        dirent[..6].copy_from_slice(b"GALE01");
+        dirent[6] = 0xFF;
+        dirent[7] = 2;
+        dirent[8..22].copy_from_slice(b"SuperSmashBros");
+        dirent[MODIFIED_AT..MODIFIED_AT + 4].copy_from_slice(&842_979_996u32.to_be_bytes());
+        dirent[0x2c..0x30].fill(0xFF);
+        dirent[0x30..0x36].copy_from_slice(&[0x00, 0x02, 0x00, 0x03, 0x04, 0x01]);
+        dirent[0x3A..0x3C].fill(0xFF);
+        dirent[0x3c..0x40].copy_from_slice(&0x200u32.to_be_bytes());
+        let mut builder = CardBuilder::new();
+        builder.capacity((64 - gc_memcard::RESERVED_BLOCKS) * gc_memcard::BLOCK);
+        builder.add(Save {
+            slot: 0,
+            game_code: "GALE".into(),
+            maker_code: "01".into(),
+            filename: "SuperSmashBros".into(),
+            dirent,
+            data: vec![7u8; gc_memcard::BLOCK],
+        });
+        let card = builder.build().expect("builds");
+
+        let mut bundle = read(&card, &CardOptions::default()).expect("reads");
+        let fields = bundle.parts[0].extensions.get::<DirentGcMc>().expect("the fields ride");
+        assert_eq!((fields.image_offset, fields.comments_offset), (None, Some(0x200)));
+        assert_eq!((fields.permissions, fields.copy_counter), (4, 1));
+        bundle.parts[0].dirent = None;
+        bundle.validate().expect("the fields need no entry beside them");
         assert_eq!(write(&bundle).expect("writes"), card);
     }
 

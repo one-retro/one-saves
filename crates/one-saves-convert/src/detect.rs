@@ -245,6 +245,11 @@ pub fn detect(bytes: &[u8], extension: &str) -> Result<Format> {
     if raw::is_segacd_bram(bytes) {
         return Ok(Format::Raw);
     }
+    // A whole 64DD disk is a flat save of its RAM area, and its system record is as sure a
+    // signature as any here. Only the two lengths an image comes in are looked at.
+    if crate::n64dd::is_image(bytes) {
+        return Ok(Format::Raw);
+    }
     // A Saturn volume carries an exact signature too, and it is weighed up here for the same
     // reason: the console's internal memory is 32 KiB, which is exactly a Controller Pak's
     // length, and the pak's test is a plausibility check a Saturn dump could pass.

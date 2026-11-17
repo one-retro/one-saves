@@ -9,8 +9,9 @@ real hardware.
 | ------ | ---------- | ---------------- | ------- |
 | Flat cartridge saves | `.srm` `.sav` `.eep` `.fla` `.sa1` | — | always |
 | Sega CD backup RAM | `.brm` | — | always |
+| 64DD disk saves | `.ram`, or a whole disk: `.ndd` `.ndr` `.disk` `.disk_save` | [`n64dd-disk`](https://docs.rs/n64dd-disk) | always |
 | PS1 memory cards | `.mcr` `.mcd` `.gme` `.vgs` `.vmp` | [`ps1-memcard`](https://docs.rs/ps1-memcard) | `ps1` |
-| N64 Controller Paks | `.mpk` `.pak` | [`n64-cpak`](https://docs.rs/n64-cpak) | `n64` |
+| N64 Controller Paks, of one bank or many | `.mpk` `.pak` | [`n64-cpak`](https://docs.rs/n64-cpak) | `n64` |
 | GameCube memory cards | `.raw` `.gcp` | [`gc-memcard`](https://docs.rs/gc-memcard) | `gc` |
 | Dreamcast VMU | `.bin` | [`dreamcast-vmu`](https://docs.rs/dreamcast-vmu) | `vmu` |
 | PS2 memory cards | `.ps2`, with or without ECC spare | [`ps2-memcard`](https://docs.rs/ps2-memcard) | `ps2` |
@@ -68,14 +69,17 @@ Shift-JIS, and a Saturn volume or Neo Geo card wrapped as Yabause or a MiSTer ke
 
 ## Features
 
-Everything optional is a feature. `icon`, `archive`, `states` and `multithread` are off by default;
-the rest are on. The four that are off are the four that would make a consumer compile something it
-may have no use for — compression libraries, a PNG encoder and a set of atomic refcounts.
+Everything optional is a feature. `icon`, `archive`, `states`, `zstd` and `multithread` are off by
+default; the rest are on. The five that are off are the ones that would make a consumer compile
+something it may have no use for — compression libraries, a PNG encoder and a set of atomic
+refcounts. `saturn-gzip` is a compression library that is on, because without it a Saturn cart
+standalone Mednafen wrote cannot be read at all.
 
 | Feature | What it is | What it brings |
 | ------- | ---------- | -------------- |
 | `cards` | All seven card formats at once | the seven below |
 | `ps1` `n64` `gc` `vmu` `ps2` `neogeo` `saturn` | One card format each | that format's crate, and nothing else |
+| `saturn-gzip` | A Saturn volume that arrived gzipped, as standalone Mednafen writes a Backup RAM Cart; brings `saturn` with it | `flate2` on `zlib-rs`, pure Rust |
 | `dat` | The `dat` module: resolving a digest through a DAT catalog | `datary`, and the XML reader, derive macro and proc-macro chain under it |
 | `dat-cmpro` | The ClrMamePro syntax as well as Logiqx XML | `winnow` |
 | `rom` | The `rom` module: ROM headers and digests | `crc32fast`, `md-5`, `sha1`, `sha2` |

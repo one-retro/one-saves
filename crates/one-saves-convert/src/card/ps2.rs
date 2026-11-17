@@ -23,7 +23,7 @@ use one_saves::{Bundle, Game, Header, Part, PartKind};
 use ps2_memcard::{Capacity, CardBuilder, File, MemoryCard, Save};
 
 use crate::CardOptions;
-use crate::card::{card_header, civil_seconds, created_and_modified, slug};
+use crate::card::{card_header, civil_seconds, created_and_modified, path_of_name, slug};
 use crate::detect::Format;
 use crate::error::{Error, Result};
 use crate::label::{shift_jis_field, value as label};
@@ -139,9 +139,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             .iter()
             .enumerate()
             .map(|(file_index, file)| {
-                Part::new(u64::try_from(file_index).expect("fits"), file.data.clone())
-                    .path(file.name.clone())
-                    .dirent(file.dirent.clone())
+                let mut part = Part::new(u64::try_from(file_index).expect("fits"), file.data.clone())
+                    .dirent(file.dirent.clone());
+                part.path = path_of_name(&file.name);
+                part
             })
             .collect();
 
@@ -166,12 +167,12 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         let mut part = Part::new(u64::try_from(parts.len()).expect("fits"), inner.to_vec()?)
             .kind(PartKind::Bundle)
             .role(role.clone())
-            .path(save.name.clone())
             .slot(slot)
             // The directory's own entry, carrying its mode bits and timestamps, belongs to no file.
             .dirent(save.dirent.clone())
             .game(game)
             .system(slug(SYSTEM));
+        part.path = path_of_name(&save.name);
         if let Some(times) = times {
             part.extensions.insert(times);
         }
@@ -206,20 +207,20 @@ fn push_system_folder(
     let mut directory = Part::new(next_id(parts), Vec::new())
         .kind(PartKind::System)
         .role(role.clone())
-        .path(folder.name.clone())
         .slot(slot)
         .dirent(folder.dirent.clone());
+    directory.path = path_of_name(&folder.name);
     if let Some(times) = times {
         directory.extensions.insert(times);
     }
     parts.push(directory);
 
     for file in &folder.files {
-        let part = Part::new(next_id(parts), file.data.clone())
+        let mut part = Part::new(next_id(parts), file.data.clone())
             .kind(PartKind::System)
             .role(role.clone())
-            .path(format!("{}/{}", folder.name, file.name))
             .dirent(file.dirent.clone());
+        part.path = path_of_name(&format!("{}/{}", folder.name, file.name));
         parts.push(part);
     }
 }

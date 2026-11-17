@@ -80,7 +80,12 @@ pub fn system_of_extension(extension: &str) -> Option<&'static str> {
 /// A 32 KiB `.mpk` is a single pak, which the card reader already handles, so only the four-pak
 /// file is taken here.
 pub fn is_n64(system: Option<&str>, extension: &str, bytes: &[u8]) -> bool {
-    let four_paks = cfg!(feature = "n64") && bytes.len() == 4 * 32 * 1024 && extension == "mpk";
+    // A pak of four banks is as long as four paks, and says in its ID block which it is.
+    #[cfg(feature = "n64")]
+    let one_pak = one_saves_convert::card::n64::detect(bytes);
+    #[cfg(not(feature = "n64"))]
+    let one_pak = false;
+    let four_paks = cfg!(feature = "n64") && bytes.len() == 4 * 32 * 1024 && extension == "mpk" && !one_pak;
     four_paks || (system == Some(n64::SYSTEM) && !matches!(extension, "mpk" | "pak" | "cpk"))
 }
 

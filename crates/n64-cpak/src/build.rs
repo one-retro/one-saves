@@ -1,8 +1,8 @@
 //! Writing a pak image out of a set of notes.
 
 use crate::{
-    CAPACITY, CHAIN_END, CHAIN_FREE, Error, FIRST_DATA_PAGE, INDEX_BACKUP_PAGE, INDEX_PAGE, NOTE_ENTRY,
-    NOTE_TABLE_PAGE, NOTES, Note, PAGE, PAGES, Result, font,
+    CAPACITY, CHAIN_END, CHAIN_FREE, Error, Layout, NOTE_ENTRY, NOTES, Note, PAGE, PAGES, Result, font,
+    recorded_banks,
 };
 
 /// Builds a pak image from notes.
@@ -21,6 +21,7 @@ pub struct PakBuilder {
     notes: Vec<Note>,
     label: Option<Vec<u8>>,
     id_area: Option<Vec<u8>>,
+    banks: Option<usize>,
 }
 
 /// Page 0 of a freshly formatted pak: the label area, then the ID block four times over.
@@ -73,9 +74,11 @@ fn seal_id_block(page: &mut [u8]) {
     }
 }
 
-/// The index table's checksum: the low byte of every data page's entry, summed.
-pub(crate) fn index_checksum(table: &[u8]) -> u8 {
-    (FIRST_DATA_PAGE..PAGES).fold(0u8, |sum, page| sum.wrapping_add(table[page * 2 + 1]))
+/// An index table's checksum: both bytes of every entry from the bank's first data page on,
+/// summed, as libultra's `__osPfsRWInode` sums them. On a pak of one bank no entry has a high
+/// byte, so that is the low byte of each.
+pub(crate) fn index_checksum(table: &[u8], first_data_page: usize) -> u8 {
+    table[first_data_page * 2..PAGES * 2].iter().fold(0u8, |sum, &byte| sum.wrapping_add(byte))
 }
 
 impl PakBuilder {
@@ -104,19 +107,29 @@ impl PakBuilder {
         self
     }
 
+    /// Makes a pak of this many banks, 1 to [`MAX_BANKS`](crate::MAX_BANKS), rather than of one.
+    ///
+    /// The ID block is set to say so, whatever the [`id_area`](Self::id_area) given held.
+    pub fn banks(&mut self, banks: usize) -> &mut Self {
+        self.banks = Some(banks);
+        self
+    }
+
     /// Adds a note. Its `slot` is ignored: the note table index is the order notes are added in.
     pub fn add(&mut self, note: Note) -> &mut Self {
         self.notes.push(note);
         self
     }
 
-    /// Writes the pak out, all 32 KiB of it.
+    /// Writes the pak out: 32 KiB a bank, of as many banks as [`banks`](Self::banks) says.
     pub fn build(&self) -> Result<Vec<u8>> {
+        let banks = self.banks.unwrap_or(1);
+        let layout = Layout::new(banks).ok_or(Error::Banks(banks))?;
         if self.notes.len() > NOTES {
             return Err(Error::TooManyNotes { given: self.notes.len(), available: NOTES });
         }
 
-        let mut pak = vec![0u8; CAPACITY];
+        let mut pak = vec![0u8; layout.image_len()];
         pak[..PAGE].copy_from_slice(&FORMATTED_ID_AREA);
         if let Some(area) = &self.id_area {
             let len = area.len().min(PAGE);
@@ -126,51 +139,67 @@ impl PakBuilder {
             let len = label.len().min(NOTE_ENTRY);
             pak[..len].copy_from_slice(&label[..len]);
         }
+        // The ID block says how many banks there are, which is all libultra reads to lay the pak
+        // out. A pak of one bank keeps whatever byte it held there unless it named another count.
+        if banks > 1 || recorded_banks(&pak[..PAGE]).is_some_and(|recorded| recorded != banks) {
+            for at in ID_BLOCKS {
+                pak[at + 0x1A] = u8::try_from(banks).expect("62 banks at most");
+            }
+        }
         seal_id_block(&mut pak[..PAGE]);
 
-        let mut index = vec![CHAIN_FREE; PAGES];
-        // The pages before the data area are structure rather than storage.
-        for entry in index.iter_mut().take(FIRST_DATA_PAGE) {
-            *entry = 0;
-        }
+        // Every bank's index table, with the pages before its data area left as structure.
+        let mut index: Vec<Vec<u16>> = (0..banks)
+            .map(|bank| {
+                let mut table = vec![0u16; PAGES];
+                table[layout.first_data_page(bank)..].fill(CHAIN_FREE);
+                table
+            })
+            .collect();
+        // The data pages in the order libultra allocates them: up through one bank, then the next.
+        let free: Vec<(usize, usize)> = (0..banks)
+            .flat_map(|bank| (layout.first_data_page(bank)..PAGES).map(move |page| (bank, page)))
+            .collect();
+        let entry_of = |(bank, page): (usize, usize)| {
+            u16::from_be_bytes([u8::try_from(bank).expect("a bank"), u8::try_from(page).expect("a page")])
+        };
 
-        let mut next_page = FIRST_DATA_PAGE;
+        let mut next = 0;
         for (slot, note) in self.notes.iter().enumerate() {
             let pages = note.data.len().div_ceil(PAGE);
-            if next_page + pages > PAGES {
-                return Err(Error::Full {
-                    needed: next_page - FIRST_DATA_PAGE + pages,
-                    available: PAGES - FIRST_DATA_PAGE,
-                });
+            if next + pages > free.len() {
+                return Err(Error::Full { needed: next + pages, available: free.len() });
             }
-
-            let first = next_page;
-            for step in 0..pages {
-                let page = first + step;
+            let chain = &free[next..next + pages];
+            for (step, &(bank, page)) in chain.iter().enumerate() {
                 let from = step * PAGE;
                 let to = ((step + 1) * PAGE).min(note.data.len());
-                pak[page * PAGE..page * PAGE + (to - from)].copy_from_slice(&note.data[from..to]);
-                index[page] =
-                    if step + 1 == pages { CHAIN_END } else { u16::try_from(page + 1).expect("page fits") };
+                let at = bank * CAPACITY + page * PAGE;
+                pak[at..at + (to - from)].copy_from_slice(&note.data[from..to]);
+                index[bank][page] = chain.get(step + 1).copied().map_or(CHAIN_END, entry_of);
             }
 
             let mut entry = note_entry(note);
             entry.resize(NOTE_ENTRY, 0);
-            entry[6..8].copy_from_slice(&u16::try_from(first).expect("page fits").to_be_bytes());
-            let offset = NOTE_TABLE_PAGE * PAGE + slot * NOTE_ENTRY;
+            let first = free.get(next).copied().unwrap_or((0, layout.first_data_page(0)));
+            entry[6..8].copy_from_slice(&entry_of(first).to_be_bytes());
+            let offset = layout.note_table_page() * PAGE + slot * NOTE_ENTRY;
             pak[offset..offset + NOTE_ENTRY].copy_from_slice(&entry);
 
-            next_page += pages;
+            next += pages;
         }
 
-        let mut table = vec![0u8; PAGE];
-        for (page, entry) in index.iter().enumerate() {
-            table[page * 2..page * 2 + 2].copy_from_slice(&entry.to_be_bytes());
+        for (bank, entries) in index.iter().enumerate() {
+            let mut table = vec![0u8; PAGE];
+            for (page, entry) in entries.iter().enumerate() {
+                table[page * 2..page * 2 + 2].copy_from_slice(&entry.to_be_bytes());
+            }
+            // Entry 0 is never a page, so its low byte is where the table keeps its own checksum.
+            table[1] = index_checksum(&table, layout.first_data_page(bank));
+            for page in [layout.index_page(bank), layout.index_backup_page(bank)] {
+                pak[page * PAGE..(page + 1) * PAGE].copy_from_slice(&table);
+            }
         }
-        // Entry 0 is never a page, so its low byte is where the table keeps its own checksum.
-        table[1] = index_checksum(&table);
-        pak[INDEX_PAGE * PAGE..(INDEX_PAGE + 1) * PAGE].copy_from_slice(&table);
-        pak[INDEX_BACKUP_PAGE * PAGE..(INDEX_BACKUP_PAGE + 1) * PAGE].copy_from_slice(&table);
         Ok(pak)
     }
 }
@@ -192,7 +221,8 @@ pub(crate) fn note_entry(note: &Note) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ControllerPak, tests::pak_with};
+    use crate::tests::{pak_with, two_bank_pak};
+    use crate::{ControllerPak, FIRST_DATA_PAGE, INDEX_BACKUP_PAGE, INDEX_PAGE, MAX_BANKS, detect};
 
     fn round_trip(pak: &[u8]) -> Vec<u8> {
         let parsed = ControllerPak::parse(pak).expect("reads");
@@ -219,7 +249,7 @@ mod tests {
         });
         let table_sums = [INDEX_PAGE, INDEX_BACKUP_PAGE].iter().any(|&index| {
             let table = &pak[index * PAGE..(index + 1) * PAGE];
-            table[1] == index_checksum(table)
+            table[1] == index_checksum(table, FIRST_DATA_PAGE)
         });
         blocks_agree && sealed && table_sums
     }
@@ -267,6 +297,47 @@ mod tests {
         assert_eq!(rebuilt, pak);
         assert_eq!(&rebuilt[0x20..0x38], &area[0x20..0x38]);
         assert!(a_console_accepts(&rebuilt), "resealed, whatever the area it was given held");
+    }
+
+    #[test]
+    fn a_pak_of_several_banks_is_rebuilt_byte_for_byte() {
+        let pak = two_bank_pak();
+        let parsed = ControllerPak::parse(&pak).unwrap();
+        let mut builder = PakBuilder::new();
+        builder.id_area(parsed.id_area().to_vec()).banks(parsed.layout().banks());
+        for note in parsed.notes() {
+            builder.add(note.clone());
+        }
+        assert_eq!(builder.build().unwrap(), pak);
+    }
+
+    /// The paks of each size ares formats, whose index tables it sums as libultra does: 0x71 for a
+    /// pak of one bank, and for a larger one a sum for bank 0 that falls as its structure grows and
+    /// 0x7D for every other bank.
+    #[test]
+    fn an_empty_pak_of_each_size_ares_makes_sums_as_ares_sums_it() {
+        for (banks, first, rest) in
+            [(1, 0x71, None), (4, 0x5F, Some(0x7D)), (16, 0x17, Some(0x7D)), (62, 0x03, Some(0x7D))]
+        {
+            let pak = PakBuilder::new().banks(banks).build().unwrap();
+            let layout = Layout::new(banks).unwrap();
+            assert_eq!(pak.len(), banks * CAPACITY);
+            assert_eq!(recorded_banks(&pak), Some(banks));
+            assert!(detect(&pak), "{banks} bank(s)");
+            let sum = |bank: usize| pak[layout.index_page(bank) * PAGE + 1];
+            assert_eq!(sum(0), first, "{banks} bank(s)");
+            assert_eq!((1..banks).map(sum).max(), rest);
+            let parsed = ControllerPak::parse(&pak).unwrap();
+            assert_eq!((parsed.capacity(), parsed.notes().len()), (banks * CAPACITY, 0));
+        }
+        assert_eq!(Layout::new(62).unwrap().data_pages(), 1 + 61 * 127, "bank 0 keeps one page of data");
+    }
+
+    #[test]
+    fn a_bank_count_no_pak_has_is_refused() {
+        for banks in [0, MAX_BANKS + 1] {
+            assert_eq!(PakBuilder::new().banks(banks).build(), Err(Error::Banks(banks)));
+        }
     }
 
     #[test]

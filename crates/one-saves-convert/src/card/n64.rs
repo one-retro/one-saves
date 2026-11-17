@@ -17,11 +17,12 @@
 //! [`serial`](one_saves::Game::serial) is that code as a product code: `NUS-` and the code, so
 //! Mario Kart 64's `NKTE` is `NUS-NKTE`, the serial a cartridge save of the game names too.
 
-use n64_cpak::{ControllerPak, Note, PakBuilder};
+use n64_cpak::{ControllerPak, Layout, NOTE_ENTRY, Note, PakBuilder};
+use one_saves::extension::DirentN64Cpak;
 use one_saves::{Bundle, Game};
 
 use crate::CardOptions;
-use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with};
+use crate::card::{card_header, card_image_part, image_only, nested_saves, path_of_name, save_part_with};
 use crate::detect::Format;
 use crate::error::{Error, Result};
 use crate::label::value as label;
@@ -70,9 +71,12 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
             // apart.
             .slot(u64::try_from(note.slot).expect("slot fits"))
             .dirent(note.dirent.clone());
-        if let Some(path) = note.path().filter(|path| a_path_may_be(path)) {
-            part = part.path(path);
+        // The entry again, field by field, for a writer that has to build one and does not know
+        // where in the 32 bytes each field sits.
+        if let Ok(entry) = <&[u8; NOTE_ENTRY]>::try_from(note.dirent.as_slice()) {
+            part.extensions.insert(DirentN64Cpak::from_entry(entry));
         }
+        part.path = note.path().as_deref().and_then(path_of_name);
         parts.push(part);
     }
 
@@ -118,6 +122,7 @@ fn build(bundle: &Bundle, id_area: Option<Vec<u8>>) -> Result<Vec<u8>> {
     }
 
     let mut builder = PakBuilder::new();
+    builder.banks(banks_of(bundle)?);
     if let Some(area) = id_area {
         builder.id_area(area);
     }
@@ -130,16 +135,34 @@ fn build(bundle: &Bundle, id_area: Option<Vec<u8>>) -> Result<Vec<u8>> {
     builder.build().map_err(into_error)
 }
 
+/// How many banks a card's pak has: its capacity over 32 KiB, which is how a writer sets the count
+/// the pak's ID block records. A card that states no capacity is a pak of one bank.
+fn banks_of(bundle: &Bundle) -> Result<usize> {
+    let capacity = bundle.header.card.as_ref().map_or(n64_cpak::CAPACITY as u64, |card| card.capacity);
+    usize::try_from(capacity).ok().and_then(Layout::of_len).map(Layout::banks).ok_or_else(|| {
+        Error::NotConvertible(format!(
+            "a Controller Pak is 32768 bytes a bank, up to {} banks, and this card states {capacity}",
+            n64_cpak::MAX_BANKS
+        ))
+    })
+}
+
 /// A pak card's saves as the notes a pak holds, in the card's order.
 ///
-/// A save's game code is the one its entry carries, verbatim. One that arrived without an entry
-/// takes the code its serial names, which is what a writer then puts in the entry it builds.
+/// A save's entry is the one it carries, verbatim, or else the one its
+/// [`x.1sav.dirent.n64-cpak`](DirentN64Cpak) fields make. One that arrived with neither takes
+/// its game code from its serial and its name from its path, which is what a writer then puts in
+/// the entry it builds.
 pub(crate) fn notes_of(bundle: &Bundle) -> Result<Vec<Note>> {
     let mut notes = Vec::new();
     for save in nested_saves(bundle)? {
         let path = save.path.unwrap_or_default();
         let (name, extension) = name_and_extension(&path);
-        let game_code = match save.dirent.as_deref().and_then(|entry| entry.get(..4)) {
+        // The start page is the allocator's, and the builder writes its own over this one.
+        let entry = save
+            .dirent
+            .or_else(|| save.extensions.get::<DirentN64Cpak>().map(|fields| fields.to_entry(0).to_vec()));
+        let game_code = match entry.as_deref().and_then(|entry| entry.get(..4)) {
             Some(code) => String::from_utf8_lossy(code).into_owned(),
             None => save
                 .inner
@@ -155,17 +178,11 @@ pub(crate) fn notes_of(bundle: &Bundle) -> Result<Vec<Note>> {
             game_code,
             name: name.to_owned(),
             extension: extension.to_owned(),
-            dirent: save.dirent.unwrap_or_default(),
+            dirent: entry.unwrap_or_default(),
             data: save.bytes,
         });
     }
     Ok(notes)
-}
-
-/// Whether the format lets a `path` be this: segments between slashes, none of them empty, `.` or
-/// `..`. A note's name can spell any of those, since `/` and `.` are in the table.
-fn a_path_may_be(spelling: &str) -> bool {
-    !spelling.split('/').any(|segment| matches!(segment, "" | "." | ".."))
 }
 
 /// A path split back into the name and the extension a note would have been written with.
@@ -187,7 +204,7 @@ pub(crate) fn name_and_extension(path: &str) -> (&str, &str) {
 fn into_error(source: n64_cpak::Error) -> Error {
     match source {
         n64_cpak::Error::WrongLength(found) => {
-            Error::WrongLength { format: FORMAT, expected: "32768 bytes", found }
+            Error::WrongLength { format: FORMAT, expected: "32768 bytes a bank, up to 62 banks", found }
         }
         n64_cpak::Error::NotAControllerPak => Error::NotThisFormat {
             format: FORMAT,
@@ -308,16 +325,79 @@ mod tests {
         }
     }
 
+    /// Every note carries its entry's fields beside the entry, and a note that arrives with the
+    /// fields alone, as a writer that dropped the opaque bytes would leave it, is written back as
+    /// it was.
+    #[test]
+    fn a_note_s_entry_rides_as_fields_and_is_rebuilt_from_them() {
+        let mut pak = pak_with(&[("NKTE", "MARIOKART64", 1), ("NSME", "MARIO", 2)]);
+        let entry = |slot: usize| n64_cpak::NOTE_TABLE_PAGE * n64_cpak::PAGE + slot * NOTE_ENTRY;
+        // A publisher's code, a status and a sum, none of which a builder would make up.
+        pak[entry(0) + 0x04..entry(0) + 0x06].copy_from_slice(b"01");
+        pak[entry(0) + 0x08..entry(0) + 0x0c].copy_from_slice(&[0x02, 0x5a, 0x12, 0x34]);
+
+        let mut bundle = read(&pak, &CardOptions::default()).expect("reads");
+        let fields = *bundle.parts[0].extensions.get::<DirentN64Cpak>().expect("the fields ride");
+        assert_eq!((fields.game_code, fields.company_code), (*b"NKTE", *b"01"));
+        assert_eq!((fields.status, fields.reserved, fields.data_sum), (0x02, 0x5a, 0x1234));
+        assert_eq!(&fields.to_entry(0)[..], {
+            let mut original = bundle.parts[0].dirent.clone().unwrap();
+            original[6..8].fill(0);
+            original
+        });
+
+        for part in &mut bundle.parts {
+            part.dirent = None;
+        }
+        bundle.validate().expect("the fields need no entry beside them");
+        assert_eq!(write(&bundle).expect("writes"), pak);
+    }
+
+    /// A pak of several banks is one card, whose capacity says how many, and whose notes run on
+    /// from bank to bank.
+    #[test]
+    fn a_pak_of_several_banks_is_one_card_as_large_as_its_banks() {
+        let mut builder = PakBuilder::new();
+        builder.banks(4).label(vec![0xAAu8; NOTE_ENTRY]);
+        for (code, name, pages) in [("NDMJ", "LONGNOTE", 200), ("NMKJ", "GHOST", 3)] {
+            builder.add(Note {
+                slot: 0,
+                game_code: code.to_owned(),
+                name: name.to_owned(),
+                extension: String::new(),
+                dirent: Vec::new(),
+                data: (0..pages * n64_cpak::PAGE)
+                    .map(|byte| u8::try_from(byte % 251).expect("a byte"))
+                    .collect(),
+            });
+        }
+        let pak = builder.build().expect("builds");
+        assert!(detect(&pak));
+
+        let bundle = read(&pak, &CardOptions::default()).expect("reads");
+        bundle.validate().expect("valid bundle");
+        assert_eq!(bundle.header.card.as_ref().unwrap().capacity, 4 * 32_768);
+        assert_eq!(bundle.parts.len(), 2);
+        assert_eq!(write(&bundle).expect("writes"), pak);
+
+        // A capacity that is no whole number of banks is no pak to write.
+        let mut odd = bundle.clone();
+        odd.header.card.as_mut().unwrap().capacity = 40_000;
+        assert!(write(&odd).is_err());
+    }
+
     #[test]
     fn a_path_splits_back_at_an_extension_that_fits() {
         assert_eq!(name_and_extension("MARIOKART64.A"), ("MARIOKART64", "A"));
         assert_eq!(name_and_extension("MR.DRILLER"), ("MR.DRILLER", ""), "no extension is seven long");
         assert_eq!(name_and_extension("GAME"), ("GAME", ""));
-        assert!(!a_path_may_be("") && !a_path_may_be("/A") && !a_path_may_be("A/../B"));
-        assert!(
-            !a_path_may_be("A/") && !a_path_may_be("A//B") && !a_path_may_be(".") && !a_path_may_be("A/./B")
-        );
-        assert!(a_path_may_be(".A") && a_path_may_be("A/B") && a_path_may_be("..A"));
+        // A note's name can spell what no path is, since `/` and `.` are in the table.
+        for refused in ["", "/A", "A/../B", "A/", "A//B", ".", "A/./B"] {
+            assert_eq!(path_of_name(refused), None, "{refused:?}");
+        }
+        for taken in [".A", "A/B", "..A"] {
+            assert_eq!(path_of_name(taken).as_deref(), Some(taken));
+        }
     }
 
     #[test]

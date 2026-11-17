@@ -95,7 +95,7 @@ pub(crate) fn convert(args: &Convert, kind: Kind, bytes: &[u8]) -> Fallible {
             .into());
     }
     // A state's or a screenshot's extension is its emulator's or its image's, never a system's.
-    let system = crate::system_of(args, rom_system, profile.as_ref(), source.as_ref(), "")
+    let system = crate::system_of(args, rom_system, profile.as_ref(), source.as_ref(), "", 0)
         .map(|system| slug_flag("--system", &system))
         .transpose()?;
     let name = args.input.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();

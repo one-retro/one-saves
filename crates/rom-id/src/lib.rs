@@ -33,11 +33,13 @@
 //! size. [`identify_file`] does the reading for a caller holding a [`RomFile`], and
 //! [`identify_bytes`] for one holding the whole ROM.
 
+use std::borrow::Cow;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::ops::Range;
 
 mod header;
 pub mod n64;
+mod n64dd;
 mod name;
 
 pub use header::gba_save;
@@ -327,6 +329,34 @@ pub fn identify_file<F: RomFile + ?Sized>(name: Option<&str>, file: &mut F) -> i
         probe.supply(window.start, buf);
     }
     Ok(probe.identify(name))
+}
+
+/// The bytes of a ROM that a catalog such as No-Intro hashes: its [`payload`](RomId::payload),
+/// put in the console's own [byte order](RomId::byte_order), and a 64DD disk in the form of its
+/// retail dump, which is the form the Universal Saves Format hashes it in too.
+///
+/// Borrowed where the file already is that, which is most of the time.
+#[must_use]
+pub fn catalogued<'a>(id: &RomId, rom: &'a [u8]) -> Cow<'a, [u8]> {
+    let start = usize::try_from(id.payload.start).unwrap_or(usize::MAX).min(rom.len());
+    let end = usize::try_from(id.payload.end).unwrap_or(usize::MAX).clamp(start, rom.len());
+    let payload = &rom[start..end];
+    if id.system == one_saves_registry::systems::N64DD
+        && let Ok(retail) = n64dd_disk::Disk::parse(payload).and_then(|disk| disk.to_retail())
+    {
+        return retail;
+    }
+    match id.byte_order {
+        ByteOrder::Native => Cow::Borrowed(payload),
+        ByteOrder::Swapped16 => Cow::Owned(swapped::<2>(payload)),
+        ByteOrder::Swapped32 => Cow::Owned(swapped::<4>(payload)),
+    }
+}
+
+/// Each run of `N` bytes reversed, and a tail too short for one left as it is.
+fn swapped<const N: usize>(bytes: &[u8]) -> Vec<u8> {
+    let (runs, tail) = bytes.as_chunks::<N>();
+    runs.iter().flat_map(|run| run.iter().rev()).chain(tail).copied().collect()
 }
 
 /// What a ROM is, from the whole of it in memory.

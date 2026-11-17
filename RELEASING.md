@@ -53,15 +53,19 @@ dependency order. A crate cannot be packaged until everything it depends on is a
 3. dreamcast-vmu        (nothing)
    gc-memcard           (nothing)
    n64-cpak             (nothing)
+   n64dd-disk           (nothing)
    neogeo-memcard       (nothing)
    ps1-memcard          (nothing)
    ps2-memcard          (nothing)
-4. one-saves-convert    (1, 2, 3)
-5. one-saves-cli        (1, 2, 4)
+   saturn-backup        (flate2)
+4. rom-id               (2, n64dd-disk)
+   disc-id              (2, chd)
+5. one-saves-convert    (1, 2, 3, rom-id)
+6. one-saves-cli        (1, 2, 5)
 ```
 
-`one-saves-registry` and the six card crates depend on nothing at all — not on this workspace, not
-on anything outside it — so they can go at any point before step 4, in any order.
+`one-saves-registry` and the card crates depend on nothing in this workspace, so they can go at any
+point before step 4, in any order. `one-saves-tui`, like `xtask`, is not published.
 
 Cargo works that order out itself, so the whole workspace goes in one command. It publishes in
 dependency order and waits for each crate to appear in the index before the next one needs it:
@@ -76,8 +80,8 @@ On cargo older than 1.90, `--workspace` is not available and the crates go one a
 order above, pausing between each for the index to catch up:
 
 ```console
-for crate in one-saves one-saves-registry dreamcast-vmu gc-memcard n64-cpak neogeo-memcard \
-             ps1-memcard ps2-memcard one-saves-convert one-saves-cli; do
+for crate in one-saves one-saves-registry dreamcast-vmu gc-memcard n64-cpak n64dd-disk neogeo-memcard \
+             ps1-memcard ps2-memcard saturn-backup rom-id disc-id one-saves-convert one-saves-cli; do
   cargo publish -p "$crate"
 done
 ```

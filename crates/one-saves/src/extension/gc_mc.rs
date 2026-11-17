@@ -44,6 +44,55 @@ pub struct DirentGcMc {
     pub comments_offset: Option<u32>,
 }
 
+impl DirentGcMc {
+    /// The fields of a save's 64-byte entry, as a card's directory holds it.
+    ///
+    /// `None` for an entry whose name is empty, which is no save a console would list.
+    #[must_use]
+    pub fn from_entry(entry: &[u8; 64]) -> Option<Self> {
+        let word = |at: usize| u32::from_be_bytes(entry[at..at + 4].try_into().expect("four bytes"));
+        let half = |at: usize| u16::from_be_bytes([entry[at], entry[at + 1]]);
+        let offset = |at: usize| Some(word(at)).filter(|&offset| offset != u32::MAX);
+        let name = &entry[0x08..0x28];
+        let len = name.iter().rposition(|&byte| byte != 0)? + 1;
+        Some(DirentGcMc {
+            game_code: entry[0x00..0x04].try_into().expect("four bytes"),
+            maker_code: [entry[0x04], entry[0x05]],
+            filename: name[..len].to_vec(),
+            banner_flags: entry[0x07],
+            icon_format: half(0x30),
+            anim_speed: half(0x32),
+            permissions: entry[0x34],
+            copy_counter: entry[0x35],
+            image_offset: offset(0x2c),
+            comments_offset: offset(0x3c),
+        })
+    }
+
+    /// The entry these fields make, with `modtime` at 0x28 in the console's count of seconds from
+    /// 2000. The first block and the block count are left zero for the allocator, and the
+    /// padding is what a console writes there.
+    #[must_use]
+    pub fn to_entry(&self, modtime: u32) -> [u8; 64] {
+        let mut entry = [0u8; 64];
+        entry[0x00..0x04].copy_from_slice(&self.game_code);
+        entry[0x04..0x06].copy_from_slice(&self.maker_code);
+        entry[0x06] = 0xff;
+        entry[0x07] = self.banner_flags;
+        let len = self.filename.len().min(32);
+        entry[0x08..0x08 + len].copy_from_slice(&self.filename[..len]);
+        entry[0x28..0x2c].copy_from_slice(&modtime.to_be_bytes());
+        entry[0x2c..0x30].copy_from_slice(&self.image_offset.unwrap_or(u32::MAX).to_be_bytes());
+        entry[0x30..0x32].copy_from_slice(&self.icon_format.to_be_bytes());
+        entry[0x32..0x34].copy_from_slice(&self.anim_speed.to_be_bytes());
+        entry[0x34] = self.permissions;
+        entry[0x35] = self.copy_counter;
+        entry[0x3a..0x3c].fill(0xff);
+        entry[0x3c..0x40].copy_from_slice(&self.comments_offset.unwrap_or(u32::MAX).to_be_bytes());
+        entry
+    }
+}
+
 impl Extension for DirentGcMc {
     const KEY: ReverseDnsName = ReverseDnsName::from_static("x.1sav.dirent.gc-mc");
 }
@@ -172,6 +221,18 @@ mod tests {
         let mut map = want_map(&CBOR::from(melee())).unwrap().clone();
         map.insert(6u64, 256u64);
         assert!(DirentGcMc::try_from(CBOR::from(map)).is_err(), "permissions is one byte");
+    }
+
+    #[test]
+    fn an_entry_comes_apart_into_its_fields_and_back() {
+        let entry = melee().to_entry(0x1234_5678);
+        assert_eq!(&entry[0x08..0x20], b"SuperSmashBros0110290334");
+        assert_eq!(entry[0x20..0x28], [0; 8], "a name is padded with NULs");
+        assert_eq!(entry[0x28..0x2c], [0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(entry[0x3c..0x40], [0xff; 4], "no comments, so the absent offset");
+        assert_eq!(DirentGcMc::from_entry(&entry), Some(melee()));
+        let nameless = DirentGcMc::to_entry(&DirentGcMc { filename: Vec::new(), ..melee() }, 0);
+        assert_eq!(DirentGcMc::from_entry(&nameless), None, "no save a console would list");
     }
 
     #[test]

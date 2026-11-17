@@ -16,7 +16,7 @@ use one_saves::{Bundle, Game};
 use ps1_memcard::{CardBuilder, MemoryCard, Save};
 
 use crate::CardOptions;
-use crate::card::{card_header, card_image_part, image_only, nested_saves, save_part_with};
+use crate::card::{card_header, card_image_part, image_only, nested_saves, path_of_name, save_part_with};
 use crate::detect::Format;
 use crate::error::{Error, Result};
 use crate::label::{shift_jis_field, value as label};
@@ -162,10 +162,10 @@ pub fn read(bytes: &[u8], options: &CardOptions) -> Result<Bundle> {
         if let Some(icon) = pictures(&save.data) {
             inner.insert(icon);
         }
-        let part = save_part_with(Format::Ps1Card, parts.len(), save.data.clone(), game, options, inner)?
-            .path(save.name.clone())
+        let mut part = save_part_with(Format::Ps1Card, parts.len(), save.data.clone(), game, options, inner)?
             .slot(u64::try_from(save.slot).expect("slot fits"))
             .dirent(save.dirent.clone());
+        part.path = path_of_name(&save.name);
         parts.push(part);
     }
 

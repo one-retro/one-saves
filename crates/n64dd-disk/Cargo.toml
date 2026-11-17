@@ -1,0 +1,20 @@
+[package]
+name = "n64dd-disk"
+description = "Read and write Nintendo 64DD disk images: the retail and MAME layouts, the system area, and the RAM area a game writes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["encoding", "filesystem", "parser-implementations"]
+keywords = ["nintendo64", "64dd", "n64dd", "emulation", "savegame"]
+readme = "README.md"
+
+[dependencies]
+
+[dev-dependencies]
+sha1 = { workspace = true }
+
+[lints]
+workspace = true
