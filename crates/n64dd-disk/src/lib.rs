@@ -514,10 +514,10 @@ impl<'a> Disk<'a> {
         }
         let retail = retail_offsets(self.system.disk_type);
         let mut out = vec![0u8; MAME_LEN];
-        for block in 0..BLOCKS {
+        for (block, &from) in retail.iter().enumerate().take(BLOCKS) {
             let len = block_len(self.system.disk_type, block);
             let at = self.system.mame_offset(block)?;
-            out[at..at + len].copy_from_slice(&self.image[retail[block]..retail[block] + len]);
+            out[at..at + len].copy_from_slice(&self.image[from..from + len]);
         }
         Ok(Cow::Owned(out))
     }
