@@ -284,6 +284,7 @@ fn a_mister_stamps_its_clock_in_local_time_and_says_how_far_that_is() {
         utc_offset: Some(9 * 3600),
         memory: None,
         layout: None,
+        clock: None,
     };
     let in_tokyo = raw::unwrap_as(&bundle, &tokyo).unwrap();
     assert_eq!(in_tokyo.rescaled_by, 17 * 3600);
@@ -313,6 +314,44 @@ fn a_mister_clock_with_no_offset_goes_elsewhere_as_it_always_has_and_says_so() {
     let mgba = written_for(&bundle, &cores::MGBA, &apps::RETROARCH, None);
     let record = rtc::parse_registers_sidecar(&mgba.sidecar.expect("a .rtc")).unwrap();
     assert_eq!(Some(record.taken_at), anchor.map(|anchor| anchor + 8 * 3600));
+}
+
+#[test]
+fn an_everdrive_gb_is_handed_the_memory_and_its_clock_beside_it_on_its_own_local_time() {
+    if skip_if_absent() {
+        return;
+    }
+    let crystal = read("mister/gameboy-mister/Pokemon - Crystal Version (USA, Europe) (Rev 1).sav");
+    let options = RawOptions {
+        system: Some("gbc".into()),
+        source: Some(source("mister", "gameboy-mister").utc_offset(Some(PACIFIC))),
+        ..RawOptions::default()
+    };
+    let bundle = raw::wrap(&crystal, &options).unwrap();
+    let chip = *bundle.header.extensions.get::<RtcMbc3>().unwrap();
+    let anchor = chip.taken_at.unwrap();
+    // The cart keeps the chip as it is, and its clock in a file of its own on local time, which the
+    // registry does not list: the reader says both.
+    let everdrive = |utc_offset| Reader {
+        utc_offset,
+        layout: Some(one_saves_registry::SaveLayout::Mbc7 { swapped: false, padding: None }),
+        clock: Some(one_saves_registry::ClockLayout::Sidecar(rtc::SidecarRecord::EverDriveGb)),
+        ..Reader::default()
+    };
+
+    let in_pacific = raw::unwrap_as(&bundle, &everdrive(Some(PACIFIC))).unwrap();
+    assert_eq!(in_pacific.save, payload(&bundle), "the memory, with no footer on it");
+    assert_eq!(in_pacific.rescaled_by, 0);
+    let file = in_pacific.sidecar.expect("a .rtc");
+    assert_eq!(file.len(), rtc::EVERDRIVE_GB_RTC_LEN);
+    let clock = rtc::parse_everdrive_gb_sidecar(&file, anchor).unwrap();
+    assert_eq!((clock.live(), clock.taken_at), (chip.live, anchor));
+
+    // In Tokyo the same instant is seventeen hours later on the cart's clock.
+    let in_tokyo = raw::unwrap_as(&bundle, &everdrive(Some(9 * 3600))).unwrap();
+    assert_eq!(in_tokyo.rescaled_by, 17 * 3600);
+    let clock = rtc::parse_everdrive_gb_sidecar(&in_tokyo.sidecar.unwrap(), anchor).unwrap();
+    assert_eq!(clock.taken_at, anchor + 17 * 3600);
 }
 
 #[test]

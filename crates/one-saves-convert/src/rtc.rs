@@ -1576,6 +1576,7 @@ pub fn parse_sidecar_as(bytes: &[u8], record: SidecarRecord, captured_at: i64) -
         SidecarRecord::Registers { .. } => parse_registers_sidecar(bytes).map(Clock::Mbc3),
         SidecarRecord::SameBoy => parse_sameboy_sidecar(bytes).map(Clock::Mbc3),
         SidecarRecord::PackedSeiko => parse_mincer_sidecar(bytes).map(Clock::S3511a),
+        SidecarRecord::EverDriveGb => parse_everdrive_gb_sidecar(bytes, captured_at).map(Clock::Mbc3),
     }
 }
 
@@ -1583,8 +1584,8 @@ pub fn parse_sidecar_as(bytes: &[u8], record: SidecarRecord, captured_at: i64) -
 ///
 /// The files share an extension and nothing else, and among the producers sampled the lengths
 /// tell them apart: four bytes are OpenEmu's Gambatte origin and eight the libretro core's, sixteen
-/// are mincer_ray's Seiko record, thirty-two SameBoy's and forty-eight mGBA's or VBA-M's
-/// registers. A producer that is known is read as its record says instead, by [`parse_sidecar_as`],
+/// are mincer_ray's Seiko record, thirty-two SameBoy's, forty-eight mGBA's or VBA-M's registers
+/// and 512 the EverDrive-GB X7's. A producer that is known is read as its record says instead, by [`parse_sidecar_as`],
 /// since a length is only a guess at who wrote the file.
 #[must_use]
 pub fn parse_sidecar(bytes: &[u8], captured_at: i64) -> Option<Clock> {
@@ -1594,6 +1595,7 @@ pub fn parse_sidecar(bytes: &[u8], captured_at: i64) -> Option<Clock> {
         MINCER_RTC_LEN => SidecarRecord::PackedSeiko,
         SAMEBOY_RTC_LEN => SidecarRecord::SameBoy,
         MBC3_LEN_32 | MBC3_LEN_64 => SidecarRecord::Registers { timestamp_width: 8 },
+        EVERDRIVE_GB_RTC_LEN => SidecarRecord::EverDriveGb,
         _ => return None,
     };
     parse_sidecar_as(bytes, record, captured_at)
@@ -1650,6 +1652,7 @@ pub fn sidecar_of_form(bundle: &one_saves::Bundle, form: ClockForm) -> Option<Ve
             usize::from(timestamp_width),
         ),
         SidecarRecord::SameBoy => build_sameboy_sidecar(&clock),
+        SidecarRecord::EverDriveGb => build_everdrive_gb_sidecar(&clock, None),
         SidecarRecord::PackedSeiko => unreachable!("a Seiko record was written above"),
     })
 }
@@ -1712,6 +1715,115 @@ pub fn build_sameboy_sidecar(clock: &Mbc3Clock) -> Vec<u8> {
     record.resize(SAMEBOY_TAKEN_AT, 0);
     record.extend_from_slice(&clock.taken_at.to_le_bytes());
     record.resize(SAMEBOY_RTC_LEN, 0);
+    record
+}
+
+/// How long the EverDrive-GB X7's clock file is, whatever it holds: the two sets of registers,
+/// then zeros.
+pub const EVERDRIVE_GB_RTC_LEN: usize = 512;
+
+/// Where the EverDrive-GB's day counter starts: 2000-01-01, on its local-time scale, in epoch
+/// seconds.
+const EVERDRIVE_GB_EPOCH: i64 = 946_684_800;
+
+/// How many days an MBC3's day counter holds before it wraps.
+const MBC3_DAYS: i64 = 512;
+
+/// Reads the clock file the EverDrive-GB X7 keeps beside a save, `SAVE/<rom name>.rtc`:
+///
+/// ```text
+/// bytes 0..5     the cart's own clock when the file was written: seconds, minutes, hours, the
+///                day counter's low byte, and its bit 8
+/// bytes 5..10    the game's clock at that moment, as a game reads an MBC3's live registers
+/// bytes 10..512  zero
+/// ```
+///
+/// The cart keeps a battery-backed calendar, set from its menu on local time, and hands it to this
+/// file as an MBC3 would count it: the days since 2000-01-01, modulo 512. When a game starts the cart
+/// sets the game's clock to the second set of registers plus however long its own has run since the
+/// first, so editing the first set moves the game by the opposite amount, and only the difference
+/// between the two is the game's. That was established on a real cart: one cart, one game (Pokemon
+/// Crystal), each byte of each set moved in turn.
+///
+/// The instant is the first set, on the cart's local scale counted as though it were UTC, as a
+/// MiSTer's anchors are (see [`stamps_local_time`]): what the producer records in
+/// `source.utc_offset` is what puts it on UTC. Which 512-day period it falls in is not in the file,
+/// so it is the one closest to `captured_at`; the twelve hours or so between a local scale and UTC
+/// do not change which.
+///
+/// The registers are checked as a footer's are. The cart keeps no latched copy.
+#[must_use]
+pub fn parse_everdrive_gb_sidecar(bytes: &[u8], captured_at: i64) -> Option<Mbc3Clock> {
+    if bytes.len() != EVERDRIVE_GB_RTC_LEN {
+        return None;
+    }
+    let registers = |at: usize| -> [u32; 5] { std::array::from_fn(|i| u32::from(bytes[at + i])) };
+    let cart = registers(0);
+    let game = registers(5);
+    let sane = |[seconds, minutes, hours, ..]: [u32; 5]| seconds < 60 && minutes < 60 && hours < 24;
+    if !(sane(cart) && sane(game)) {
+        return None;
+    }
+    let [seconds, minutes, hours, days_low, days_high] = cart;
+    let counted = i64::from(days_low | ((days_high & 1) << 8));
+    let near = (captured_at - EVERDRIVE_GB_EPOCH).div_euclid(86_400);
+    // The day the counter names that is nearest the day the file was read.
+    let day = near + (counted - near).rem_euclid(MBC3_DAYS);
+    let day = if day - near > MBC3_DAYS / 2 { day - MBC3_DAYS } else { day };
+    let taken_at = EVERDRIVE_GB_EPOCH
+        + day * 86_400
+        + i64::from(hours) * 3_600
+        + i64::from(minutes) * 60
+        + i64::from(seconds);
+    Some(Mbc3Clock {
+        seconds: game[0],
+        minutes: game[1],
+        hours: game[2],
+        days_low: game[3],
+        days_high: game[4],
+        latched: None,
+        taken_at,
+        timestamp_width: None,
+    })
+}
+
+/// Writes the EverDrive-GB X7's clock file. See [`parse_everdrive_gb_sidecar`] for the layout.
+///
+/// The cart's clock is written as the clock's anchor, which has to be on the cart's local scale,
+/// and the game's as the counters at that anchor.
+///
+/// `not_after` is the latest the cart's own clock can be trusted to have passed, on that scale.
+/// The cart counts the time since the first set from its own clock, and a first set it has not
+/// reached yet is not a short wait: a file a day ahead of the cart came back on a real one with the
+/// game's day counter 91 days on. So an anchor later than that is taken back to it, and the game's
+/// counters with it, which is the same reading said earlier. A clock that has not counted that far
+/// cannot go back, and is written as it is.
+#[must_use]
+pub fn build_everdrive_gb_sidecar(clock: &Mbc3Clock, not_after: Option<i64>) -> Vec<u8> {
+    let mut clock = *clock;
+    if let Some(latest) = not_after
+        && clock.taken_at > latest
+    {
+        let back = clock.taken_at - latest;
+        if let Some(elapsed) = clock.elapsed_seconds().checked_sub(back).filter(|left| *left >= 0) {
+            let flags = clock.days_high & !1;
+            let days = elapsed / 86_400;
+            clock.seconds = u32::try_from(elapsed % 60).expect("under 60");
+            clock.minutes = u32::try_from(elapsed / 60 % 60).expect("under 60");
+            clock.hours = u32::try_from(elapsed / 3_600 % 24).expect("under 24");
+            clock.days_low = u32::try_from(days & 0xFF).expect("a byte");
+            clock.days_high = flags | u32::try_from(days >> 8 & 1).expect("a bit");
+            clock.taken_at = latest;
+        }
+    }
+    let at = clock.taken_at - EVERDRIVE_GB_EPOCH;
+    let day = at.div_euclid(86_400).rem_euclid(MBC3_DAYS);
+    let into = at.rem_euclid(86_400);
+    let byte = |value: i64| u8::try_from(value).expect("a register");
+    let mut record =
+        vec![byte(into % 60), byte(into / 60 % 60), byte(into / 3_600), byte(day & 0xFF), byte(day >> 8)];
+    record.extend(clock.live().map(|value| u8::try_from(value & 0xFF).expect("masked to a byte")));
+    record.resize(EVERDRIVE_GB_RTC_LEN, 0);
     record
 }
 
@@ -1930,6 +2042,105 @@ pub fn build_mbc3(live: &[u32; 5], latched: &[u32; 5], taken_at: i64, timestamp_
 mod tests {
     use super::*;
     use one_saves::dcbor::CBOR;
+
+    /// An EverDrive-GB X7 clock file: the cart's clock, the game's, then zeros.
+    fn everdrive_file(cart: [u8; 5], game: [u8; 5]) -> Vec<u8> {
+        let mut file = [cart, game].concat();
+        file.resize(EVERDRIVE_GB_RTC_LEN, 0);
+        file
+    }
+
+    /// Pokemon Crystal's file off a real cart, written at about 15:14 Pacific on 2026-11-17: the
+    /// cart's clock at day 89 (2026-11-17 is the 9,817th day since 2000, and 9,817 is 89 modulo
+    /// 512) 15:09:20, a few minutes slow, and the game's at 0:28:52.
+    fn crystal_on_a_cart() -> Vec<u8> {
+        everdrive_file([0x14, 0x09, 0x0f, 0x59, 0x00], [0x34, 0x1c, 0x00, 0x00, 0x00])
+    }
+
+    /// 2026-11-17 15:09:20, local time counted as UTC.
+    const CRYSTAL_TAKEN_AT: i64 = 1_794_928_160;
+
+    #[test]
+    fn an_everdrive_clock_is_the_games_counters_at_the_carts_local_time() {
+        let clock = parse_everdrive_gb_sidecar(&crystal_on_a_cart(), 1_794_928_440).expect("a clock");
+        assert_eq!(clock.live(), [52, 28, 0, 0, 0]);
+        assert_eq!(clock.taken_at, CRYSTAL_TAKEN_AT);
+        assert_eq!(clock.latched, None, "the cart keeps no latched copy");
+        assert_eq!(clock.timestamp_width, None);
+    }
+
+    #[test]
+    fn an_everdrive_clock_reads_as_the_cart_reads_it() {
+        // The control of the test on the cart: the file above copied onto the card, the game
+        // started, and the file the cart wrote back once another game ran. Both say the same
+        // game clock at any one moment, which is what the cart does with the first: the second
+        // set plus the time its own clock ran since the first.
+        let loaded = parse_everdrive_gb_sidecar(&crystal_on_a_cart(), CRYSTAL_TAKEN_AT).unwrap();
+        let written = everdrive_file([0x03, 0x27, 0x10, 0x59, 0x00], [0x23, 0x3a, 0x01, 0x00, 0x00]);
+        let written = parse_everdrive_gb_sidecar(&written, CRYSTAL_TAKEN_AT).unwrap();
+        let at = |clock: Mbc3Clock, now: i64| clock.elapsed_seconds() + (now - clock.taken_at);
+        let now = 1_794_934_000;
+        assert_eq!(at(loaded, now), at(written, now));
+    }
+
+    #[test]
+    fn an_everdrive_clock_file_is_written_back_as_it_was_read() {
+        let file = crystal_on_a_cart();
+        let clock = parse_everdrive_gb_sidecar(&file, CRYSTAL_TAKEN_AT).unwrap();
+        assert_eq!(build_everdrive_gb_sidecar(&clock, None), file);
+        assert_eq!(build_everdrive_gb_sidecar(&clock, Some(CRYSTAL_TAKEN_AT)), file);
+        let parsed = parse_sidecar_as(&file, SidecarRecord::EverDriveGb, CRYSTAL_TAKEN_AT);
+        assert_eq!(parsed, Some(Clock::Mbc3(clock)));
+    }
+
+    #[test]
+    fn an_everdrive_day_counter_is_placed_in_the_512_days_nearest_the_read() {
+        let clock = |captured_at| {
+            parse_everdrive_gb_sidecar(&crystal_on_a_cart(), captured_at).map(|clock| clock.taken_at)
+        };
+        let period = 512 * 86_400;
+        assert_eq!(clock(CRYSTAL_TAKEN_AT + 200 * 86_400), Some(CRYSTAL_TAKEN_AT));
+        assert_eq!(clock(CRYSTAL_TAKEN_AT - 200 * 86_400), Some(CRYSTAL_TAKEN_AT));
+        assert_eq!(clock(CRYSTAL_TAKEN_AT + 400 * 86_400), Some(CRYSTAL_TAKEN_AT + period));
+        // A counter that wrapped since: day 3 read on day 510 is five days on, not 507 back.
+        let wrapped = everdrive_file([0, 0, 12, 3, 0], [0; 5]);
+        let day_510 = EVERDRIVE_GB_EPOCH + (19 * 512 + 510) * 86_400;
+        let read = parse_everdrive_gb_sidecar(&wrapped, day_510).unwrap();
+        assert_eq!(read.taken_at, EVERDRIVE_GB_EPOCH + (20 * 512 + 3) * 86_400 + 12 * 3_600);
+    }
+
+    #[test]
+    fn an_everdrive_clock_ahead_of_the_cart_is_said_earlier() {
+        let clock = parse_everdrive_gb_sidecar(&crystal_on_a_cart(), CRYSTAL_TAKEN_AT).unwrap();
+        let file = build_everdrive_gb_sidecar(&clock, Some(CRYSTAL_TAKEN_AT - 600));
+        let back = parse_everdrive_gb_sidecar(&file, CRYSTAL_TAKEN_AT).unwrap();
+        assert_eq!(back.taken_at, CRYSTAL_TAKEN_AT - 600);
+        assert_eq!(back.elapsed_seconds(), clock.elapsed_seconds() - 600, "the same reading");
+        // One that has not counted that far stays where it is.
+        let young = Mbc3Clock { seconds: 5, minutes: 0, hours: 0, days_low: 0, ..clock };
+        let file = build_everdrive_gb_sidecar(&young, Some(CRYSTAL_TAKEN_AT - 600));
+        assert_eq!(parse_everdrive_gb_sidecar(&file, CRYSTAL_TAKEN_AT).unwrap(), young);
+    }
+
+    #[test]
+    fn an_everdrive_clock_keeps_its_day_counters_flags() {
+        let halted = everdrive_file([0x14, 0x09, 0x0f, 0x59, 0x00], [0x34, 0x1c, 0x00, 0x2c, 0xc1]);
+        let clock = parse_everdrive_gb_sidecar(&halted, CRYSTAL_TAKEN_AT).unwrap();
+        assert_eq!(clock.days(), 0x12c);
+        assert!(clock.halted() && clock.overflowed());
+        assert_eq!(build_everdrive_gb_sidecar(&clock, None), halted);
+        let back = build_everdrive_gb_sidecar(&clock, Some(CRYSTAL_TAKEN_AT - 86_400));
+        let back = parse_everdrive_gb_sidecar(&back, CRYSTAL_TAKEN_AT).unwrap();
+        assert_eq!((back.days(), back.days_high & 0xC0), (0x12b, 0xC0));
+    }
+
+    #[test]
+    fn a_512_byte_clock_file_nobody_named_is_an_everdrives() {
+        let parsed = parse_sidecar(&crystal_on_a_cart(), CRYSTAL_TAKEN_AT);
+        assert!(matches!(parsed, Some(Clock::Mbc3(clock)) if clock.taken_at == CRYSTAL_TAKEN_AT));
+        let nonsense = everdrive_file([60, 0, 0, 0, 0], [0; 5]);
+        assert_eq!(parse_everdrive_gb_sidecar(&nonsense, CRYSTAL_TAKEN_AT), None);
+    }
 
     /// Builds the footer an emulator writes for a Game Boy cartridge with a clock.
     fn mbc3_footer(seconds: u32, minutes: u32, hours: u32, days: u32, taken_at: i64) -> Vec<u8> {

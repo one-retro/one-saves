@@ -205,6 +205,12 @@ pub enum SidecarRecord {
     /// A Seiko S-3511A's calendar and the host clock it was taken at, bit-packed. mincer_ray's GBA
     /// core.
     PackedSeiko,
+    /// An MBC3 as the EverDrive-GB X7 keeps one, in 512 bytes: the cart's own battery-backed
+    /// clock when the file was written, then the game's clock at that moment, five MBC3 registers
+    /// each. The cart's clock is a calendar on local time, its day counter the days since
+    /// 2000-01-01 modulo 512. A game started on the cart gets the second set plus however long the
+    /// first has run since, so the file is a reading and the instant it was taken.
+    EverDriveGb,
 }
 
 /// How a core keeps a Hudson HuC-3's clock, which every core that keeps one keeps its own way.

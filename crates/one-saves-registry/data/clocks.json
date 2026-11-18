@@ -11,7 +11,7 @@
     "differently is listed under the core's `apps`, keyed by app slug.",
     "Layouts: appended | packed | sidecar. A footer (appended or packed) states timestamp_width, the",
     "bytes its host clock takes. A sidecar states its `record`: origin (timestamp_width, byte_order),",
-    "registers (timestamp_width), sameboy, or packed-seiko. Which chip the state belongs to is the save's",
+    "registers (timestamp_width), sameboy, packed-seiko, or everdrive-gb. Which chip the state belongs to is the save's",
     "own business: mostly the system, but the MiSTer Game Boy cores also keep a HuC-3 in the same footer,",
     "packed differently, so for those it is the cartridge type. A chip a sidecar's record cannot hold is",
     "one the core keeps no clock for.",

@@ -275,6 +275,7 @@ fn record(who: &str, entry: &Clock, width: Option<u8>) -> Result<String, String>
         Some("registers") => Err(format!("clocks.json: {who:?}'s registers are little-endian by definition")),
         Some("sameboy") => fixed("sameboy", "crate::SidecarRecord::SameBoy"),
         Some("packed-seiko") => fixed("packed-seiko", "crate::SidecarRecord::PackedSeiko"),
+        Some("everdrive-gb") => fixed("everdrive-gb", "crate::SidecarRecord::EverDriveGb"),
         Some(other) => Err(format!("clocks.json: {who:?} keeps an unknown record {other:?}")),
         None => Err(format!("clocks.json: {who:?} is a sidecar but says nothing of what it holds")),
     }

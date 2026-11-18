@@ -1259,7 +1259,7 @@ fn reader_of(
     };
     #[cfg(not(feature = "rom"))]
     let memory = None;
-    Ok(raw::Reader { core, utc_offset: args.utc_offset, memory, layout: None })
+    Ok(raw::Reader { core, utc_offset: args.utc_offset, memory, layout: None, clock: None })
 }
 
 /// Says what writing a save took that the bundle did not say.

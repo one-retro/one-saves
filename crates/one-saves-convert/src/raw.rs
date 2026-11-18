@@ -346,6 +346,13 @@ pub struct Reader {
     /// How the reader keeps the save memory, for one the registry does not list; see
     /// [`RawOptions::layout`]. Otherwise the layout is the registry's, for [`core`](Self::core).
     pub layout: Option<one_saves_registry::SaveLayout>,
+    /// How the reader keeps a clock, for one the registry does not list, such as the EverDrive-GB's
+    /// file beside the save. Otherwise the clock goes where the registry says [`core`](Self::core)
+    /// keeps it, or for no core where the bundle's own producer does.
+    ///
+    /// A reader given one is not the bundle's own producer, so its [`utc_offset`](Self::utc_offset)
+    /// says the scale it stamps: local time at that offset, or UTC where there is none.
+    pub clock: Option<one_saves_registry::ClockLayout>,
 }
 
 /// A save written for a [`Reader`]: the file, the clock file to write beside it, and what was
@@ -384,7 +391,13 @@ pub fn unwrap_as(bundle: &Bundle, reader: &Reader) -> Result<Unwrapped> {
     // The clock's anchor, from the bundle's scale to the reader's.
     let from = scale_of(bundle);
     let local = |core: Option<&one_saves_registry::Core>| core.is_some_and(stamps_local_time);
+    let unlisted = reader.core.is_none() && reader.clock.is_some();
     let (rescaled_by, scale_unknown) = match (local(core), reader.utc_offset, from) {
+        // A reader the registry does not list stamps what its offset says.
+        _ if unlisted => match (reader.utc_offset, from) {
+            (to, Some(from)) => (i64::from(to.unwrap_or(0)) - i64::from(from), false),
+            (_, None) => (0, has_clock),
+        },
         // Another of the same kind, not told otherwise, runs on the bundle's own scale.
         (true, None, _) if local(source.map(|(core, _)| core)) => (0, false),
         (true, Some(to), Some(from)) => (i64::from(to) - i64::from(from), false),
@@ -395,8 +408,9 @@ pub fn unwrap_as(bundle: &Bundle, reader: &Reader) -> Result<Unwrapped> {
     if rescaled_by != 0 {
         crate::rtc::rescale(bundle.to_mut(), rescaled_by);
     }
-    let form = match (reader.core, core) {
-        (Some(_), Some(core)) => form_in(&bundle, core, app),
+    let form = match (reader.clock, reader.core, core) {
+        (Some(clock), None, _) => crate::rtc::form_for(&bundle, Some(clock)),
+        (_, Some(_), Some(core)) => form_in(&bundle, core, app),
         _ => form_of(&bundle),
     };
 
@@ -411,7 +425,8 @@ pub fn unwrap_as(bundle: &Bundle, reader: &Reader) -> Result<Unwrapped> {
                 layout_of(bundle.header.source.as_ref(), system),
                 reader.memory,
             );
-            let layout = reader.layout.or_else(|| core.and_then(|core| core.layout_in(app, system)));
+            let own = (!unlisted).then_some(core).flatten();
+            let layout = reader.layout.or_else(|| own.and_then(|core| core.layout_in(app, system)));
             crate::layout::lay_out(&normal, system, layout, reader.memory)
         }
         None => crate::layout::Laid { bytes: memory, assumed: false },
