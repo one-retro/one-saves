@@ -68,6 +68,26 @@ pub fn game_code_of(serial: &str) -> &str {
     serial.strip_prefix(SERIAL_PREFIX).unwrap_or(serial)
 }
 
+/// Whether two game codes name one game, whatever region each was sold in.
+///
+/// A code is four characters: the category (`N` for a cartridge), two naming the game, and the
+/// region (`E` America, `J` Japan, `P` Europe, and others). A game's notes are its own in every
+/// region's code, because games do not all write the code their header carries: Mario Kart 64
+/// keeps its ghosts under `NKTJ` whichever release wrote them, `NKTE` and `NKTP` included. So the
+/// region is left out. A code that is not four characters long is compared whole.
+///
+/// Two different games share a code across regions now and then, and a pak holding notes of both
+/// would have each game's carried with the other's. That is a note too many travelling with a
+/// save; matching on the region as well loses every note a game writes under another region's
+/// code, which is worse.
+#[must_use]
+pub fn same_game(a: &str, b: &str) -> bool {
+    match (a.as_bytes(), b.as_bytes()) {
+        ([a0, a1, a2, _], [b0, b1, b2, _]) => [a0, a1, a2] == [b0, b1, b2],
+        _ => a == b,
+    }
+}
+
 /// What a chip holds where nothing has been written: an erased EEPROM or FlashRAM cell reads as
 /// all ones, and every emulator formats SRAM the same way.
 const ERASED: u8 = 0xFF;
@@ -610,7 +630,7 @@ mod srm {
             builder.label(label.clone());
         }
         for note in existing {
-            if !notes.iter().any(|incoming| incoming.game_code == note.game_code) {
+            if !notes.iter().any(|incoming| super::same_game(&incoming.game_code, &note.game_code)) {
                 builder.add(note);
             }
         }
@@ -623,7 +643,9 @@ mod srm {
     /// One game's save out of a device or a lone pak: its cartridge, and only its own notes.
     ///
     /// `game_code` is the four characters a ROM's header and a note's entry both carry, such as
-    /// `NKTE`, or the serial a note's save names, `NUS-NKTE`. A note is always a save on a card, so
+    /// `NKTE`, or the serial a note's save names, `NUS-NKTE`. A note is the game's under its code in
+    /// any region ([`same_game`](super::same_game)): Mario Kart 64's American release keeps its ghosts under `NKTJ`.
+    /// A note is always a save on a card, so
     /// a game's notes stay on a pak's card, which holds those notes and no other game's, and keeps
     /// the role naming the port it goes back to. What comes out is what that is:
     ///
@@ -717,7 +739,11 @@ mod srm {
             .iter()
             .filter(|part| part.kind == PartKind::Bundle)
             .filter(|part| {
-                part.dirent.as_deref().and_then(|entry| entry.get(..4)) == Some(game_code.as_bytes())
+                part.dirent
+                    .as_deref()
+                    .and_then(|entry| entry.get(..4))
+                    .and_then(|code| std::str::from_utf8(code).ok())
+                    .is_some_and(|code| super::same_game(code, game_code))
             })
             .cloned()
             .collect();
@@ -978,6 +1004,45 @@ mod tests {
                 &elsewhere[pak_at(0)..pak_at(0) + n64_cpak::PAGE],
                 "the pak it went onto is still that pak"
             );
+        }
+
+        #[test]
+        fn a_game_s_notes_are_its_own_under_any_region_s_code() {
+            // Mario Kart 64's American release writes its ghosts as `NKTJ`, as a MiSTer running it
+            // was seen to.
+            let mut file = blank_srm();
+            file[EEPROM_AT..EEPROM_AT + 512].fill(0x11);
+            let shared = pak(&[note("NKTJ", "MARIOKART64", 1), note("NSME", "SUPER MARIO", 2)]);
+            file[pak_at(0)..pak_at(0) + n64_cpak::CAPACITY].copy_from_slice(&shared);
+            let device = read_srm(&file, Some(N64Save::Eeprom4k), &N64Options::default()).unwrap();
+
+            let save = game_save(&device, "NKTE").unwrap();
+            let card = Bundle::from_slice(&save.parts[1].payload).unwrap();
+            assert_eq!(card.parts.len(), 1);
+            assert_eq!(card.parts[0].path.as_deref(), Some("MARIOKART64"));
+
+            // Back onto a pak holding a ghost under the American code: the one replaces the other,
+            // rather than the game having two.
+            let mut elsewhere = blank_srm();
+            let old = pak(&[note("NKTE", "OLD GHOST", 5), note("NSME", "SUPER MARIO", 9)]);
+            elsewhere[pak_at(0)..pak_at(0) + n64_cpak::CAPACITY].copy_from_slice(&old);
+            let mut notes = notes_on(&write_srm(&save, Some(&elsewhere)).unwrap(), 0);
+            notes.sort();
+            assert_eq!(
+                notes,
+                [
+                    ("NKTJ".to_owned(), "MARIOKART64".to_owned()),
+                    ("NSME".to_owned(), "SUPER MARIO".to_owned())
+                ]
+            );
+        }
+
+        #[test]
+        fn another_game_is_another_game_in_any_region() {
+            assert!(same_game("NKTE", "NKTJ"));
+            assert!(!same_game("NKTE", "NSME"));
+            assert!(!same_game("NKTE", "NKT"), "a code that is not four characters is compared whole");
+            assert!(same_game("NKT", "NKT"));
         }
 
         #[test]
