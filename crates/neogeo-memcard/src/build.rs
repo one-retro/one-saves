@@ -3,17 +3,21 @@
 use crate::{
     BLOCK, CHECKSUM_OFFSET, Container, ENTRY_LEN, Error, FREE_ENTRY, Geometry, HEADER_LEN, MAGIC,
     MAGIC_OFFSET, MISTER_BACKUP_RAM, MISTER_CARD_REGION, MISTER_SAVE, MemoryCard, Result, SIZE_OFFSET, Save,
-    USERNAME_OFFSET, fat, fat_checksum, swap_pairs,
+    USERNAME_OFFSET, ZEROED, fat, fat_checksum, swap_pairs,
 };
 
 /// Builds a card image from saves.
 ///
 /// The directory entries and both allocation tables are regenerated, and so is every field of the
-/// header that follows from the card being built: its size, the two checksums and the signature.
-/// The rest of the header — the username, the region byte, the bytes nothing documents — is passed
-/// through from whatever [`system_area`](Self::system_area) was given, so a card round-trips
-/// rather than being reformatted. A size copied off a larger card would promise room this one does
-/// not have, which is why that one is never passed through.
+/// header that follows from the card being built: its size, the two checksums, the signature and
+/// the zeros a BIOS reads before the size ([`ZEROED`]). The rest of the header — the username, the
+/// region byte, the bytes the BIOS keeps for itself — is passed through from whatever
+/// [`system_area`](Self::system_area) was given, so a card round-trips rather than being
+/// reformatted. A size copied off a larger card would promise room this one does not have, which
+/// is why that one is never passed through.
+///
+/// With no header given, the card gets the one a console formats: sixteen spaces for a username,
+/// and zeros at [`ZEROED`] and after the checksums, where every console-formatted card has them.
 #[derive(Debug, Clone)]
 pub struct CardBuilder {
     geometry: Geometry,
@@ -105,7 +109,12 @@ impl CardBuilder {
         let mut card = erased(g.size);
         match &self.system_area {
             Some(area) if area.len() >= HEADER_LEN => card[..HEADER_LEN].copy_from_slice(&area[..HEADER_LEN]),
-            _ => card[USERNAME_OFFSET..USERNAME_OFFSET + 16].fill(b' '),
+            _ => {
+                card[USERNAME_OFFSET..USERNAME_OFFSET + 16].fill(b' ');
+                // A zero after the two checksums on every card a console formatted, at both sizes.
+                // No BIOS was seen to need it, so a kept header keeps whatever it has there.
+                card[AFTER_CHECKSUMS] = 0;
+            }
         }
         stamp_header(&mut card, g);
 
@@ -195,10 +204,18 @@ fn echo(offset: usize) -> [u8; 2] {
     u16::try_from((offset * 2) & 0xFFFF).expect("masked to a word").to_be_bytes()
 }
 
-/// Writes the header fields that follow from the card being built: its size and its signature.
+/// Where a console-formatted card has a zero after the two table checksums.
+const AFTER_CHECKSUMS: usize = CHECKSUM_OFFSET + 2;
+
+/// Writes the header fields that follow from the card being built: its size, its signature and
+/// the zeros a BIOS reads before the size.
 ///
 /// The checksums follow from it too, and are written once the tables are.
 fn stamp_header(card: &mut [u8], g: Geometry) {
+    // A BIOS finds no saves on a card with anything but zeros here (see the crate documentation).
+    // Written over a kept header too: no console writes anything else, and the cards that hold
+    // something else are the ones an older build of this crate made, which this puts right.
+    card[ZEROED].fill(0);
     card[SIZE_OFFSET..SIZE_OFFSET + 2].copy_from_slice(&g.size_word().to_be_bytes());
     // The signature is its characters every other byte; what sits between them is the erased
     // pattern showing through, which is why it reads as a run stepping by four.
@@ -439,5 +456,52 @@ mod tests {
         legacy.extend(vec![0x33; 12 * BLOCK]);
         let mut builder = CardBuilder::new(2048).expect("a real size");
         assert_eq!(builder.system_area(legacy).build().expect("writes"), built);
+    }
+
+    /// A card built from nothing has the header a console formats. Before, the erased pattern
+    /// showed through at [`ZEROED`] (`00 0C 00 10`), and a Neo Geo CD's BIOS found no saves on such
+    /// a card although every one of them was there: the game started afresh.
+    #[test]
+    fn a_fresh_card_has_the_header_a_console_formats() {
+        for size in crate::SIZES {
+            for saves in 0..=1 {
+                let mut builder = CardBuilder::new(size).expect("a real size");
+                if saves == 1 {
+                    builder.add(Save {
+                        slot: 0,
+                        sub: 0,
+                        ngh: 0x0063,
+                        dirent: Vec::new(),
+                        data: vec![0x49; BLOCK],
+                    });
+                }
+                let card = builder.build().expect("writes");
+                assert_eq!(card[ZEROED], [0; 4], "{size} bytes, {saves} saves: where a BIOS reads zeros");
+                assert_eq!(card[AFTER_CHECKSUMS], 0, "{size} bytes, {saves} saves: after the checksums");
+                assert_eq!(MemoryCard::parse(&card).expect("reads").saves().len(), saves);
+            }
+        }
+    }
+
+    /// A kept header gets the zeros as well: the cards holding anything else there are the ones an
+    /// older build made, and keeping their bytes would keep their saves out of a console's reach.
+    /// The rest of the header comes across as it was, the BIOS's own bytes and the byte after the
+    /// checksums included.
+    #[test]
+    fn a_kept_header_gets_the_zeros_a_bios_reads() {
+        let mut header =
+            CardBuilder::new(8192).expect("a real size").build().expect("writes")[..HEADER_LEN].to_vec();
+        // What UniBIOS stamps, then the erased pattern an older build left where a BIOS reads zeros.
+        header[..6].copy_from_slice(&[0x56, 0x32, 0x80, 0x23, 0xFF, 0xFF]);
+        header[ZEROED].copy_from_slice(&[0x00, 0x0C, 0x00, 0x10]);
+        header[AFTER_CHECKSUMS] = 0x1C;
+        header[USERNAME_OFFSET..USERNAME_OFFSET + 4].copy_from_slice(b"HANS");
+
+        let mut builder = CardBuilder::new(8192).expect("a real size");
+        let built = builder.system_area(header.clone()).build().expect("writes");
+        assert_eq!(built[ZEROED], [0; 4], "put right");
+        assert_eq!(built[..6], header[..6], "the BIOS's own bytes");
+        assert_eq!(built[AFTER_CHECKSUMS], 0x1C, "kept: no BIOS was seen to read it");
+        assert_eq!(&built[USERNAME_OFFSET..USERNAME_OFFSET + 4], b"HANS");
     }
 }

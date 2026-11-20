@@ -7,8 +7,8 @@
 //! with the crate; these are the ones that need a console to have written the bytes.
 
 use neogeo_memcard::{
-    BLOCK, CHECKSUM_OFFSET, CardBuilder, Container, Error, Geometry, MISTER_BACKUP_RAM, MemoryCard, Region,
-    cabinet, detect, fat, fat_checksum,
+    BLOCK, CHECKSUM_OFFSET, CardBuilder, Container, Error, Geometry, MISTER_BACKUP_RAM, MemoryCard,
+    REGION_OFFSET, Region, USERNAME_OFFSET, ZEROED, cabinet, detect, fat, fat_checksum,
 };
 
 /// The real cards this crate was written against, as MiSTer wrote them.
@@ -269,6 +269,44 @@ fn a_card_a_console_wrote_is_rebuilt_byte_for_byte() {
         let card = MemoryCard::parse(&original).expect("reads");
         let rebuilt = CardBuilder::from_card(&card).build().expect("writes");
         assert_eq!(rebuilt, original, "{set}/{name} did not round-trip");
+    }
+}
+
+/// Saves often arrive without the card they came off, and are written onto one built afresh: the
+/// card a console then reads. It has to be the console's own card in every byte a BIOS reads, and
+/// may differ only where the BIOS keeps bytes for itself: the first six, `$0C`, the username and
+/// the region onwards. A fresh card used to differ at [`ZEROED`] as well, and a Neo Geo CD's BIOS
+/// found no saves on it.
+#[test]
+fn a_card_built_from_a_console_s_saves_differs_from_its_own_only_where_the_bios_writes() {
+    let bios_owns = |at: usize| {
+        at < 6 || at == 0x0C || (USERNAME_OFFSET..USERNAME_OFFSET + 16).contains(&at) || at >= REGION_OFFSET
+    };
+    for (what, original) in [
+        ("MiSTer NEOGEO Metal Slug X", fixture("Metal Slug X")),
+        ("MiSTer NEOGEO Fatal Fury 2", fixture("Fatal Fury 2")),
+        ("MiSTer MVS Metal Slug X", fixture_in("MVS", "Metal Slug X")),
+        ("MiSTer NEOGEO-CD Metal Slug", fixture_in("NEOGEO-CD", "Metal Slug")),
+        ("MiSTer NEOGEO-CD Fatal Fury 2", fixture_in("NEOGEO-CD", "Fatal Fury 2")),
+        ("NeoCD Metal Slug", neocd_fixture("Metal Slug")),
+        ("NeoCD Fatal Fury 2", neocd_fixture("Fatal Fury 2")),
+    ] {
+        let card = MemoryCard::parse(&original).expect("reads");
+        let mut builder = CardBuilder::new(card.capacity()).expect("a real size");
+        for save in card.saves() {
+            builder.add(save.clone());
+        }
+        let built = builder.build().expect("writes");
+        let console = card.image();
+
+        assert_eq!(built[BLOCK..], console[BLOCK..], "{what}: the directory, both tables and the saves");
+        assert_eq!(built[ZEROED], [0; 4], "{what}: where a BIOS reads zeros");
+        let differ: Vec<usize> = (0..BLOCK).filter(|&at| built[at] != console[at]).collect();
+        assert!(
+            differ.iter().all(|&at| bios_owns(at)),
+            "{what}: the header differs where the BIOS does not write it: {:02X?}",
+            differ.iter().filter(|&&at| !bios_owns(at)).collect::<Vec<_>>()
+        );
     }
 }
 

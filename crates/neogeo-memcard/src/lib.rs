@@ -40,6 +40,23 @@
 //! both tables — is counted in bytes, so the size word is halved once on the way in and doubled
 //! once on the way out, and nowhere else.
 //!
+//! # The header is partly the BIOS's
+//!
+//! Its first six bytes are whatever the BIOS that last booted with the card in left there:
+//! UniBIOS stamps `56 32 80 23` on a CD card it finds unformatted, SNK's CD BIOS writes a zero at
+//! `$02`, a cabinet leaves them erased. Nothing here reads them, and a kept header carries them.
+//!
+//! The four after them, [`ZEROED`], are zeros on every card a console formatted, at both sizes,
+//! and a BIOS reads them: a card with anything else there is one it finds no saves on. The game
+//! shows no load prompt and starts afresh, although the signature, the directory, both tables and
+//! the save are all intact. That was checked on a MiSTer, with cards this crate built before and
+//! after it wrote those four bytes as zeros and the console's own card beside them: Samurai
+//! Shodown II's 8 KiB card in CD mode under SNK's top-loader BIOS and UniBIOS 3.3, Fatal Fury 2's
+//! 2 KiB one as an AES under SNK's BIOS and UniBIOS 4.0 and as an MVS under SNK's, and Metal Slug
+//! X's options as an AES under UniBIOS 4.0. Every one of them found the save once the four bytes
+//! were zeros, and none before. A [`CardBuilder`] writes them as zeros whatever header it keeps,
+//! since the only cards that ever held anything else came out of this crate before it knew.
+//!
 //! # Containers
 //!
 //! A bare card is the card and nothing else. The MiSTer NeoGeo core writes something larger, and
@@ -109,6 +126,10 @@ pub const MAGIC_OFFSET: usize = 0x20;
 
 /// Where the card states its region.
 pub const REGION_OFFSET: usize = 0x30;
+
+/// The four bytes before the size word, which a console formats as zeros and a BIOS reads: a card
+/// with anything else there is one it finds no saves on. See the module documentation.
+pub const ZEROED: core::ops::Range<usize> = 0x06..0x0A;
 
 /// The characters of the signature, one every other byte from [`MAGIC_OFFSET`].
 ///
