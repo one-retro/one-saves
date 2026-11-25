@@ -47,3 +47,18 @@ depends only on its length. `Probe::windows` lists them, about a kilobyte in all
 reading asynchronously, out of an archive or over a network reads them its own way and
 `Probe::identify` decides. `identify_file` reads them through the `RomFile` trait, implemented for
 a byte slice, a `File` and anything `Read + Seek`; `identify_bytes` takes the whole ROM.
+
+## Saves named by the game
+
+Some systems keep a save under a name the ROM's contents give rather than under the ROM's own
+name. A PICO-8 cart saves under the id it passes to `cartdata()`, in a folder every cart shares,
+so until it has saved nothing beside it says which save is its. `save_names` reads those names out
+of the ROM: the ids a `.p8` or `.p8.png` cart's code passes, a string as it is or a variable
+followed to what it is given, and the ids a P8 core's compiled `.p8c` recorded for itself and the
+carts it bundles. `names_its_saves` answers from the name alone, so a caller knows which ROMs to
+read.
+
+| Feature | What it adds | What it costs |
+| ------- | ------------ | ------------- |
+| `pico8` (default) | `save_names` for a `.p8` and a `.p8c`, and the `pico8` module | nothing |
+| `pico8-png` | a cart in a picture, `.p8.png`, as well; without it one is named and refused | `png`, to read the cart out of the pixels |

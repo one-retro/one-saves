@@ -92,6 +92,11 @@ test-features:
     cargo test -p disc-id --features redump
     cargo test -p disc-id --features disc-data
     cargo test -p disc-id --features chd,disc-data
+    # rom-id's default, `pico8` without `pico8-png`: a `.p8` and a `.p8c` are read, and a cart in
+    # a picture is named and refused, which is the build that carries no PNG decoder. And without
+    # `pico8`, where a cart is a ROM like any other and names no saves. `just test` sees neither.
+    cargo test -p rom-id
+    cargo test -p rom-id --no-default-features
     # The default build, which `lint` does not reach: it runs --all-features, and what a user gets
     # by installing this is neither that nor --no-default-features. `icon` is the one off by
     # default that other code reads around, so this is the arm where an unread constant shows up.

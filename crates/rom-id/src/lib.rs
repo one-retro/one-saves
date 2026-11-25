@@ -41,6 +41,8 @@ mod header;
 pub mod n64;
 mod n64dd;
 mod name;
+#[cfg(feature = "pico8")]
+pub mod pico8;
 
 pub use header::gba_save;
 pub use name::candidates;
@@ -363,6 +365,71 @@ fn swapped<const N: usize>(bytes: &[u8]) -> Vec<u8> {
 #[must_use]
 pub fn identify_bytes(name: Option<&str>, rom: &[u8]) -> Option<RomId> {
     identify_view(name, View::whole(rom))
+}
+
+/// The names a ROM keeps its saves under, for a system whose saves are named for the game rather
+/// than for the ROM's file.
+///
+/// Most systems keep a save beside its ROM, or under the ROM's own name, so the ROM is all a save
+/// manager needs to place one. Some do not: a PICO-8 cart saves under the id it passes to
+/// `cartdata()`, in a folder every cart shares, and only the cart's code says which ids those are.
+/// This is what the ROM says, so a save already held under one of those names can be put where the
+/// game will find it before the game has ever saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveNames {
+    /// The system whose saves these are.
+    pub system: System,
+    /// The names, each once, in the order the ROM first gives them.
+    pub names: Vec<String>,
+    /// The other ROMs this one runs, by the name it gives them, whose saves it keeps with its own
+    /// where a runtime keeps a file per ROM: the P8 core runs a cart that `load()`s another with the
+    /// first cart's save file. [`SaveNames::loaded`] finds each among the files beside it.
+    pub loads: Vec<String>,
+}
+
+impl SaveNames {
+    /// Which of `file_names`, the ROMs in this one's folder, the request `request` from
+    /// [`loads`](Self::loads) runs.
+    #[must_use]
+    pub fn loaded<'a>(&self, request: &str, file_names: &'a [String]) -> Option<&'a String> {
+        #[cfg(feature = "pico8")]
+        if self.system.slug == "pico-8" {
+            return pico8::load_target(request, file_names);
+        }
+        let _ = (request, file_names);
+        None
+    }
+}
+
+/// Whether a ROM named `name` keeps its saves under names its contents give and this build reads
+/// them ([`save_names`]), which is to say its saves are not found by the ROM's own file name. Asked
+/// of the name alone, so a caller can tell which ROMs to read before reading any. A PICO-8 cart in a
+/// picture, `.p8.png`, is one only with the `pico8-png` feature.
+#[must_use]
+pub fn names_its_saves(name: &str) -> bool {
+    #[cfg(feature = "pico8")]
+    if pico8::reads_cart_named(name) {
+        return true;
+    }
+    let _ = name;
+    false
+}
+
+/// What `rom`, a ROM named `name`, says about the names its saves are kept under; `None` for a ROM
+/// of a system whose saves are named for the ROM, and for one that cannot be read.
+///
+/// The name says which kind of ROM to read it as. A system answers here only with the feature
+/// that reads it on: PICO-8 with `pico8`, and a PICO-8 cart in a picture with `pico8-png` as well.
+#[must_use]
+pub fn save_names(name: &str, rom: &[u8]) -> Option<SaveNames> {
+    #[cfg(feature = "pico8")]
+    if pico8::reads_cart_named(name) {
+        let cart = pico8::read(rom).ok()?;
+        let system = *one_saves_registry::system("pico-8").expect("the registry lists PICO-8");
+        return Some(SaveNames { system, names: cart.ids, loads: cart.loads });
+    }
+    let _ = (name, rom);
+    None
 }
 
 /// The decision itself: the first header that holds, else the name.
