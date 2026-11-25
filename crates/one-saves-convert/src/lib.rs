@@ -84,6 +84,7 @@ pub mod console_clock;
 #[cfg_attr(docsrs, doc(cfg(feature = "dat")))]
 pub mod dat;
 pub mod detect;
+pub mod entries;
 pub mod error;
 #[cfg(feature = "icon")]
 mod icon;
@@ -100,6 +101,7 @@ pub mod layout;
 mod label;
 pub mod n64;
 pub mod n64dd;
+pub mod pico8;
 pub mod profile;
 pub mod raw;
 #[cfg(feature = "rom")]

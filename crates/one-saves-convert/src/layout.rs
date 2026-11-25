@@ -19,6 +19,12 @@
 //!   first, as mGBA and the FPGA cores keep it. SameBoy and Gearboy, and Epilogue's GB Operator,
 //!   keep each word the other way round; TGB Dual and DoubleCherryGB pad the chip to 8 KiB.
 //!
+//! PICO-8 differs by system rather than by core. A cart's data is 256 bytes of PICO-8's memory,
+//! which is what a bundle holds, and every runtime that keeps a file of it writes the memory as 8
+//! lines of hex ([`crate::pico8`]), so that is the file for any reader. The P8 core keeps blocks of
+//! several carts' data in one file, which is not a layout but a file of entries
+//! ([`crate::entries`]).
+//!
 //! The registry records each core's [`SaveLayout`]. [`normalize`] takes a core's file to the
 //! memory, and [`lay_out`] the memory to a core's file.
 //!
@@ -118,6 +124,7 @@ pub fn normalize(
         ("genesis", Some(layout)) => normalize_genesis(file, layout, memory, true),
         ("gba", Some(layout)) => normalize_gba(file, layout, memory),
         ("gb" | "gbc", layout) => normalize_mbc7(file, layout, memory),
+        ("pico-8", _) => crate::pico8::normalize(file),
         _ => file.to_vec(),
     }
 }
@@ -143,6 +150,8 @@ pub fn normalize_stored(
         // Whether an MBC7's words were stored swapped shows in nothing, so only the padding the
         // header says is not the chip comes off.
         ("gb" | "gbc", _) => normalize_mbc7(payload, None, memory),
+        // A PICO-8 save stored as the text every runtime but one writes.
+        ("pico-8", _) => crate::pico8::normalize_stored(payload),
         _ => payload.to_vec(),
     }
 }
@@ -159,6 +168,9 @@ pub fn lay_out(payload: &[u8], system: &str, layout: Option<SaveLayout>, memory:
         ("gb" | "gbc", Some(SaveLayout::Mbc7 { swapped, padding })) => {
             Laid { bytes: lay_out_mbc7(payload, swapped, padding, memory), assumed: false }
         }
+        // Every PICO-8 runtime that keeps a file per cart's data keeps it as text, so that is the
+        // file a save is written as; the P8 core's blocks are a file of entries (`crate::entries`).
+        ("pico-8", _) => Laid { bytes: crate::pico8::lay_out(payload), assumed: false },
         _ => Laid { bytes: payload.to_vec(), assumed: false },
     }
 }

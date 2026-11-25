@@ -67,6 +67,13 @@ from nothing: any size the format comes in (`card::sizes`), a GameCube card for 
 Shift-JIS, and a Saturn volume or Neo Geo card wrapped as Yabause or a MiSTer keeps it.
 `card::blank_like` empties a card the way formatting it on a console would, keeping its size.
 
+A PICO-8 save is a cart's data, the 256 bytes of PICO-8's memory at `0x5e00`, and that memory is
+what a bundle holds. Every runtime that keeps a file of it writes it as `<id>.p8d.txt`, 8 lines of
+hex, so that is the file it is written as for any reader (`pico8`). The P8 core for the MiSTer
+keeps a block per id in each cart's `.sav`, which is a file of several games' saves rather than a
+layout: `entries::read` hands each block over as the `.p8d.txt` it would be on its own, and
+`entries::write` puts one back where it was, the others untouched.
+
 ## Features
 
 Everything optional is a feature. `icon`, `archive`, `states`, `zstd` and `multithread` are off by

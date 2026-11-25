@@ -286,6 +286,16 @@ pub fn detect(bytes: &[u8], extension: &str) -> Result<Format> {
 
     // Nothing matched a signature, so fall back to the name.
     let lowered = extension.to_ascii_lowercase();
+    // PICO-8's cart data is text, `<id>.p8d.txt`, which no other save is: a `.txt` is taken for
+    // one only when it reads as one, hex digits and whitespace and no more digits than 64 numbers
+    // take. PICO-8 reads an empty file as all zeros, but an empty `.txt` says nothing about what it
+    // is, so at least one digit is asked for.
+    if lowered == "txt"
+        && bytes.iter().any(u8::is_ascii_hexdigit)
+        && crate::pico8::memory_of_text(bytes).is_some()
+    {
+        return Ok(Format::Raw);
+    }
     match lowered.as_str() {
         "1saves" => Ok(Format::Bundle),
         "mcr" | "mcd" | "gme" | "vgs" | "vmp" => Ok(Format::Ps1Card),
@@ -302,6 +312,16 @@ pub fn detect(bytes: &[u8], extension: &str) -> Result<Format> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pico_8_cart_data_is_the_one_text_taken_for_a_save() {
+        let text = crate::pico8::text_of_memory(&[0; crate::pico8::MEMORY_LEN]);
+        assert_eq!(detect(&text, "txt").unwrap(), Format::Raw);
+        assert!(matches!(detect(b"a note left on the card", "txt"), Err(Error::Undetected)));
+        // An empty file, or one of whitespace alone, is no save of anything.
+        assert!(matches!(detect(b"", "txt"), Err(Error::Undetected)));
+        assert!(matches!(detect(b"\n\n", "txt"), Err(Error::Undetected)));
+    }
 
     #[test]
     fn a_bundle_is_recognised_by_its_magic_alone() {
