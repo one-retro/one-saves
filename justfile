@@ -41,6 +41,12 @@ fixtures:
 states folders:
     ONE_SAVES_STATES='{{ folders }}' cargo test -p one-saves-convert --features states --test real_states -- --nocapture
 
+# The DS saves the corpus downloaded stay out of the repository: they are their uploaders', not CC0.
+
+# Run the DS reader against the corpus's downloaded saves, in `folder`, the corpus's `nds` folder.
+nds-corpus folder:
+    ONE_SAVES_NDS_CORPUS='{{ folder }}' cargo test -p one-saves-convert --all-features --test nds_corpus -- --nocapture
+
 # `just test` runs --all-features, which never compiles a `#[cfg(not(feature = ...))]` arm, so a
 # slim build can rot with CI green. Clippy is in here for the same reason: the lints that fire on
 # an arm only one configuration has are lints --all-features cannot see.

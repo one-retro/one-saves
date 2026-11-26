@@ -14,7 +14,7 @@ card.mcr -> card.1saves (PS1 memory card, 2 save(s), 58034 bytes)
 
 $ 1saves inspect card.1saves
 card.1saves
-  58034 bytes, spec version 0.10
+  58034 bytes, spec version 0.11
   shape        card
   system       psx (PlayStation)
   card         ps1-mc, capacity 131072 bytes
@@ -80,7 +80,7 @@ it names; `rom-id` on `n64dd-disk` as well, to hash a 64DD disk in the form No-I
 
 | Crate | What it identifies |
 | ----- | ------------------ |
-| [`rom-id`](crates/rom-id) | A cartridge ROM or a 64DD disk: its system, its header, its save memory and clock chip |
+| [`rom-id`](crates/rom-id) | A cartridge ROM or a 64DD disk: its system, its header, its save memory and clock chip, and the save chip of every retail N64 and DS game by its code |
 | [`disc-id`](crates/disc-id) | A CD or DVD image: its system and the serial printed on the disc |
 
 A 64DD disk is a medium a game writes its saves onto, so it has a crate like a card's, which depends
@@ -127,6 +127,7 @@ Each crate's README has the detail.
 | ------ | ---------- | --------------- |
 | Flat cartridge saves | `.srm` `.sav` `.eep` `.fla` `.sa1` | yes |
 | Sega CD backup RAM | `.brm` | yes, whole |
+| DS card saves: the chip, DeSmuME's, SkyEmu's, Action Replay DS, no$gba and DSXS files, and a DraStic state's | `.sav` `.srm` `.dsv` `.duc` `.dss` | yes, for the six libretro cores; the others read |
 | PS1 memory cards | `.mcr` `.mcd` `.gme` `.vgs` `.vmp` | yes |
 | N64 Controller Paks | `.mpk` `.pak` | yes |
 | GameCube memory cards | `.raw` `.gcp` | yes |
@@ -137,6 +138,7 @@ Each crate's README has the detail.
 | RetroArch save states | `.state`, `.state1`…, `.state.auto`, and the `.png` beside | yes |
 | mGBA save states | `.ss0`…`.ss9` | yes |
 | DuckStation save states | `.sav` and `.bak` under `savestates` | yes |
+| DeSmuME save states | `.ds0`…`.ds9`, `.dst` | yes |
 | Screenshots | `.png` `.jpg` | yes, as written |
 
 Detection reads the bytes before the extension, because the extension is the less reliable of the
@@ -189,6 +191,7 @@ states/Genesis Plus GX Wide/Sonic CD (USA).state -> states/Genesis Plus GX Wide/
 | RetroArch | `X.state`, `X.state1`…, `X.state.auto`, and a `.png` thumbnail beside | the core's data, unwrapped and decompressed; the thumbnail as the screenshot; the achievement and replay blocks as `aux` parts |
 | mGBA | `X.ss1`…`X.ss9`, and `X.ss0` to resume from | the core's data with the player's cheats on it, the screenshot, the in-game save as a save part, and when and by which mGBA it was taken |
 | DuckStation | `SERIAL_N.sav`, `SERIAL_resume.sav`, and `SERIAL_N.bak` for what a slot held before | the core's data decompressed, the version DuckStation stamped on it, the game's title and serial, and the screenshot as a PNG |
+| DeSmuME | `X.ds0`…`X.ds9`, and `X.dst` for one saved to a file | the core's data decompressed, the card's save memory inside it, the versions DeSmuME stamped, and the game's code and title; `convert --in-game-save` reads that save out as a save of its own |
 
 The slot is in each file's name, and becomes the state part's `slot`; a state the emulator took on
 its own to resume from has none, and an `origin` of `auto`. RetroArch's file does not say which
@@ -330,7 +333,7 @@ files yet. A footer for one of them stays in the save, as any tail this crate ca
 
 A bundle holds the cartridge's save memory and nothing else, in the order the console addresses it,
 and a medium addressed only in whole words, such as a serial EEPROM, with each word most significant
-byte first. Cores keep it in files of their own shapes, and for three systems the shapes stop a
+byte first. Cores keep it in files of their own shapes, and for four systems the shapes stop a
 save moving:
 
 - **Mega Drive.** Most cartridges put their SRAM on the odd byte lane of the 16-bit bus. Genesis
@@ -340,6 +343,13 @@ save moving:
 - **GBA.** gpSP and SkyEmu pad every save to 128 KiB, SkyEmu keeps an EEPROM's eight-byte blocks
   back to front, VBA Next keeps an EEPROM 128 KiB into its file, and a MiSTer reads a 4 Kbit EEPROM
   only from a file of 8 KiB.
+- **DS.** melonDS, melonDS DS and NooDS keep the card's chip as it is. DeSmuME pads it to a size
+  of its own and appends 122 bytes, and keeps a 1 Mbit EEPROM as 256 KiB; SkyEmu pads every chip
+  to 8 MiB with 0x00. A DS save names no chip, so its length has to be right, and only the game
+  says it for those two: pass `--rom`, or the game's code with `--nds-game AMCE`. Without either, a
+  file whose length says nothing goes into the bundle as it came, as an `aux` part, rather than as
+  a save of the wrong chip. That includes a dump from a tool `--from` does not name whose upper half
+  is erased or repeats its lower, which a chip half its length makes too.
 - **Game Boy MBC7.** Kirby Tilt 'n' Tumble and Command Master keep their saves in a serial EEPROM of
   16-bit words, which the chip shifts out most significant bit first. mGBA, the MiSTer and Pocket
   cores and a GBxCart RW keep each word in that order; SameBoy, Gearboy and Epilogue's GB Operator
@@ -372,8 +382,8 @@ original file again puts it right.
 
 ## Conformance
 
-`one-saves` passes the [conformance corpus][corpus] published alongside the specification: all 54
-valid cases, all 8 round-trip ones and all 155 invalid ones, vendored under
+`one-saves` passes the [conformance corpus][corpus] published alongside the specification: all 56
+valid cases, all 8 round-trip ones and all 156 invalid ones, vendored under
 [`crates/one-saves/tests/conformance/`](crates/one-saves/tests/conformance).
 
 A green corpus run is deliberately not full coverage, and its README says so. The four properties
@@ -437,7 +447,7 @@ is what CI checks. Nothing at build time needs either form.
 
 ## Status
 
-Tracking version 0.10 of the specification, which is **not yet stabilized**. Until the spec reaches
+Tracking version 0.11 of the specification, which is **not yet stabilized**. Until the spec reaches
 1.0, breaking changes happen in place under the same bundle tag.
 
 ## License

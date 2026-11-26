@@ -4,7 +4,7 @@
 //! addresses it. A medium addressed only in whole words, a serial EEPROM, has no such order, and the
 //! specification gives it network order: each word most significant byte first, which is also the
 //! order the chip shifts it out in. Cores keep the memory in files of their own shapes, and the
-//! shapes disagree for three systems in ways that stop a save moving between them:
+//! shapes disagree for four systems in ways that stop a save moving between them:
 //!
 //! - **Mega Drive.** Most cartridges wire their SRAM to the odd byte lane of the 16-bit bus alone,
 //!   so it sits at every other address. Genesis Plus GX, PicoDrive and clownmdemu keep the whole
@@ -14,6 +14,8 @@
 //! - **GBA.** gpSP and SkyEmu pad every save to 128 KiB, SkyEmu keeps an EEPROM's eight-byte blocks
 //!   back to front, VBA Next keeps an EEPROM 128 KiB into its file, and MiSTer's core reads a 4 Kbit
 //!   EEPROM only from a file of 8 KiB.
+//! - **DS.** DeSmuME pads the chip to a size of its own and appends a footer, and SkyEmu pads
+//!   every chip to 8 MiB with 0x00. Telling the chip is [`nds`](crate::nds)'s.
 //! - **Game Boy MBC7.** The cartridge keeps its saves in a serial EEPROM of 16-bit words, which it
 //!   shifts out most significant bit first, so a payload holds each word most significant byte
 //!   first, as mGBA and the FPGA cores keep it. SameBoy and Gearboy, and Epilogue's GB Operator,
@@ -69,7 +71,9 @@ impl SaveMemory {
         matches!(self, SaveMemory::Eeprom { .. })
     }
 
-    fn size(self) -> Option<usize> {
+    /// Its size in bytes, where the header says.
+    #[must_use]
+    pub fn size(self) -> Option<usize> {
         match self {
             SaveMemory::ByteLane { size, .. } | SaveMemory::Eeprom { size } | SaveMemory::Memory { size } => {
                 size
@@ -125,6 +129,7 @@ pub fn normalize(
         ("gba", Some(layout)) => normalize_gba(file, layout, memory),
         ("gb" | "gbc", layout) => normalize_mbc7(file, layout, memory),
         ("pico-8", _) => crate::pico8::normalize(file),
+        ("nds", layout) => normalize_nds(file, layout, memory),
         _ => file.to_vec(),
     }
 }
@@ -152,6 +157,8 @@ pub fn normalize_stored(
         ("gb" | "gbc", _) => normalize_mbc7(payload, None, memory),
         // A PICO-8 save stored as the text every runtime but one writes.
         ("pico-8", _) => crate::pico8::normalize_stored(payload),
+        // A DeSmuME footer or SkyEmu's padding shows in the bytes, and comes off as from a file.
+        ("nds", layout) => normalize_nds(payload, layout, memory),
         _ => payload.to_vec(),
     }
 }
@@ -171,6 +178,7 @@ pub fn lay_out(payload: &[u8], system: &str, layout: Option<SaveLayout>, memory:
         // Every PICO-8 runtime that keeps a file per cart's data keeps it as text, so that is the
         // file a save is written as; the P8 core's blocks are a file of entries (`crate::entries`).
         ("pico-8", _) => Laid { bytes: crate::pico8::lay_out(payload), assumed: false },
+        ("nds", Some(layout)) => Laid { bytes: lay_out_nds(payload, layout), assumed: false },
         _ => Laid { bytes: payload.to_vec(), assumed: false },
     }
 }
@@ -325,7 +333,7 @@ fn reverse_blocks(bytes: &[u8]) -> Vec<u8> {
 
 fn normalize_gba(file: &[u8], layout: SaveLayout, memory: Option<SaveMemory>) -> Vec<u8> {
     match layout {
-        SaveLayout::Padded { length, reversed_eeprom } if file.len() == len(length) => match memory {
+        SaveLayout::Padded { length, reversed_eeprom, .. } if file.len() == len(length) => match memory {
             Some(memory) if memory.is_eeprom() => {
                 let chip = &file[..gba_eeprom_size(file, Some(memory)).min(file.len())];
                 if reversed_eeprom { reverse_blocks(chip) } else { chip.to_vec() }
@@ -366,7 +374,7 @@ fn lay_out_gba(payload: &[u8], layout: SaveLayout, memory: Option<SaveMemory>) -
         SaveLayout::Chip { eeprom_min } if eeprom && payload.len() < len(eeprom_min) => {
             sized(payload.to_vec(), len(eeprom_min), ERASED)
         }
-        SaveLayout::Padded { length, reversed_eeprom } => {
+        SaveLayout::Padded { length, reversed_eeprom, .. } => {
             let chip = if eeprom && reversed_eeprom { reverse_blocks(payload) } else { payload.to_vec() };
             if chip.len() < len(length) { sized(chip, len(length), ERASED) } else { chip }
         }
@@ -428,6 +436,32 @@ fn lay_out_mbc7(
     }
 }
 
+/// A DS card's chip out of a core's file: DeSmuME's footer off wherever it is, since it shows in
+/// the bytes, and SkyEmu's padding off where the game says where the chip ends and the rest is the
+/// fill. What is left is for [`nds::read`](crate::nds::read) to fit to the chip.
+fn normalize_nds(file: &[u8], layout: Option<SaveLayout>, memory: Option<SaveMemory>) -> Vec<u8> {
+    let data = crate::nds::dsv(file).map_or(file, |(data, _)| data);
+    match (layout, memory.and_then(SaveMemory::size)) {
+        (Some(SaveLayout::Padded { length, fill, .. }), Some(size))
+            if data.len() == len(length) && size < data.len() && data[size..].iter().all(|&b| b == fill) =>
+        {
+            data[..size].to_vec()
+        }
+        _ => data.to_vec(),
+    }
+}
+
+/// A DS card's chip as a core keeps it: in DeSmuME's `.dsv`, or padded out to SkyEmu's 8 MiB.
+fn lay_out_nds(chip: &[u8], layout: SaveLayout) -> Vec<u8> {
+    match layout {
+        SaveLayout::Desmume => crate::nds::desmume_file(chip),
+        SaveLayout::Padded { length, fill, .. } if chip.len() < len(length) => {
+            sized(chip.to_vec(), len(length), fill)
+        }
+        _ => chip.to_vec(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,8 +473,8 @@ mod tests {
     const CLOWNMDEMU: SaveLayout =
         SaveLayout::Expanded { fill: 0x00, length: ExpandedLength::Fixed(65_536), eeprom_length: None };
     const MISTER_MD: SaveLayout = SaveLayout::Packed { length: Some(65_536) };
-    const GPSP: SaveLayout = SaveLayout::Padded { length: 131_072, reversed_eeprom: false };
-    const SKYEMU: SaveLayout = SaveLayout::Padded { length: 131_072, reversed_eeprom: true };
+    const GPSP: SaveLayout = SaveLayout::Padded { length: 131_072, fill: 0xFF, reversed_eeprom: false };
+    const SKYEMU: SaveLayout = SaveLayout::Padded { length: 131_072, fill: 0xFF, reversed_eeprom: true };
     const MISTER_GBA: SaveLayout = SaveLayout::Chip { eeprom_min: 8192 };
 
     /// An odd-lane SRAM of `len` bytes, its last byte not 0xFF.
@@ -600,5 +634,52 @@ mod tests {
         let file = swap_words(&lay_out(&eeprom(256), "gbc", Some(TGB_DUAL), None).bytes);
         assert_eq!(normalize_stored(&file, "gbc", Some(SAMEBOY), KIRBY), file[..256]);
         assert_eq!(normalize_stored(&file[..256], "gbc", Some(SAMEBOY), None), file[..256]);
+    }
+
+    const SKYEMU_NDS: SaveLayout = SaveLayout::Padded { length: 8 << 20, fill: 0, reversed_eeprom: false };
+
+    #[test]
+    fn a_ds_chip_goes_to_desmume_with_its_footer_and_to_skyemu_padded_and_back() {
+        let chip = sram(65_536);
+        let flash = Some(SaveMemory::Memory { size: Some(65_536) });
+
+        let desmume = lay_out(&chip, "nds", Some(SaveLayout::Desmume), flash);
+        assert!(!desmume.assumed);
+        assert_eq!(desmume.bytes, crate::nds::desmume_file(&chip));
+        // The footer comes off with or without the size, and from a stored bundle too.
+        assert_eq!(normalize(&desmume.bytes, "nds", Some(SaveLayout::Desmume), None), chip);
+        assert_eq!(normalize(&desmume.bytes, "nds", None, None), chip, "it shows in the bytes");
+        assert_eq!(normalize_stored(&desmume.bytes, "nds", None, None), chip);
+
+        let skyemu = lay_out(&chip, "nds", Some(SKYEMU_NDS), flash).bytes;
+        assert_eq!((skyemu.len(), &skyemu[..65_536]), (8 << 20, &chip[..]));
+        assert_eq!(normalize(&skyemu, "nds", Some(SKYEMU_NDS), flash), chip);
+        assert_eq!(normalize_stored(&skyemu, "nds", Some(SKYEMU_NDS), flash), chip);
+    }
+
+    #[test]
+    fn skyemu_s_padding_comes_off_only_where_the_game_says_where_the_chip_ends_and_the_rest_is_fill() {
+        let chip = sram(65_536);
+        let flash = Some(SaveMemory::Memory { size: Some(65_536) });
+        let skyemu = lay_out(&chip, "nds", Some(SKYEMU_NDS), flash).bytes;
+        // Without the size, the 8 MiB stays for the reader to say what it is.
+        assert_eq!(normalize(&skyemu, "nds", Some(SKYEMU_NDS), None), skyemu);
+        // Something past the chip that is not SkyEmu's fill is the file's, and stays.
+        let mut written = skyemu.clone();
+        written[100_000] = 1;
+        assert_eq!(normalize(&written, "nds", Some(SKYEMU_NDS), flash), written);
+        // A file of another length is not SkyEmu's, whatever the game says.
+        let other = [chip.clone(), vec![0; 65_536]].concat();
+        assert_eq!(normalize(&other, "nds", Some(SKYEMU_NDS), flash), other);
+        // A chip as long as SkyEmu's file is already its own length.
+        let full = sram(8 << 20);
+        assert_eq!(lay_out(&full, "nds", Some(SKYEMU_NDS), None).bytes, full);
+    }
+
+    #[test]
+    fn a_core_that_keeps_the_chip_as_it_is_gets_it_as_it_is() {
+        let chip = sram(512);
+        assert_eq!(lay_out(&chip, "nds", None, None).bytes, chip);
+        assert_eq!(normalize(&chip, "nds", None, None), chip);
     }
 }

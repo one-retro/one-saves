@@ -1,11 +1,11 @@
 {
   "corpus": "Universal Saves Format conformance cases",
-  "spec_version": "0.10",
+  "spec_version": "0.11",
   "generated_from": "test/bundles.js",
   "counts": {
-    "valid": 54,
+    "valid": 56,
     "round-trip": 8,
-    "invalid": 155
+    "invalid": 156
   },
   "cases": [
     {
@@ -210,6 +210,20 @@
       "file": "valid/n64dd-disk.cbor",
       "sha256": "be9fc761c59e20196e38be84459fbed843265402602828904c9cc241b518c3b7",
       "note": "A 64DD disk's save is its RAM area, in block order, and its length is what tells a consumer the disk's type. A type 5 disk's area is its last 204 blocks, 1942080 bytes, the smallest a disk has."
+    },
+    {
+      "name": "nds-card",
+      "expect": "valid",
+      "file": "valid/nds-card.cbor",
+      "sha256": "5316a523f80d5124d93d5382022ec77fa1f2a1a4a7c4ad772a097fe0cf699338",
+      "note": "A DS card's save is its chip, whose length is all that tells one chip from another, so it carries no key naming it. Explorers of Sky's 1 Mbit EEPROM is 128 KiB."
+    },
+    {
+      "name": "nds-card-unknown-chip",
+      "expect": "valid",
+      "file": "valid/nds-card-unknown-chip.cbor",
+      "sha256": "1cd6504e6cc7fe150fddd5ef09ec8dfa3e6117a6543254a2b11e745c89841410",
+      "note": "A file whose chip its producer cannot tell, as SkyEmu's 8 MiB is without the game, goes as `aux`, which takes any length."
     },
     {
       "name": "saturn-backup",
@@ -1681,6 +1695,14 @@
       "file": "invalid/n64dd-disk-wrong-size.cbor",
       "sha256": "5a6f9b45b697bb6af99ebaca0d2769ff4477ff1cf6f086dad8a1525e72210792",
       "note": "A 64DD disk's save is the whole of its RAM area, which no disk type makes 32 KiB long. A save of part of the area cannot be told from a disk of another type."
+    },
+    {
+      "name": "nds-card-wrong-size",
+      "expect": "invalid",
+      "rejected_by": "structure",
+      "file": "invalid/nds-card-wrong-size.cbor",
+      "sha256": "56e2ad84a7a2b18ac0ed3a00b24c5133f6e6b222c4b2fffb8f06358bb44242bf",
+      "note": "A DS card's save is as long as one of its chips. 8314 bytes is an 8 KiB EEPROM with DeSmuME's footer still on, which no card holds."
     }
   ]
 }

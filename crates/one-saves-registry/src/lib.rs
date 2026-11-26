@@ -286,14 +286,20 @@ pub enum SaveLayout {
         /// The size the core writes every save at.
         length: Option<u32>,
     },
-    /// The chip at the start of a file of `length` bytes, the rest 0xFF, as gpSP and SkyEmu keep a
-    /// GBA's.
+    /// The chip at the start of a file of `length` bytes, the rest `fill`, as gpSP and SkyEmu keep a
+    /// GBA's behind 0xFF and SkyEmu a DS's behind 0x00.
     Padded {
         /// The file's length.
         length: u32,
+        /// What the file holds past the chip.
+        fill: u8,
         /// Whether each eight-byte block of an EEPROM is kept back to front, as SkyEmu keeps them.
         reversed_eeprom: bool,
     },
+    /// DeSmuME's `.dsv`: a DS card's chip padded with 0xFF to the size DeSmuME worked out, then 122
+    /// bytes of its own saying that size. DeSmuME has no 1 Mbit size, and keeps such an EEPROM at
+    /// 256 KiB.
+    Desmume,
     /// VBA Next's GBA file: 0x22000 bytes, an EEPROM at 0x20000 behind 0xFF and any other chip at
     /// the start.
     VbaNext,
@@ -860,8 +866,8 @@ mod tests {
     #[test]
     fn the_registries_are_the_size_the_documents_are() {
         assert_eq!(SYSTEMS.len(), 226);
-        assert_eq!(CORES.len(), 207);
-        assert_eq!(APPS.len(), 29);
+        assert_eq!(CORES.len(), 209);
+        assert_eq!(APPS.len(), 31);
         assert_eq!(PLATFORMS.len(), 12);
         assert_eq!(CARD_FORMATS.len(), 7);
         assert_eq!(DEVICE_KINDS.len(), 5);

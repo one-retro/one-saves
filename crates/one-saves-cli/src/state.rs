@@ -73,6 +73,10 @@ fn core_from_folder(input: &Path) -> Option<&'static str> {
 }
 
 pub(crate) fn convert(args: &Convert, kind: Kind, bytes: &[u8]) -> Fallible {
+    #[cfg(feature = "states")]
+    if args.in_game_save {
+        return convert_in_game_save(args, kind, bytes);
+    }
     let profile = args.from.as_deref().and_then(one_saves_convert::profile);
     #[cfg(feature = "rom")]
     let Identified { game, system: rom_system, .. } = crate::identify(args)?;
@@ -168,6 +172,31 @@ pub(crate) fn convert(args: &Convert, kind: Kind, bytes: &[u8]) -> Fallible {
     Ok(())
 }
 
+/// Reads the in-game save a DeSmuME state holds into a save bundle of its own.
+#[cfg(feature = "states")]
+pub(crate) fn convert_in_game_save(args: &Convert, kind: Kind, bytes: &[u8]) -> Fallible {
+    if kind != Kind::State(Emulator::Desmume) {
+        return Err(format!(
+            "--in-game-save reads the save out of a DeSmuME state, and this is a {}",
+            kind.label()
+        )
+        .into());
+    }
+    let profile = args.from.as_deref().and_then(one_saves_convert::profile);
+    #[cfg(feature = "rom")]
+    let Identified { game, memory, .. } = crate::identify(args)?;
+    #[cfg(not(feature = "rom"))]
+    let Identified { game, memory, .. } = Identified::default();
+    let source = crate::source_of(args, profile.as_ref())?;
+    let (bundle, label) = crate::nds::lift_from_state(args, bytes, source, game, memory)?;
+    let output =
+        args.output.clone().unwrap_or_else(|| appended(&args.input, &format!(".{}", one_saves::EXTENSION)));
+    let encoded = bundle.to_vec()?;
+    write_out(&output, &encoded, args.force)?;
+    println!("{} -> {} ({label}, {} bytes)", args.input.display(), output.display(), encoded.len());
+    Ok(())
+}
+
 /// What a rebuilt state file is named after: the game's ROM, else the bundle's own name with the
 /// slot taken off it.
 fn stem_of(bundle: &Bundle, input: &Path) -> String {
@@ -201,11 +230,13 @@ pub(crate) fn extract(args: &Extract, bundle: &Bundle) -> Fallible {
 
     let emulator = match args.to.as_deref() {
         Some(name) => Emulator::from_app(name).ok_or_else(|| {
-            format!("a state is rebuilt for retroarch, mgba or duckstation, and {name:?} is none of them")
+            format!(
+                "a state is rebuilt for retroarch, mgba, duckstation or desmume, and {name:?} is none of them"
+            )
         })?,
         None => state::emulator_of(bundle).ok_or(
             "this state was not taken by an emulator this build rebuilds files for; pass --to retroarch, \
-             mgba or duckstation to say which file to write",
+             mgba, duckstation or desmume to say which file to write",
         )?,
     };
     let rebuilt = state::write(emulator, bundle, &stem_of(bundle, &args.input))?;

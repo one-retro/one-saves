@@ -82,7 +82,7 @@ fn corpus() {
     let count = |expect| cases.iter().filter(|c| c.expect == expect).count();
     assert_eq!(
         [Expect::Valid, Expect::RoundTrip, Expect::Invalid].map(count),
-        [54, 8, 155],
+        [56, 8, 156],
         "the corpus is not the size it should be"
     );
 
@@ -239,7 +239,7 @@ fn a_decoder_keeps_integer_keys_a_later_version_wrote() {
 
         assert!(
             Bundle::from_slice_with(&bytes, Strictness::Schema).is_err(),
-            "{name} must fail against the version 0.10 schema"
+            "{name} must fail against the version 0.11 schema"
         );
 
         let bundle = Bundle::from_slice(&bytes)

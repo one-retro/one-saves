@@ -414,6 +414,18 @@ impl Across {
                 ));
             }
         }
+
+        // A DS save names no chip, so its length says which: one of the eight a card carries.
+        if self.shape == Shape::Save
+            && self.system.as_deref() == Some("nds")
+            && part.kind == PartKind::Save
+            && !NDS_CHIPS.contains(&len)
+        {
+            return Err(Error::at(
+                format!("{path}.payload"),
+                ErrorKind::NdsWrongLength(usize::try_from(len).unwrap_or(usize::MAX)),
+            ));
+        }
         Ok(())
     }
 }
@@ -428,6 +440,10 @@ enum Socket {
 
 /// How long a 64DD disk's RAM area is for each disk type, 0 to 5. A type 6 disk has none.
 const N64DD_AREAS: [u64; 6] = [38_444_480, 29_501_120, 21_303_040, 13_850_240, 7_142_720, 1_942_080];
+
+/// How long a DS game card's save chip is: EEPROM of 4, 64, 512 Kbit and 1 Mbit, FRAM of 256 Kbit,
+/// and flash of 2, 4 and 8 Mbit.
+const NDS_CHIPS: [u64; 8] = [512, 8192, 32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576];
 
 /// Whether a role names a memory card's slot: `memcard-<n>`, `controller-pak-<n>` or
 /// `neogeo-card`.
@@ -1883,6 +1899,25 @@ mod tests {
         ));
         let two = vec![Part::new(0, vec![0; 1_942_080]), Part::new(1, vec![0; 1_942_080]).path("b")];
         assert!(matches!(disk(two).validate().unwrap_err().kind(), ErrorKind::N64ddArea(_)));
+    }
+
+    #[test]
+    fn a_ds_save_is_as_long_as_one_of_its_chips() {
+        let save = |len: usize| Bundle {
+            header: Header::default().system(Slug::parse("nds").unwrap()),
+            parts: vec![Part::new(0, vec![0xFF; len])],
+        };
+        for len in [512, 8192, 32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576] {
+            save(len).validate().unwrap_or_else(|e| panic!("{len}: {e}"));
+        }
+        // SkyEmu's file, the padding still on, and DeSmuME's with its footer.
+        for len in [8 << 20, 8192 + 122] {
+            assert_eq!(save(len).validate().unwrap_err().kind(), &ErrorKind::NdsWrongLength(len));
+        }
+        // The file a producer could not tell the chip of goes as `aux`, which takes any length.
+        let mut unknown = save(8 << 20);
+        unknown.parts[0] = Part::new(0, vec![0; 8 << 20]).kind(PartKind::Aux).path("game.srm");
+        unknown.validate().expect("an aux part is the producer's to size");
     }
 
     #[test]

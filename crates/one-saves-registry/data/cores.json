@@ -672,6 +672,16 @@
     "family": "Game Boy family"
   },
   {
+    "slug": "drastic",
+    "name": "DraStic",
+    "kind": "standalone",
+    "systems": [
+      "nds"
+    ],
+    "aliases": [],
+    "family": "Nintendo DS"
+  },
+  {
     "slug": "drizzt-gg",
     "name": "drizzt.GG",
     "kind": "openfpga",
@@ -1569,6 +1579,17 @@
     ],
     "aliases": [],
     "family": "NES"
+  },
+  {
+    "slug": "no-gba",
+    "name": "no$gba",
+    "kind": "standalone",
+    "systems": [
+      "nds",
+      "gba"
+    ],
+    "aliases": [],
+    "family": "Nintendo DS"
   },
   {
     "slug": "noods",

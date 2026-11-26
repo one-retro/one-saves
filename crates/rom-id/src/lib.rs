@@ -41,6 +41,7 @@ mod header;
 pub mod n64;
 mod n64dd;
 mod name;
+pub mod nds;
 #[cfg(feature = "pico8")]
 pub mod pico8;
 
@@ -100,7 +101,8 @@ pub enum ByteOrder {
 
 /// What a cartridge carries besides its ROM.
 ///
-/// Read from the header, or for the few consoles that do not say, from the game's product code.
+/// Read from the header, or for the consoles that do not say, an N64 and a DS among them, from the
+/// game's product code.
 /// `None` in a field means the header does not say, which for most systems is all a header ever
 /// says about either.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -141,6 +143,9 @@ pub enum SaveKind {
     Eeprom,
     /// Flash memory.
     Flash,
+    /// NAND flash, which a DS card carries beside its ROM and a game reaches through commands of
+    /// its own: WarioWare D.I.Y. and Jam with the Band.
+    Nand,
 }
 
 /// A cartridge's real-time clock chip, one for each chip key the Universal Saves Format defines.

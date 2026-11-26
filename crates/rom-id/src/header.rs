@@ -208,10 +208,14 @@ fn nds(view: View<'_>, _: &[System]) -> Option<RomId> {
     {
         return None;
     }
+    // The header names no save chip, so the game code is looked up for one.
+    let code: [u8; 4] = header[0x0C..0x10].try_into().ok()?;
+    let save = crate::nds::lookup(code).and_then(|cart| cart.save);
     Some(RomId {
         title: field(&header[..0x0C]),
         serial: field(&header[0x0C..0x10]),
         revision: Some(header[0x1E]),
+        cartridge: Cartridge { save, clock: None },
         ..found(systems::NDS, view)
     })
 }
@@ -869,6 +873,9 @@ mod tests {
             identify(None, &nds).map(|id| (id.system, id.serial)),
             Some((systems::NDS, Some("ADAE".into())))
         );
+        // The header names no chip, and the game code does: Diamond's 4 Mbit flash.
+        let flash = Save { kind: SaveKind::Flash, size: Some(512 * 1024), lane: None };
+        assert_eq!(identify(None, &nds).unwrap().cartridge, Cartridge { save: Some(flash), clock: None });
         nds[0x15E] ^= 1;
         assert_eq!(identify(None, &nds), None, "a header whose own CRC fails is not one");
 

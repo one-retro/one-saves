@@ -53,6 +53,19 @@ $ 1saves convert "Mario Artist.ram" --rom "Mario Artist.ndd" --dat No-Intro_64DD
 $ 1saves extract "Mario Artist.1saves" --onto "Mario Artist.ndd" -o "Mario Artist.ndr"
 ```
 
+A DS save names no chip, so it has to be as long as the card's. Where the file does not say,
+`--rom` or the game's code does, and `extract` writes each core's file back:
+
+```console
+$ 1saves convert "Explorers of Sky.srm" --from retroarch --core skyemu --nds-game C2SE
+$ 1saves extract "Explorers of Sky.1saves" --to retroarch --core desmume
+Explorers of Sky.1saves -> Explorers of Sky.dsv (save for DeSmuME in RetroArch, 262266 bytes)
+```
+
+An Action Replay DS file, DeSmuME's `.dsv`, a no$gba or DSXS file and a DraStic state are known
+by what they open or end with. A DeSmuME state converts as a state; `--in-game-save` reads the save
+inside it instead.
+
 `new` makes an empty, formatted card, written as the file an emulator or a flash cart loads:
 
 ```console

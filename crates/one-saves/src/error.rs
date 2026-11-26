@@ -397,6 +397,12 @@ pub enum ErrorKind {
     /// cannot be told from a disk of another type.
     N64ddWrongLength(usize),
 
+    /// A DS game card's save was not as long as any of the card's chips.
+    ///
+    /// A DS save names no chip, so its length is the chip: a save of any other length is padded,
+    /// cut, or a NAND card's, which this version does not carry as a save.
+    NdsWrongLength(usize),
+
     /// A `bundle` part's payload did not decode as a bundle.
     NestedPayloadNotABundle(Box<Error>),
 
@@ -540,6 +546,9 @@ impl fmt::Display for ErrorKind {
             ErrorKind::N64ddArea(why) => write!(f, "a 64DD disk's save {why}"),
             ErrorKind::N64ddWrongLength(len) => {
                 write!(f, "runs {len} bytes, which is no 64DD disk type's RAM area")
+            }
+            ErrorKind::NdsWrongLength(len) => {
+                write!(f, "runs {len} bytes, which is no DS game card's save chip")
             }
             ErrorKind::NestedPayloadNotABundle(source) => {
                 write!(f, "carries kind `bundle` but its payload is not one: {source}")

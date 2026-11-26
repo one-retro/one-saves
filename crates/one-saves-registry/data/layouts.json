@@ -5,8 +5,8 @@
     "save's payload holds, the medium's bytes in the order the console's hardware addresses them, and",
     "not how each core keeps them. A core absent here, or a system absent from a core's entry, keeps the",
     "memory as it is. Layouts: expanded (fill, length: trimmed | doubled | bytes, eeprom_length),",
-    "packed (length), padded (length, reversed_eeprom), vba-next, chip (eeprom_min), mbc7 (swapped,",
-    "length with fill).",
+    "packed (length), padded (length, fill, reversed_eeprom), vba-next, desmume, chip (eeprom_min), mbc7",
+    "(swapped, length with fill).",
     "Each entry's `evidence` says where it was read: files the cores wrote, or a MiSTer that was asked to read them."
   ],
   "cores": {
@@ -22,6 +22,18 @@
         "layout": "expanded",
         "fill": 0,
         "length": 65536
+      }
+    },
+    "desmume": {
+      "evidence": "corpus nds/NOTES.md, 'How each core writes the save' and 'DeSmuME's footer': for all ten games the core's .dsv is the chip padded with 0xFF to the size it autodetected, then the 122-byte footer (the text, six u32 LE: size, padSize, type, addr_size, mem_size, version 0, and the cookie |-DESMUME SAVE-|); Explorers of Sky's 1 Mbit EEPROM is kept as 2 Mbit flash, 256 KiB, its upper half 0xFF. Core git 95b4d79.",
+      "nds": {
+        "layout": "desmume"
+      }
+    },
+    "desmume-2015": {
+      "evidence": "corpus nds/NOTES.md, 'How each core writes the save' and 'DeSmuME's footer': for all ten games the core's .dsv is the chip padded with 0xFF to the size it autodetected, then the 122-byte footer (the text, six u32 LE: size, padSize, type, addr_size, mem_size, version 0, and the cookie |-DESMUME SAVE-|); Explorers of Sky's 1 Mbit EEPROM is kept as 2 Mbit flash, 256 KiB, its upper half 0xFF. Core git a06da0c, whose footers are identical to the current core's.",
+      "nds": {
+        "layout": "desmume"
       }
     },
     "doublecherrygb": {
@@ -106,11 +118,16 @@
       }
     },
     "skyemu": {
-      "evidence": "corpus gba/NOTES.md, 'How each core writes the save': every SkyEmu save is 131072 bytes (cart_backup[128K]), the rest 0xFF, and an EEPROM's eight-byte blocks back to front (Minish Cap 'ADLEZBGA' where mGBA has 'GBZELDA').",
+      "evidence": "corpus gba/NOTES.md, 'How each core writes the save': every SkyEmu save is 131072 bytes (cart_backup[128K]), the rest 0xFF, and an EEPROM's eight-byte blocks back to front (Minish Cap 'ADLEZBGA' where mGBA has 'GBZELDA'). corpus nds/NOTES.md, 'How each core writes the save': every SkyEmu DS save is 8388608 bytes (save_data[8 MiB]), the chip at 0 and 0x00 after it, for all nine games from a 512-byte EEPROM to 1 MiB of flash.",
       "gba": {
         "layout": "padded",
         "length": 131072,
         "reversed_eeprom": true
+      },
+      "nds": {
+        "layout": "padded",
+        "length": 8388608,
+        "fill": 0
       }
     },
     "tgb-dual": {

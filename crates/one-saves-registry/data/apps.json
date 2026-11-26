@@ -63,6 +63,13 @@
     ]
   },
   {
+    "slug": "drastic",
+    "name": "DraStic",
+    "cores": [
+      "drastic"
+    ]
+  },
+  {
     "slug": "duckstation",
     "name": "DuckStation",
     "cores": [
@@ -123,6 +130,13 @@
     "name": "Mupen64Plus",
     "cores": [
       "mupen64plus"
+    ]
+  },
+  {
+    "slug": "no-gba",
+    "name": "no$gba",
+    "cores": [
+      "no-gba"
     ]
   },
   {

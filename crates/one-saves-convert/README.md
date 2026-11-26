@@ -9,6 +9,7 @@ real hardware.
 | ------ | ---------- | ---------------- | ------- |
 | Flat cartridge saves | `.srm` `.sav` `.eep` `.fla` `.sa1` | — | always |
 | Sega CD backup RAM | `.brm` | — | always |
+| DS card saves: the chip, DeSmuME's `.dsv`, SkyEmu's, Action Replay DS, no$gba and DSXS files, a DraStic state's | `.sav` `.srm` `.dsv` `.duc` `.dss` | — | always; DSXS and DraStic, `nds-zlib` |
 | 64DD disk saves | `.ram`, or a whole disk: `.ndd` `.ndr` `.disk` `.disk_save` | [`n64dd-disk`](https://docs.rs/n64dd-disk) | always |
 | PS1 memory cards | `.mcr` `.mcd` `.gme` `.vgs` `.vmp` | [`ps1-memcard`](https://docs.rs/ps1-memcard) | `ps1` |
 | N64 Controller Paks, of one bank or many | `.mpk` `.pak` | [`n64-cpak`](https://docs.rs/n64-cpak) | `n64` |
@@ -16,7 +17,7 @@ real hardware.
 | Dreamcast VMU | `.bin` | [`dreamcast-vmu`](https://docs.rs/dreamcast-vmu) | `vmu` |
 | PS2 memory cards | `.ps2`, with or without ECC spare | [`ps2-memcard`](https://docs.rs/ps2-memcard) | `ps2` |
 | Neo Geo memory cards and a Neo Geo CD's memory | `.neo`, bare or in a MiSTer save | [`neogeo-memcard`](https://docs.rs/neogeo-memcard) | `neogeo` |
-| RetroArch, mGBA and DuckStation save states | `.state*`, `.ss0`…`.ss9`, DuckStation's `.sav` | — | `states` |
+| RetroArch, mGBA, DuckStation and DeSmuME save states | `.state*`, `.ss0`…`.ss9`, DuckStation's `.sav`, `.ds0`…`.ds9` `.dst` | — | `states` |
 | Screenshots | `.png` `.jpg` | — | always |
 
 A backup RAM is wrapped whole: its volume footer is read as a signature, which settles `system`
@@ -39,7 +40,15 @@ emulator wrapped around it. A screenshot rides beside it as an image, a PNG wher
 a bare framebuffer; mGBA's in-game save is a save part of its own, and its cheats an extension key
 on the state part. RetroArch's file does not name its core, so `StateOptions::source` has to.
 
-Also here: ROM header parsing for Game Boy, GBC, GBA, N64, SNES, NES and Mega Drive; DAT catalog
+A DS save names no chip, so its payload is the whole chip and its length says which. `nds` takes
+the chip out of whatever it arrived in and fits it to the card: from the game where `NdsOptions::chip`
+says, which `rom::nds_save_length` answers from the game code. Otherwise the file's length says it
+only for a core that keeps the chip at its own length (melonDS, melonDS DS and NooDS), or where no
+chip half as long could have made the file: one whose upper half is erased, or repeats its lower,
+could be either. A file it cannot tell the chip of, such as SkyEmu's 8 MiB, is carried as it came,
+as an `aux` part, and so is a NAND card's.
+
+Also here: ROM header parsing for Game Boy, GBC, GBA, N64, DS, SNES, NES and Mega Drive; DAT catalog
 resolution in both the Logiqx XML and ClrMamePro shapes; and emulator profiles, so `--from mgba`
 knows what to write in a bundle's `source`.
 
@@ -94,7 +103,8 @@ standalone Mednafen wrote cannot be read at all.
 | `zstd` (off) | The states an emulator compresses with zstd; brings `states` with it | `zstd`, and the C library it compiles |
 | `icon` (off) | Decoding a console's icon to PNG for `x.1sav.icon` | `png`, and a deflate encoder |
 | `archive` (off) | The `archive` module: reading a card, or the loose saves off one, out of a `.zip` | `zip`, and a deflate decoder |
-| `states` (off) | Reading and writing RetroArch's, mGBA's and DuckStation's save states | `flate2` and `png`; with `zstd`, a DuckStation state as DuckStation compresses it by default |
+| `nds-zlib` | A DS save a DSXS file gzipped or a DraStic state holds | `flate2` on `zlib-rs` |
+| `states` (off) | Reading and writing RetroArch's, mGBA's, DuckStation's and DeSmuME's save states | `flate2` and `png`; with `zstd`, a DuckStation state as DuckStation compresses it by default |
 | `multithread` (off) | Forwarded to `one-saves`: `Arc` rather than `Rc` under `dcbor` | nothing — it makes what this crate returns `Send` and `Sync` |
 
 Flat saves, detection, profiles and clock handling are always present: they are what this crate is,
@@ -113,7 +123,7 @@ Without `dat-cmpro` a ClrMamePro catalog is refused, and the error names the fea
 have read it rather than reporting the file as broken.
 
 ```toml
-one-saves-convert = { version = "0.10", default-features = false, features = ["ps1", "zstd"] }
+one-saves-convert = { version = "0.11", default-features = false, features = ["ps1", "zstd"] }
 ```
 
 [spec]: https://docs.1retro.com/specifications/universal-saves-format/

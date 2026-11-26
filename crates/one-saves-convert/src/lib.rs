@@ -11,6 +11,7 @@
 //! | PS1 memory cards (`.mcr`, `.mcd`, `.gme`, `.vgs`, `.vmp`) | [`ps1_memcard`] | `ps1` |
 //! | N64 Controller Paks (`.mpk`, `.pak`), of one bank or many | [`n64_cpak`] | `n64` |
 //! | N64 cartridge saves (`.eep`, `.sra`, `.fla`), and a libretro core's `.srm` of every chip and pak | [`n64_cpak`], for the paks | always; the `.srm`, `n64` |
+//! | DS card saves: the chip, DeSmuME's `.dsv`, SkyEmu's, Action Replay DS, no$gba and DSXS files, and a DraStic state's, in [`nds`] | — | always; DSXS and DraStic, `nds-zlib` |
 //! | GameCube memory cards (`.raw`, `.gcp`) | [`gc_memcard`] | `gc` |
 //! | Dreamcast VMU (`.bin`) | [`dreamcast_vmu`] | `vmu` |
 //! | PS2 memory cards (`.ps2`, with or without ECC) | [`ps2_memcard`] | `ps2` |
@@ -53,6 +54,7 @@
 //! | `cards` | All seven card formats at once | the seven below |
 //! | `ps1` `n64` `gc` `vmu` `ps2` `neogeo` `saturn` | One card format each | that format's crate, and nothing else |
 //! | `saturn-gzip` | A Saturn volume standalone Mednafen gzipped; brings `saturn` | `flate2` on `zlib-rs` |
+//! | `nds-zlib` | A DS save a DSXS file gzipped or a DraStic state holds | `flate2` on `zlib-rs` |
 //! | `dat` | The `dat` module: resolving a digest through a DAT catalog | `datary`, an XML reader and a derive macro |
 //! | `dat-cmpro` | The ClrMamePro syntax as well as Logiqx XML | `winnow` |
 //! | `rom` | The `rom` module: ROM headers and digests | `crc32fast`, `md-5`, `sha1`, `sha2` |
@@ -63,7 +65,7 @@
 //! | `zstd` (off) | The states an emulator compresses with zstd; brings `states` | `zstd`, and the C library it compiles |
 //! | `multithread` (off) | Forwarded to [`one_saves`]: `Arc` rather than `Rc` under `dcbor` | nothing |
 //!
-//! Flat saves, 64DD disks, detection, profiles and [`rtc`] are always present: they are what this
+//! Flat saves, 64DD disks, DS saves, detection, profiles and [`rtc`] are always present: they are what this
 //! crate is, and they depend on nothing but [`one_saves`] and [`n64dd_disk`].
 //!
 //! [`Format`] keeps every variant whichever card features are on, so a downstream `match` compiles
@@ -101,6 +103,7 @@ pub mod layout;
 mod label;
 pub mod n64;
 pub mod n64dd;
+pub mod nds;
 pub mod pico8;
 pub mod profile;
 pub mod raw;

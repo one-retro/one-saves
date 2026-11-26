@@ -1523,7 +1523,7 @@ pub mod cores {
         aliases: &[],
         clock: None,
         huc3: None,
-        layouts: &[],
+        layouts: &[SystemLayout { system: "nds", layout: SaveLayout::Desmume }],
     };
     /// DeSmuME 2015 — nds.
     pub const DESMUME_2015: Core = Core {
@@ -1534,7 +1534,7 @@ pub mod cores {
         aliases: &[],
         clock: None,
         huc3: None,
-        layouts: &[],
+        layouts: &[SystemLayout { system: "nds", layout: SaveLayout::Desmume }],
     };
     /// dolphin-emu — gc, wii.
     pub const DOLPHIN_EMU: Core = Core {
@@ -1566,6 +1566,17 @@ pub mod cores {
                 layout: SaveLayout::Mbc7 { swapped: false, padding: Some((8192, 0x00)) },
             },
         ],
+    };
+    /// DraStic — nds.
+    pub const DRASTIC: Core = Core {
+        slug: "drastic",
+        name: "DraStic",
+        kind: CoreKind::Standalone,
+        systems: &["nds"],
+        aliases: &[],
+        clock: None,
+        huc3: None,
+        layouts: &[],
     };
     /// drizzt.GG — sega-gg.
     pub const DRIZZT_GG: Core = Core {
@@ -1981,7 +1992,7 @@ pub mod cores {
         huc3: None,
         layouts: &[SystemLayout {
             system: "gba",
-            layout: SaveLayout::Padded { length: 131_072, reversed_eeprom: false },
+            layout: SaveLayout::Padded { length: 131_072, fill: 0xFF, reversed_eeprom: false },
         }],
     };
     /// Handy — atari-lynx.
@@ -2480,6 +2491,17 @@ pub mod cores {
         huc3: None,
         layouts: &[],
     };
+    /// no$gba — nds, gba.
+    pub const NO_GBA: Core = Core {
+        slug: "no-gba",
+        name: "no$gba",
+        kind: CoreKind::Standalone,
+        systems: &["nds", "gba"],
+        aliases: &[],
+        clock: None,
+        huc3: None,
+        layouts: &[],
+    };
     /// NooDS — nds, gba.
     pub const NOODS: Core = Core {
         slug: "noods",
@@ -2805,10 +2827,16 @@ pub mod cores {
         aliases: &[],
         clock: None,
         huc3: None,
-        layouts: &[SystemLayout {
-            system: "gba",
-            layout: SaveLayout::Padded { length: 131_072, reversed_eeprom: true },
-        }],
+        layouts: &[
+            SystemLayout {
+                system: "gba",
+                layout: SaveLayout::Padded { length: 131_072, fill: 0xFF, reversed_eeprom: true },
+            },
+            SystemLayout {
+                system: "nds",
+                layout: SaveLayout::Padded { length: 8_388_608, fill: 0x00, reversed_eeprom: false },
+            },
+        ],
     };
     /// SMS_MiSTer — mastersystem, sega-gg, sg-1000.
     pub const SMS_MISTER: Core = Core {
@@ -3343,7 +3371,7 @@ pub mod cores {
     clippy::used_underscore_items,
     reason = "a slug that starts with a digit takes a const that starts with an underscore"
 )]
-pub(crate) static CORES: [Core; 207] = [
+pub(crate) static CORES: [Core; 209] = [
     cores::_3DO_MISTER,
     cores::_4DO,
     cores::A5200,
@@ -3398,6 +3426,7 @@ pub(crate) static CORES: [Core; 207] = [
     cores::DESMUME_2015,
     cores::DOLPHIN_EMU,
     cores::DOUBLECHERRYGB,
+    cores::DRASTIC,
     cores::DRIZZT_GG,
     cores::DRIZZT_MEGADRIVE,
     cores::DRIZZT_SG_1000,
@@ -3476,6 +3505,7 @@ pub(crate) static CORES: [Core; 207] = [
     cores::NEOGEO_MISTER,
     cores::NES_MISTER,
     cores::NESTOPIA,
+    cores::NO_GBA,
     cores::NOODS,
     cores::O2EM,
     cores::OBSIDIAN_VECTREX,
@@ -3598,6 +3628,9 @@ pub mod apps {
     /// Dolphin.
     pub const DOLPHIN: App =
         App { slug: "dolphin", name: "Dolphin", cores: AppCores { kind: None, builds: &["dolphin-emu"] } };
+    /// DraStic.
+    pub const DRASTIC: App =
+        App { slug: "drastic", name: "DraStic", cores: AppCores { kind: None, builds: &["drastic"] } };
     /// DuckStation.
     pub const DUCKSTATION: App = App {
         slug: "duckstation",
@@ -3631,6 +3664,9 @@ pub mod apps {
         name: "Mupen64Plus",
         cores: AppCores { kind: None, builds: &["mupen64plus"] },
     };
+    /// no$gba.
+    pub const NO_GBA: App =
+        App { slug: "no-gba", name: "no$gba", cores: AppCores { kind: None, builds: &["no-gba"] } };
     /// OpenEmu.
     pub const OPENEMU: App = App {
         slug: "openemu",
@@ -3738,7 +3774,7 @@ pub mod apps {
 }
 
 /// Every known app, sorted by slug.
-pub(crate) static APPS: [App; 29] = [
+pub(crate) static APPS: [App; 31] = [
     apps::ANALOGUE_POCKET,
     apps::ARES,
     apps::AZAHAR,
@@ -3747,6 +3783,7 @@ pub(crate) static APPS: [App; 29] = [
     apps::DELTA,
     apps::DESMUME,
     apps::DOLPHIN,
+    apps::DRASTIC,
     apps::DUCKSTATION,
     apps::FCEUX,
     apps::FLYCAST,
@@ -3756,6 +3793,7 @@ pub(crate) static APPS: [App; 29] = [
     apps::MINUI,
     apps::MISTER,
     apps::MUPEN64PLUS,
+    apps::NO_GBA,
     apps::OPENEMU,
     apps::PCSX2,
     apps::PPSSPP,

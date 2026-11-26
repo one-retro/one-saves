@@ -30,10 +30,10 @@ pub struct RomInfo {
     /// keeps its revision in, or for a retail game what [`rom_id::n64::cartridge`] holds for its
     /// game ID. `None` for a game with no chip, and for one the table does not hold.
     pub n64_save: Option<one_saves::extension::N64Save>,
-    /// What a Mega Drive, GBA or Game Boy cartridge keeps its saves in, which is what laying a save
-    /// out for a core takes: a Mega Drive header declares SRAM and its byte lane, or an EEPROM's two
-    /// lines, a GBA ROM links the library of its chip, and a Game Boy header's type says an MBC7's
-    /// EEPROM.
+    /// What a Mega Drive, GBA, Game Boy or DS cartridge keeps its saves in, which is what laying a
+    /// save out for a core takes: a Mega Drive header declares SRAM and its byte lane, or an EEPROM's
+    /// two lines, a GBA ROM links the library of its chip, a Game Boy header's type says an MBC7's
+    /// EEPROM, and a DS card's game code names its chip in [`rom_id::nds`]'s table.
     pub memory: Option<crate::layout::SaveMemory>,
 }
 
@@ -59,11 +59,21 @@ pub fn identify(bytes: &[u8]) -> Option<RomInfo> {
         clock: id.cartridge.clock.map(rom_id::Clock::key),
         n64_save: if n64 { id.cartridge.save.and_then(n64_save) } else { None },
         memory: match id.system.slug {
-            "genesis" | "gb" | "gbc" => id.cartridge.save.map(save_memory),
+            // A DS header names no chip; rom-id looks the game code up for one.
+            "genesis" | "gb" | "gbc" | "nds" => id.cartridge.save.map(save_memory),
             "gba" => rom_id::gba_save(bytes).map(save_memory),
             _ => None,
         },
     })
+}
+
+/// How long a DS card's save memory is, by its game code (`AMCE`, or a serial such as
+/// `NTR-AMCE-USA`): `Some(None)` for a game known to keep none, and `None` for a code nobody knows.
+/// NAND's length too, which a bundle carries only as the file it came in.
+#[must_use]
+pub fn nds_save_length(game_code: &str) -> Option<Option<usize>> {
+    let cartridge = rom_id::nds::cartridge(game_code)?;
+    Some(cartridge.save.and_then(|save| save.size).and_then(|size| usize::try_from(size).ok()))
 }
 
 /// What [`layout`](crate::layout) needs of a cartridge's save memory.

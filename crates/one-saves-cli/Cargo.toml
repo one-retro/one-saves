@@ -26,7 +26,7 @@ clap.workspace = true
 libc.workspace = true
 
 [features]
-default = ["archive", "cards", "dat", "dat-cmpro", "rom", "saturn-gzip", "states", "zstd"]
+default = ["archive", "cards", "dat", "dat-cmpro", "nds-zlib", "rom", "saturn-gzip", "states", "zstd"]
 # Every card format. Each is forwarded to one-saves-convert, where it gates one crate and one
 # adapter. A format that is off is still named — `1saves inspect` reads a bundle of it, and
 # `convert` and `extract` say which feature would have handled it — and cannot be read or written.
@@ -41,6 +41,9 @@ saturn = ["one-saves-convert/saturn"]
 # does. The inflater is the one `archive` and `states` bring already.
 saturn-gzip = ["saturn", "one-saves-convert/saturn-gzip"]
 vmu = ["one-saves-convert/vmu"]
+# Reading the DS saves that arrive compressed, a DSXS file's and a DraStic state's, as the
+# library's feature of the same name does. The inflater is the one `archive` and `states` bring.
+nds-zlib = ["one-saves-convert/nds-zlib"]
 # `--dat FILE`. Unlike in the library, this one needs `rom`: the catalog is looked up by the ROM's
 # digest, so there is nothing for `--dat` to resolve without `--rom`.
 dat = ["rom", "one-saves-convert/dat"]

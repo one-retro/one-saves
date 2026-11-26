@@ -10,6 +10,7 @@ use one_saves::{Bundle, Game, Name, Origin, Part, PartKind, Recorded, Source, Ta
 use one_saves_convert::{Format, Profile, card, detect, n64dd, raw};
 
 mod n64;
+mod nds;
 mod state;
 
 /// Move retro saves and memory cards in and out of the Universal Saves Format.
@@ -143,6 +144,22 @@ struct Convert {
     /// Without it the paks are kept whole, other games' notes and all.
     #[arg(long, value_name = "CODE")]
     n64_game: Option<String>,
+    /// For a DS save, the game it is for, by the four-character code its card's header carries,
+    /// such as `AMCE`, or a serial such as `NTR-AMCE-USA`. Its card's save chip is looked up from it.
+    ///
+    /// A DS save names no chip, and some files do not say how long it is: SkyEmu pads every save
+    /// to 8 MiB, and an Action Replay file is often 256 KiB whatever the chip. `--rom` says the same
+    /// from the ROM's header.
+    #[cfg(feature = "rom")]
+    #[arg(long, value_name = "CODE")]
+    nds_game: Option<String>,
+    /// For a DeSmuME state, read the game's in-game save out of it as a save, rather than the state.
+    ///
+    /// The state holds the card's save memory inside the core's data, as it stood when the state
+    /// was taken.
+    #[cfg(feature = "states")]
+    #[arg(long)]
+    in_game_save: bool,
     /// For a producer that stamps its clock in local time, as every MiSTer core does, how far that
     /// time runs ahead of UTC: `-08:00` for Pacific, `+09:00` for Japan, or seconds.
     ///
@@ -559,10 +576,12 @@ fn convert(args: Convert) -> Fallible {
     if let Some(kind) = state::kind_of(&args.input, &bytes) {
         return state::convert(&args, kind, &bytes);
     }
+    nds::refuse_in_game_save(&args)?;
 
     let profile = args.from.as_deref().and_then(one_saves_convert::profile);
     let format = match args.from.as_deref().and_then(Format::from_name) {
         Some(format) => format,
+        None if nds::is_flat(&args, &bytes, &extension) => Format::Raw,
         None => detect::detect(&bytes, &extension)?,
     };
 
@@ -579,12 +598,14 @@ fn convert(args: Convert) -> Fallible {
         Identified::default();
 
     let source = source_of(&args, profile.as_ref())?;
+    let system = system_of(&args, rom_system, profile.as_ref(), source.as_ref(), &extension, bytes.len());
+    if nds::is_nds(system.as_deref(), &bytes) {
+        return nds::convert_and_write(&args, &bytes, source, game.clone(), memory);
+    }
     let sidecar = sidecar_clock(&args, source.as_ref())?;
     let sidecar_path = sidecar.as_ref().map(|(path, _, at)| (path.clone(), at.is_some()));
     // A sidecar that records its own instant ignores the one passed beside it.
     let sidecar = sidecar.map(|(_, bytes, at)| (bytes, at.unwrap_or_default()));
-
-    let system = system_of(&args, rom_system, profile.as_ref(), source.as_ref(), &extension, bytes.len());
 
     let mut label = format.label().to_owned();
     let mut bundle = if n64::is_n64(system.as_deref(), &extension, &bytes) {
@@ -656,17 +677,8 @@ fn convert(args: Convert) -> Fallible {
         eprintln!("      --role internal or --role ram-cart to say which socket this came out of");
     }
 
-    // A device's parts are components rather than saves: a cabinet's RAM and what is in its slot.
-    let saves = bundle.parts.iter().filter(|p| p.kind == PartKind::Bundle).count();
-    let what = if *bundle.shape() == one_saves::Shape::Device {
-        format!("{} component(s)", bundle.parts.len())
-    } else if saves > 0 {
-        format!("{saves} save(s)")
-    } else {
-        format!("{} part(s)", bundle.parts.len())
-    };
     println!(
-        "{} -> {} ({}, {what}, {} bytes)",
+        "{} -> {} ({}, {}, {} bytes)",
         args.input.display(),
         output.display(),
         match () {
@@ -675,6 +687,35 @@ fn convert(args: Convert) -> Fallible {
             () if n64dd::is_drive(&bundle) => "64DD disk save and the drive's clock",
             () => label.as_str(),
         },
+        parts_of(&bundle),
+        encoded.len()
+    );
+    Ok(())
+}
+
+/// How many of what a bundle holds, for the line `convert` prints. A device's parts are components
+/// rather than saves: a cabinet's RAM and what is in its slot.
+fn parts_of(bundle: &Bundle) -> String {
+    let saves = bundle.parts.iter().filter(|p| p.kind == PartKind::Bundle).count();
+    if *bundle.shape() == one_saves::Shape::Device {
+        format!("{} component(s)", bundle.parts.len())
+    } else if saves > 0 {
+        format!("{saves} save(s)")
+    } else {
+        format!("{} part(s)", bundle.parts.len())
+    }
+}
+
+/// Writes a bundle `convert` made where the input says, and says what it was read as.
+fn write_converted(args: &Convert, bundle: &Bundle, label: &str) -> Fallible {
+    let output = args.output.clone().unwrap_or_else(|| args.input.with_extension(one_saves::EXTENSION));
+    let encoded = bundle.to_vec()?;
+    write_out(&output, &encoded, args.force)?;
+    println!(
+        "{} -> {} ({label}, {}, {} bytes)",
+        args.input.display(),
+        output.display(),
+        parts_of(bundle),
         encoded.len()
     );
     Ok(())
@@ -939,9 +980,11 @@ fn system_of(
     args.system
         .clone()
         .or_else(|| rom_system.map(ToOwned::to_owned))
+        .or_else(|| nds::named_by_game(args).map(ToOwned::to_owned))
         .or_else(|| profile.and_then(Profile::only_system).map(ToOwned::to_owned))
         .or_else(|| core_system.map(ToOwned::to_owned))
         .or_else(|| n64::system_of_extension(extension).map(ToOwned::to_owned))
+        .or_else(|| nds::system_of_extension(extension).map(ToOwned::to_owned))
         // A `.ram` is a 64DD disk's RAM area when its length is one a disk type gives.
         .or_else(|| {
             (extension == n64dd::EXTENSION && n64dd::disk_type(len).is_some())
@@ -1449,7 +1492,8 @@ fn extract_for_cartridge_reader(
 /// The extension `core`, run by `app`, gives a flat save.
 ///
 /// A libretro frontend writes `.srm` whatever the core; a MiSTer, a Pocket, a standalone engine
-/// and an app's own build write `.sav`. A Sega CD's backup RAM is the exception everywhere.
+/// and an app's own build write `.sav`. A Sega CD's backup RAM is the exception everywhere, and the
+/// DS cores that write their own files are another: DeSmuME's `.dsv`, melonDS's and NooDS's `.sav`.
 fn save_suffix(
     core: &one_saves_registry::Core,
     app: Option<&one_saves_registry::App>,
@@ -1459,6 +1503,10 @@ fn save_suffix(
         && app.is_none_or(|app| !app.cores.builds.contains(&core.slug));
     match system {
         Some("sega-cd") => "brm",
+        // DeSmuME, and melonDS and NooDS under libretro, write a DS save themselves, by names of
+        // their own; melonDS DS and SkyEmu hand it to the frontend.
+        Some("nds") if matches!(core.slug, "desmume" | "desmume-2015") => "dsv",
+        Some("nds") if matches!(core.slug, "melonds" | "noods") => "sav",
         _ if libretro => "srm",
         _ => "sav",
     }

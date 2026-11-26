@@ -39,7 +39,7 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
         }
     }
     cases.sort();
-    assert_eq!(cases.len(), 217, "the corpus is not the size it should be");
+    assert_eq!(cases.len(), 220, "the corpus is not the size it should be");
     cases
 }
 

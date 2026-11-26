@@ -40,7 +40,7 @@ datary = { workspace = true, optional = true }
 rom-id = { workspace = true, optional = true }
 
 [features]
-default = ["cards", "dat", "dat-cmpro", "rom", "saturn-gzip", "shift-jis"]
+default = ["cards", "dat", "dat-cmpro", "nds-zlib", "rom", "saturn-gzip", "shift-jis"]
 # Every card format. Each is a crate of its own and an adapter here; none of them brings anything
 # from outside the workspace, so what a format costs is its own code and nothing else.
 cards = ["gc", "n64", "neogeo", "ps1", "ps2", "saturn", "vmu"]
@@ -60,6 +60,11 @@ saturn = ["dep:saturn-backup"]
 # one inflater.
 saturn-gzip = ["saturn", "saturn-backup/gzip"]
 vmu = ["dep:dreamcast-vmu"]
+# Inflating the DS saves that arrive compressed: a DSXS file's gzip member, and the zlib stream a
+# DraStic state keeps its card's save in. On by default for the reason `saturn-gzip` is: these are
+# saves people share, and a build that cannot read them names them and refuses them. It brings the
+# same flate2 on zlib-rs that `states` and `archive` do.
+nds-zlib = ["dep:flate2"]
 # Reading DAT catalogs, which is where this crate's weight is: `datary` brings an XML reader, a
 # derive macro and the proc-macro chain under it. A converter that is handed a game's identity, or
 # does not want one, does not need any of that.

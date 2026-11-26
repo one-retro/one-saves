@@ -215,11 +215,13 @@ fn save_layout(who: &str, entry: &Layout) -> Result<String, String> {
         ("packed", (None, length, None, None, None, None)) => {
             Ok(format!("SaveLayout::Packed {{ length: {} }}", option(length.map(number).transpose()?)))
         }
-        ("padded", (None, Some(length), None, reversed, None, None)) => Ok(format!(
-            "SaveLayout::Padded {{ length: {}, reversed_eeprom: {} }}",
+        ("padded", (fill, Some(length), None, reversed, None, None)) => Ok(format!(
+            "SaveLayout::Padded {{ length: {}, fill: {:#04X}, reversed_eeprom: {} }}",
             separated(number(length)?),
+            fill.unwrap_or(0xFF),
             reversed.unwrap_or(false)
         )),
+        ("desmume", (None, None, None, None, None, None)) => Ok("SaveLayout::Desmume".to_owned()),
         ("vba-next", (None, None, None, None, None, None)) => Ok("SaveLayout::VbaNext".to_owned()),
         ("chip", (None, None, None, None, Some(min), None)) => {
             Ok(format!("SaveLayout::Chip {{ eeprom_min: {} }}", separated(min)))
@@ -239,8 +241,8 @@ fn save_layout(who: &str, entry: &Layout) -> Result<String, String> {
         }
         (layout, _) => Err(format!(
             "layouts.json: {who:?} is not one of the layouts: expanded with a fill and a length (and an \
-             EEPROM length), packed (with a length), padded with a length (and reversed_eeprom), vba-next, \
-             chip with an eeprom_min, or mbc7 (swapped, and a length with a fill) (got {layout:?} with other \
+             EEPROM length), packed (with a length), padded with a length (and a fill, and reversed_eeprom), \
+             vba-next, desmume, chip with an eeprom_min, or mbc7 (swapped, and a length with a fill) (got {layout:?} with other \
              fields)"
         )),
     }

@@ -148,10 +148,10 @@ pub struct Clocks {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Layout {
-    /// `expanded`, `packed`, `padded`, `vba-next`, `chip` or `mbc7`; see `SaveLayout`.
+    /// `expanded`, `packed`, `padded`, `vba-next`, `desmume`, `chip` or `mbc7`; see `SaveLayout`.
     #[serde(rename = "layout")]
     pub kind: String,
-    /// What an expanded file holds on the lane the SRAM is not on.
+    /// What an expanded file holds on the lane the SRAM is not on, or a padded one past the chip.
     #[serde(default)]
     pub fill: Option<u8>,
     /// A file's length: `trimmed` or `doubled` for an expanded file, else a number of bytes.

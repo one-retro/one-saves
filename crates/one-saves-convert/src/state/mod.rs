@@ -15,6 +15,7 @@
 //! | RetroArch | `X.state`, `X.state1`…, `X.state.auto`: a `RASTATE` wrapper, usually RZIP-compressed, and a `.png` thumbnail beside it | the `MEM` block as the state part, the thumbnail as the screenshot, every other block an `aux` part named for its tag |
 //! | mGBA | `X.ss1`…`X.ss9`, and `X.ss0` to resume from: a PNG whose chunks carry the state, or the state with its extra data after it | the state part with the cheats on it, the image as the screenshot, the in-game save as a save part, `taken_at` and `source` |
 //! | DuckStation | `SERIAL_N.sav`, `SERIAL_resume.sav`, and `SERIAL_N.bak` for what a slot held before | `format_version`, the title and serial in `game`, the screenshot as a PNG, and the core's data uncompressed |
+//! | DeSmuME | `X.ds0`…`X.ds9`, and `.dst` for one saved to a file: a header, then the core's data in zlib | `format_version`, the game's code and title from the ROM header it records, DeSmuME's version, and the core's data uncompressed, the card's save memory inside it |
 //!
 //! The state part is always the core's data and nothing around it, uncompressed, so a consumer
 //! rebuilding a file knows what it has. A writer rebuilds the emulator's file from the bundle. It
@@ -31,6 +32,8 @@ use one_saves::{Bundle, Game, Slug, Source, TakenWith};
 
 use crate::error::{Error, Result};
 
+#[cfg(feature = "states")]
+pub mod desmume;
 #[cfg(feature = "states")]
 pub mod duckstation;
 #[cfg(feature = "states")]
@@ -52,11 +55,14 @@ pub enum Emulator {
     Mgba,
     /// DuckStation.
     DuckStation,
+    /// Standalone DeSmuME.
+    Desmume,
 }
 
 impl Emulator {
     /// Every emulator, in the order they are listed.
-    pub const ALL: [Emulator; 3] = [Emulator::RetroArch, Emulator::Mgba, Emulator::DuckStation];
+    pub const ALL: [Emulator; 4] =
+        [Emulator::RetroArch, Emulator::Mgba, Emulator::DuckStation, Emulator::Desmume];
 
     /// What to call it in a message.
     #[must_use]
@@ -65,6 +71,7 @@ impl Emulator {
             Emulator::RetroArch => "RetroArch state",
             Emulator::Mgba => "mGBA state",
             Emulator::DuckStation => "DuckStation state",
+            Emulator::Desmume => "DeSmuME state",
         }
     }
 
@@ -75,6 +82,7 @@ impl Emulator {
             Emulator::RetroArch => "retroarch",
             Emulator::Mgba => "mgba",
             Emulator::DuckStation => "duckstation",
+            Emulator::Desmume => "desmume",
         }
     }
 
@@ -94,7 +102,8 @@ impl Emulator {
 /// Works out whether a file is a save state, and whose, from its bytes and its name.
 ///
 /// The bytes come first. A RetroArch state opens with RZIP's magic or with `RASTATE`, an mGBA one
-/// is a PNG carrying its `gbAs` chunk, and a DuckStation one opens with `DUCC`. Two kinds carry
+/// is a PNG carrying its `gbAs` chunk, a DuckStation one opens with `DUCC`, and a DeSmuME one with
+/// `DeSmuME SState`. Two kinds carry
 /// nothing to know them by: a state an older RetroArch wrote bare, which is the core's data alone,
 /// and an mGBA one written without a screenshot, which opens with the core's own version word. Those
 /// are recognised by their names, `.state` and `.ss1`, and by nothing else.
@@ -105,6 +114,9 @@ pub fn detect(bytes: &[u8], name: &str) -> Option<Emulator> {
     }
     if bytes.starts_with(b"DUCC") {
         return Some(Emulator::DuckStation);
+    }
+    if bytes.starts_with(DESMUME_MAGIC) {
+        return Some(Emulator::Desmume);
     }
     if is_mgba_png(bytes) {
         return Some(Emulator::Mgba);
@@ -118,6 +130,9 @@ pub fn detect(bytes: &[u8], name: &str) -> Option<Emulator> {
     }
     None
 }
+
+/// What every DeSmuME state opens with, known without the `states` feature too.
+const DESMUME_MAGIC: &[u8] = b"DeSmuME SState\0\0";
 
 /// The eight bytes every PNG opens with.
 pub(crate) const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
@@ -277,6 +292,7 @@ pub fn read(emulator: Emulator, file: &StateFile<'_>, options: &StateOptions) ->
             Emulator::RetroArch => retroarch::read(file, options),
             Emulator::Mgba => mgba::read(file, options),
             Emulator::DuckStation => duckstation::read(file, options),
+            Emulator::Desmume => desmume::read(file, options),
         }
     }
     #[cfg(not(feature = "states"))]
@@ -304,6 +320,7 @@ pub fn write(emulator: Emulator, bundle: &Bundle, stem: &str) -> Result<Rebuilt>
             Emulator::RetroArch => retroarch::write(bundle, stem),
             Emulator::Mgba => mgba::write(bundle, stem),
             Emulator::DuckStation => duckstation::write(bundle, stem),
+            Emulator::Desmume => desmume::write(bundle, stem),
         }
     }
     #[cfg(not(feature = "states"))]

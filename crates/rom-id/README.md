@@ -32,7 +32,9 @@ Beside the system, an answer carries what a save manager needs:
   battery, a SNES board's SRAM, NES 2.0's battery-backed RAM, a Mega Drive's `RA` record, a
   WonderSwan's footer, an N64 homebrew header. A retail N64 header says nothing about its chip, so
   that comes from the game ID: `n64::cartridge("NSME", None)` answers for every retail game, with
-  or without the ROM, and says whether the game also keeps saves in a Controller Pak.
+  or without the ROM, and says whether the game also keeps saves in a Controller Pak. A DS header
+  says nothing either, so `nds::cartridge("AMCE")` answers from the game code, out of the table
+  melonDS keeps and SkyEmu carries under the MIT licence, about 6,800 games.
 - **The clock chip**, one for each chip key of the Universal Saves Format: the MBC3, HuC-3, TAMA5
   and TPP1 on the Game Boy, the S-RTC and RTC-4513 on the SNES, the Seiko S-3511A on the GBA and
   WonderSwan, the Joybus clock on the N64. The GBA header says nothing about a clock, so those
